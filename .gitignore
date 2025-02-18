@@ -1,0 +1,7 @@
+*.pyc
+.env
+*.ipynb
+*.md
+
+# Not ReadMe.md
+~README.md
