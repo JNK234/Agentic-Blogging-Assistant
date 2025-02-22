@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentic-blogging-assistant"
+version = "0.1.0"
+
+[tool.setuptools]
+packages = [
+    "root",
+    "root.backend",
+    "root.backend.agents",
+    "root.backend.agents.blog_draft_generator",
+    "root.backend.agents.outline_generator",
+    "root.backend.utils",
+    "root.backend.models",
+    "root.backend.prompts",
+    "root.backend.prompts.blog_draft_generator",
+    "root.backend.prompts.outline_generator",
+    "root.backend.services",
+    "root.data",
+    "root.data.uploads",
+    "root.frontend",
+]
