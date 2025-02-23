@@ -25,6 +25,7 @@ class AzureSettings(ModelSettings):
     api_base: str
     api_version: str
     deployment_name: str
+    embeddings_deployment_name: str
 
 @dataclass
 class AnthropicSettings(ModelSettings):
@@ -56,7 +57,8 @@ class Settings:
             api_key=os.getenv('AZURE_OPENAI_API_KEY'),
             api_base=os.getenv('AZURE_OPENAI_API_BASE'),
             api_version=os.getenv('AZURE_OPENAI_API_VERSION'),
-            deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')
+            deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
+            embeddings_deployment_name=os.getenv('AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT_NAME')
         )
         
         # Anthropic settings
