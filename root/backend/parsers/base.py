@@ -2,15 +2,17 @@
 Simplified base parser interface for file content extraction.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Dict, List
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 from pathlib import Path
 
 @dataclass
 class ContentStructure:
     """Represents parsed file content with sections."""
-    sections: List[Dict[str, str]]  # Each section has 'content' and optional 'type'
+    main_content: str  # Main content extracted from the file
+    code_segments: List[str]  # List of code segments extracted from the file
     content_type: str  # Type of content (markdown, python, notebook)
+    metadata: Optional[Dict[str, str]] = field(default_factory=dict)  # Optional metadata about the content
 
 class BaseParser(ABC):
     """Base parser for extracting content from files."""

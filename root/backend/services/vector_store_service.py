@@ -51,20 +51,21 @@ class VectorStoreService:
             if not chunks or not metadata or len(chunks) != len(metadata):
                 raise ValueError("Invalid chunks or metadata")
                 
-            # Add content hash to metadata
-            for meta in metadata:
+            # Add content hash and chunk order to metadata
+            for i, meta in enumerate(metadata):
                 meta["content_hash"] = content_hash
+                meta["chunk_order"] = i  # Add chunk order to metadata
             
             embeddings = [self.embedding_fn(chunk) for chunk in chunks]
             
-            # Store chunks
+            # Store chunks with ordered IDs
             self.collection.add(
                 documents=chunks,
                 embeddings=embeddings,
                 metadatas=metadata,
-                ids=[f"chunk_{content_hash}_{i}" for i in range(len(chunks))]
+                ids=[f"chunk_{content_hash}_{i:04d}" for i in range(len(chunks))]  # Zero-padded ordering
             )
-            logging.info(f"Stored {len(chunks)} chunks for hash {content_hash}")
+            logging.info(f"Stored {len(chunks)} ordered chunks for hash {content_hash}")
         except ValueError as e:
             logging.error(f"Validation error: {e}")
             raise
@@ -116,14 +117,23 @@ class VectorStoreService:
                     metadatas = []
                     distances = []
 
-            return [
+            # Create result list with order information
+            results_list = [
                 {
                     "content": doc,
                     "metadata": meta,
-                    "relevance": 1 - (dist / 2)
+                    "relevance": 1 - (dist / 2),
+                    "order": meta.get("chunk_order", 0)  # Get chunk order from metadata
                 }
                 for doc, meta, dist in zip(documents, metadatas, distances)
             ]
+
+            # Sort results by chunk order if not using query-based search
+            if not query:
+                results_list.sort(key=lambda x: x["order"])
+
+            return results_list
+
         except Exception as e:
             logging.error(f"Error searching content: {e}")
             return []

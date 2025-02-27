@@ -9,20 +9,43 @@ from datetime import datetime
 
 from ..parsers import ParserFactory, ContentStructure
 from ..services.vector_store_service import VectorStoreService
+from root.backend.agents.base_agent import BaseGraphAgent
+from root.backend.agents.content_parsing.state import ContentParsingState
+from root.backend.agents.content_parsing.graph import create_parsing_graph
 
 logging.basicConfig(level=logging.INFO)
 
-class ContentParsingAgent:
+class ContentParsingAgent(BaseGraphAgent):
     """Agent responsible for parsing content and storing it in vector store."""
     
-    def __init__(self):
+    def __init__(self, llm=None):  # llm optional since this agent doesn't use it directly
+        super().__init__(
+            llm=llm,
+            tools=[],
+            state_class=ContentParsingState,
+            verbose=True
+        )
         self.vector_store = VectorStoreService()
+        self._initialized = False
+        
+    async def initialize(self):
+        """Public method to initialize the agent."""
+        if hasattr(self, '_initialized') and self._initialized:
+            logging.info("ContentParsingAgent already initialized")
+            return
+            
+        # Initialize the graph
+        self.graph = await create_parsing_graph(self.state_class)
+        self._initialized = True
         logging.info("ContentParsingAgent initialized")
         
     def _validate_file(self, file_path: str) -> Tuple[bool, Optional[str]]:
         """Basic file validation."""
         try:
             path = Path(file_path)
+            # Convert path to absolute path
+            path = path.resolve()
+            print(path)
             if not path.exists():
                 return False, f"File not found: {file_path}"
             if path.suffix.lower() not in ParserFactory.supported_extensions():
@@ -33,8 +56,48 @@ class ContentParsingAgent:
         except Exception as e:
             return False, f"Validation error: {str(e)}"
     
+    async def process_file_with_graph(self, file_path: str, project_name: Optional[str] = None) -> Optional[str]:
+        """Process a single file using the graph-based approach."""
+        try:
+            # Check if file already exists in project
+            path = Path(file_path)
+            file_metadata = {
+                "file_name": path.name,
+                "file_path": str(path),
+                "project_name": project_name,
+                "file_type": path.suffix.lower()
+            }
+            
+            existing = self.search_content(
+                metadata_filter=file_metadata
+            )
+            if existing:
+                logging.info(f"File already exists in project: {file_path}")
+                return existing[0]["metadata"]["content_hash"]
+                
+            # Initialize state
+            initial_state = self.state_class(
+                file_path=file_path,
+                project_name=project_name
+            )
+            
+            # Execute graph
+            final_state = await self.run_graph(initial_state)
+            
+            if final_state.errors:
+                logging.error(f"Errors during processing: {final_state.errors}")
+                return None
+                
+            return final_state.content_hash
+            
+        except Exception as e:
+            logging.error(f"Error processing file {file_path}: {e}")
+            return None
+            
     def process_file(self, file_path: str, project_name: Optional[str] = None) -> Optional[str]:
         """Process a single file and store its content."""
+        # For backward compatibility, we'll keep the synchronous method
+        # but in the future, we should transition to using the async graph-based approach
         try:
             # Validate first
             is_valid, error_msg = self._validate_file(file_path)
@@ -169,6 +232,21 @@ class ContentParsingAgent:
             for file_path in directory.rglob("*"):
                 if file_path.suffix.lower() in ParserFactory.supported_extensions():
                     if content_hash := self.process_file(str(file_path), project_name):
+                        content_hashes.append(content_hash)
+            return content_hashes
+        except Exception as e:
+            logging.error(f"Error processing directory {directory_path}: {e}")
+            return content_hashes
+            
+    async def process_directory_with_graph(self, directory_path: str, project_name: Optional[str] = None) -> List[str]:
+        """Process all supported files in a directory using the graph-based approach."""
+        content_hashes = []
+        directory = Path(directory_path)
+        
+        try:
+            for file_path in directory.rglob("*"):
+                if file_path.suffix.lower() in ParserFactory.supported_extensions():
+                    if content_hash := await self.process_file_with_graph(str(file_path), project_name):
                         content_hashes.append(content_hash)
             return content_hashes
         except Exception as e:

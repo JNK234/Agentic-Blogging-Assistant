@@ -16,8 +16,8 @@ class AzureModel:
                 openai_api_base=settings.api_base,
                 openai_api_key=settings.api_key,
                 openai_api_version=settings.api_version,
-                temperature=0.7,
-                max_tokens=1000
+                temperature=0.5,
+                max_tokens=4096
             )
         except Exception as e:
             logging.error(f"Failed to initialize Azure OpenAI LLM: {str(e)}")

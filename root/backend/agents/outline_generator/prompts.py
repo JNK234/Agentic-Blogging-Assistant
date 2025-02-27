@@ -1,12 +1,13 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from .state import ContentAnalysis, Prerequisites, OutlineStructure, DifficultyLevel
+from .state import ContentAnalysis, Prerequisites, OutlineStructure, DifficultyLevel, FinalOutline
 
 # Initialize parsers
 content_parser = PydanticOutputParser(pydantic_object=ContentAnalysis)
 difficulty_parser = PydanticOutputParser(pydantic_object=DifficultyLevel)
 prerequisites_parser = PydanticOutputParser(pydantic_object=Prerequisites)
 outline_parser = PydanticOutputParser(pydantic_object=OutlineStructure)
+final_parser = PydanticOutputParser(pydantic_object=FinalOutline)
 
 # Content Analysis Prompt
 CONTENT_ANALYSIS_PROMPT = PromptTemplate(
@@ -29,10 +30,26 @@ Notebook: {notebook_content_metadata}
 Markdown: {markdown_content_metadata}
 
 Guidelines:
-1. Use code blocks to identify technical concepts
-2. Consider code complexity and outputs
-3. Extract learning objectives from both text and code
-4. Analyze relationships between notebook and markdown content
+1. Main Topics: Extract the main topics covered in both notebook and markdown content
+2. Technical Concepts: Identify specific technical concepts from code blocks and explanations
+3. Complexity Indicators: Look for:
+   - Advanced programming patterns
+   - Complex algorithms or data structures
+   - Error handling and edge cases
+   - Performance considerations
+4. Learning Objectives: Extract or infer:
+   - Skills to be learned
+   - Concepts to be mastered
+   - Practical applications
+   - Expected outcomes
+
+Your output MUST be a valid JSON object that includes ALL four of the following lists:
+- main_topics: List of primary topics covered
+- technical_concepts: List of specific technical concepts
+- complexity_indicators: List of elements indicating complexity
+- learning_objectives: List of clear learning goals
+
+Ensure each list is complete and properly formatted according to the schema. If a list is empty, return an empty list [].
     """,
     input_variables=[
         "format_instructions",
@@ -133,6 +150,8 @@ Guidelines:
 FINAL_GENERATION_PROMPT = PromptTemplate(
     template="""You are a technical content analyzer. Output must be valid JSON matching the format instructions.
 
+{format_instructions}
+
 Create a comprehensive outline using:
 
 Title:
@@ -146,8 +165,17 @@ Prerequisites:
 
 Outline Structure:
 {outline_structure}
+
+Guidelines:
+- Output must be valid JSON according to format_instructions
+- Include all sections and content from the outline structure
+- Maintain the hierarchical organization
+- Preserve all learning goals and time estimates
+- Keep the JSON structure clean and properly formatted
+- Provide only the content in required format and nothing else. Do not return any other text or schemas or explanations.
     """,
     input_variables=[
+        "format_instructions",
         "title",
         "difficulty_level",
         "prerequisites",
@@ -175,6 +203,6 @@ PROMPT_CONFIGS = {
     },
     "final_generation": {
         "prompt": FINAL_GENERATION_PROMPT,
-        "parser": None  # No parser needed for markdown output
+        "parser": final_parser
     }
 }

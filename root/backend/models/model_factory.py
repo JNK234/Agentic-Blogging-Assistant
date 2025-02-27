@@ -30,7 +30,7 @@ class ModelFactory:
         """
         try:
             provider = provider.lower()
-            
+                        
             if provider in ['deepseek', 'claude', 'openai', 'azure']:
                 model_settings = self.settings.get_model_settings(provider)
                 

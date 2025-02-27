@@ -1,7 +1,9 @@
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
-from root.backend.utils.file_parser import ParsedContent
+#from root.backend.utils.file_parser import ParsedContent
 from root.backend.services.vector_store_service import VectorStoreService
+from dataclasses import asdict
+import json
 
 class ContentAnalysis(BaseModel):
     main_topics: List[str]
@@ -30,30 +32,35 @@ class OutlineStructure(BaseModel):
     introduction: str
     conclusion: str
 
+class FinalOutline(BaseModel):
+    title: str
+    difficulty_level: str
+    prerequisites: Prerequisites
+    introduction: str
+    sections: List[OutlineSection]
+    conclusion: str
+
+    def to_json(self) -> str:
+        """Convert the FinalOutline instance to a JSON string."""
+        return json.dumps(asdict(self), indent=2)
+
 class OutlineState(BaseModel):
     # Input state
-    notebook_content: ParsedContent = Field(description="Parsed notebook content")
-    markdown_content: ParsedContent = Field(description="Parsed markdown content")
+    notebook_content: Optional[Any] = Field(description="Parsed notebook content")
+    markdown_content: Optional[Any] = Field(description="Parsed markdown content")
     model: Any = Field(description="LLM model instance")
-    vector_store: VectorStoreService = Field(default_factory=VectorStoreService)
 
     # Intermediate states
     analysis_result: Optional[ContentAnalysis] = None
-    difficulty_level: Optional[str] = None
+    difficulty_level: Optional[DifficultyLevel] = None
     prerequisites: Optional[Prerequisites] = None
     outline_structure: Optional[OutlineStructure] = None
-    content_hash: str = Field(default="")
-    cached_outline: Optional[str] = None
-    content_mappings: Dict[str, Dict[str, List[str]]] = Field(
-        default_factory=dict,
-        description="Maps outline sections to relevant content chunks"
-    )
 
     # Final state
-    final_outline: Optional[str] = None
+    final_outline: Optional[FinalOutline] = None
 
-    # Metadata
-    status: Dict[str, str] = Field(default_factory=dict)
-    errors: List[str] = Field(default_factory=list)
+    # # Metadata
+    # status: Dict[str, str] = Field(default_factory=dict)
+    # errors: List[str] = Field(default_factory=list)
 
-    model_config = {"arbitrary_types_allowed": True}
+    # model_config = {"arbitrary_types_allowed": True}

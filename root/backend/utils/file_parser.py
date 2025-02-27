@@ -146,7 +146,7 @@ class FileParser:
         logging.info(f"Extracted {len(code_segments)} code segments and {len(topics)} topics")
         return ParsedContent(
             main_content=main_content,
-            code_segments=[CodeSegment(code="", language="", location=Location(section="", context=""))], #[CodeSegment(code="", language="", location=Location(section="", context=""))]
+            code_segments=code_segments,
             metadata=ContentMetadata(
                 file_type='markdown',
                 title=self._extract_markdown_title(content),
@@ -264,14 +264,33 @@ class FileParser:
         code_pattern = r'```(\w+)?\n(.*?)```'
         matches = re.finditer(code_pattern, content, re.DOTALL)
         
-        for match in matches:
+        for idx, match in enumerate(matches):
             language = match.group(1) or 'text'
             code = match.group(2).strip()
             
+            # Extract any output if present (assuming output follows the code block)
+            output = ""
+            output_match = re.search(r'```output\n(.*?)```', content[match.end():], re.DOTALL)
+            if output_match:
+                output = output_match.group(1).strip()
+            
+            # Extract any explanation from comments above the code block
+            explanation = ""
+            if match.start() > 0:
+                explanation_match = re.search(r'(?:^|\n)((?:[^\n]*\n)*?)```', content[:match.start()], re.MULTILINE)
+                if explanation_match:
+                    explanation = explanation_match.group(1).strip()
+            
             code_segments.append(CodeSegment(
-                code="",
+                code=code,
                 language=language,
-                location=Location(section="Markdown", context="Code block")
+                output=output if output else None,
+                explanation=explanation if explanation else None,
+                location=Location(
+                    section=f"Code Block {idx + 1}",
+                    line_number=content[:match.start()].count('\n') + 1,
+                    context="Markdown code block"
+                )
             ))
         return code_segments
 

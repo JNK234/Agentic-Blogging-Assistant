@@ -64,7 +64,7 @@ class Settings:
         # Anthropic settings
         self.anthropic = AnthropicSettings(
             api_key=os.getenv('ANTHROPIC_API_KEY'),
-            model_name=os.getenv('ANTHROPIC_MODEL_NAME', 'claude-2'),
+            model_name=os.getenv('ANTHROPIC_MODEL_NAME', 'claude-3-haiku-20240307'),
         )
         
         # Deepseek settings
@@ -79,8 +79,8 @@ class Settings:
         settings_map = {
             'openai': self.openai,
             'azure': self.azure,
-            'anthropic': self.anthropic,
-            'deepseek': self.deepseek
+            'claude': self.anthropic,
+            'deepseek': self.deepseek,
         }
         if provider not in settings_map:
             raise ValueError(f"Unknown provider: {provider}")

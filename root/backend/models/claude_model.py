@@ -3,15 +3,12 @@ import logging
 from langchain_anthropic import ChatAnthropic
 
 class ClaudeModel:
-    def __init__(self):
-        self.api_key = os.getenv('ANTHROPIC_API_KEY')
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable is required")
+    def __init__(self, model_settings):
         try:
             self.llm = ChatAnthropic(
-                model_name="claude-3-haiku-20240307",
-                api_key=self.api_key,
-                temperature=0.5,
+                model_name=model_settings.model_name,
+                api_key=model_settings.api_key,
+                temperature=0.2,
                 max_tokens=4000
             )
         except Exception as e:
