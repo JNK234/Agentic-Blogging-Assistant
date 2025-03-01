@@ -99,7 +99,24 @@ async def chunk_content(state: ContentParsingState) -> ContentParsingState:
         return state
         
     try:
-        state.content_chunks = _chunk_content(state.parsed_content.sections)
+        # Create sections from main_content and code_segments
+        sections = []
+        
+        # Add main content as a section
+        if state.parsed_content.main_content:
+            sections.append({
+                "content": state.parsed_content.main_content,
+                "type": "markdown"
+            })
+            
+        # Add code segments as sections
+        for code in state.parsed_content.code_segments:
+            sections.append({
+                "content": code,
+                "type": "code"
+            })
+            
+        state.content_chunks = _chunk_content(sections)
     except Exception as e:
         state.errors.append(f"Chunking error: {str(e)}")
     return state

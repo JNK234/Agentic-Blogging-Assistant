@@ -11,7 +11,7 @@ class NotebookParser(BaseParser):
     """Parser for Jupyter Notebook files."""
     
     # Constants for truncation
-    MAX_CELL_LENGTH = 4000  # Maximum length for a single cell
+    MAX_CELL_LENGTH = 30000  # Maximum length for a single cell
     MAX_OUTPUT_LENGTH = 1000  # Maximum length for cell outputs
     MAX_TOTAL_LENGTH = 20000  # Maximum total length for the notebook
     
@@ -94,8 +94,20 @@ class NotebookParser(BaseParser):
         if total_length >= self.MAX_TOTAL_LENGTH:
             logging.warning(f"Notebook was truncated. Original size: {total_length}, Truncated to: {self.MAX_TOTAL_LENGTH}")
         
+        # Extract main content and code segments from sections
+        main_content = ""
+        code_segments = []
+        
+        for section in sections:
+            content = section.get("content", "")
+            if section.get("type") == "code":
+                code_segments.append(content)
+            else:
+                main_content += content + "\n\n"
+        
         return ContentStructure(
-            sections=sections,
+            main_content=main_content.strip(),
+            code_segments=code_segments,
             content_type="jupyter_notebook",
             metadata={
                 "total_length": total_length,

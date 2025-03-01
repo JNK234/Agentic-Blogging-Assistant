@@ -55,7 +55,20 @@ class MarkdownParser(BaseParser):
         if current_section["content"].strip():
             sections.append(current_section)
         
+        # Extract main content and code segments from sections
+        main_content = ""
+        code_segments = []
+        
+        for section in sections:
+            content = section.get("content", "")
+            if section.get("type") == "code":
+                code_segments.append(content)
+            else:
+                main_content += content + "\n\n"
+        
         return ContentStructure(
-            sections=sections,
-            content_type="markdown"
+            main_content=main_content.strip(),
+            code_segments=code_segments,
+            content_type="markdown",
+            metadata={}
         )

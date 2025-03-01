@@ -84,11 +84,11 @@ class ContentParsingAgent(BaseGraphAgent):
             # Execute graph
             final_state = await self.run_graph(initial_state)
             
-            if final_state.errors:
+            if final_state.get("errors", None):
                 logging.error(f"Errors during processing: {final_state.errors}")
                 return None
                 
-            return final_state.content_hash
+            return final_state['content_hash']
             
         except Exception as e:
             logging.error(f"Error processing file {file_path}: {e}")
@@ -125,7 +125,25 @@ class ContentParsingAgent(BaseGraphAgent):
             # If not found, proceed with parsing and storing
             parser = ParserFactory.get_parser(file_path)
             content = parser.parse()
-            chunks = self._chunk_content(content.sections)
+            
+            # Create sections from main_content and code_segments
+            sections = []
+            
+            # Add main content as a section
+            if content.main_content:
+                sections.append({
+                    "content": content.main_content,
+                    "type": "markdown"
+                })
+                
+            # Add code segments as sections
+            for code in content.code_segments:
+                sections.append({
+                    "content": code,
+                    "type": "code"
+                })
+                
+            chunks = self._chunk_content(sections)
             
             # Add additional metadata
             metadata = {

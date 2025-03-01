@@ -1,5 +1,6 @@
 import logging
-from langchain_community.chat_models import AzureChatOpenAI
+# from langchain_community.chat_models import AzureChatOpenAI
+from langchain_openai import AzureOpenAI, AzureChatOpenAI
 from ..config.settings import AzureSettings
 
 class AzureModel:
@@ -13,12 +14,26 @@ class AzureModel:
         try:
             self.llm = AzureChatOpenAI(
                 deployment_name=settings.deployment_name,
-                openai_api_base=settings.api_base,
+                azure_endpoint=settings.api_base,
                 openai_api_key=settings.api_key,
                 openai_api_version=settings.api_version,
                 temperature=0.5,
                 max_tokens=4096
             )
+            
+            # deployment_name=deployment_name,
+            # model_name="gpt-4o",  # Specify the model
+            # openai_api_key=api_key,
+            # azure_endpoint=azure_endpoint,
+            # openai_api_version=api_version
+            
+            # self.llm = AzureOpenAI(
+            #     deployment_name=settings.deployment_name,
+            #     model_name=settings.model_name,
+            #     openai_api_key=settings.api_key,
+            #     azure_endpoint=settings.api_base,
+            #     openai_api_version=settings.api_version
+            # )
         except Exception as e:
             logging.error(f"Failed to initialize Azure OpenAI LLM: {str(e)}")
             raise

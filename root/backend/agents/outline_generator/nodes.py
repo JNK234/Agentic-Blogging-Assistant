@@ -29,7 +29,7 @@ async def analyze_content(state: OutlineState) -> OutlineState:
         # Get LLM response
         response = await state.model.ainvoke(prompt)
         
-        # print(f"Content Analysis Response: {response.content}\n\n\n")
+        print(f"Content Analysis Response: {response.content}\n\n\n")
         
         # Parse the response
         state.analysis_result = PROMPT_CONFIGS["content_analysis"]["parser"].parse(response.content)
@@ -56,7 +56,7 @@ async def difficulty_assessor(state: OutlineState) -> OutlineState:
         prompt = PROMPT_CONFIGS["difficulty_assessment"]["prompt"].format(**input_variables)
         response = await state.model.ainvoke(prompt)
         
-        # print(f"Difficulty Assessment Response: {response.content}\n\n\n")
+        print(f"Difficulty Assessment Response: {response.content}\n\n\n")
         
         # Parse and update state
         state.difficulty_level = PROMPT_CONFIGS["difficulty_assessment"]["parser"].parse(response.content)
@@ -82,6 +82,8 @@ async def prerequisite_identifier(state: OutlineState) -> OutlineState:
         # Format prompt and get LLM response
         prompt = PROMPT_CONFIGS["prerequisites"]["prompt"].format(**input_variables)
         response = await state.model.ainvoke(prompt)
+        
+        logging.info(f"Prerquisite Identifier: {response.content}\n\n\n")
         
         # Parse and update state
         state.prerequisites = PROMPT_CONFIGS["prerequisites"]["parser"].parse(response.content)
@@ -112,6 +114,8 @@ async def outline_structurer(state: OutlineState) -> OutlineState:
         # Format prompt and get LLM response
         prompt = PROMPT_CONFIGS["outline_structure"]["prompt"].format(**input_variables)
         response = await state.model.ainvoke(prompt)
+        
+        logging.info(f"Outline Structutre: {response.content}\n\n\n")
         
         # Parse and update state
         state.outline_structure = PROMPT_CONFIGS["outline_structure"]["parser"].parse(response.content)
@@ -156,7 +160,7 @@ async def final_generator(state: OutlineState) -> OutlineState:
         prompt = PROMPT_CONFIGS["final_generation"]["prompt"].format(**input_variables)
         response = await state.model.ainvoke(prompt)
         
-        # print(f"Final Generation Response: {response.content}\n\n\n")
+        print(f"Final Generation Response: {response.content}\n\n\n")
         
         # Parse the response into FinalOutline format
         parsed_outline = PROMPT_CONFIGS["final_generation"]["parser"].parse(response.content)

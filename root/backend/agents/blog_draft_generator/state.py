@@ -1,0 +1,82 @@
+from pydantic import BaseModel, Field
+from typing import Dict, List, Optional, Any, Set
+from root.backend.parsers import ContentStructure
+from root.backend.agents.outline_generator.state import FinalOutline
+
+class CodeExample(BaseModel):
+    """Represents a code example in a blog section."""
+    code: str
+    language: str
+    description: str
+    explanation: Optional[str] = None
+    output: Optional[str] = None
+    source_location: Optional[str] = None
+
+class SectionFeedback(BaseModel):
+    """Feedback for a blog section."""
+    content: str
+    source: str  # "auto" or "user"
+    timestamp: str
+    addressed: bool = False
+
+class SectionVersion(BaseModel):
+    """Represents a version of a blog section."""
+    content: str
+    version_number: int
+    timestamp: str
+    changes: Optional[str] = None  # Description of changes from previous version
+
+class DraftSection(BaseModel):
+    """Represents a section in the blog draft."""
+    title: str
+    content: str
+    feedback: List[SectionFeedback] = Field(default_factory=list)
+    versions: List[SectionVersion] = Field(default_factory=list)
+    current_version: int = 1
+    status: str = "draft"  # "draft", "review", "approved"
+    code_examples: List[CodeExample] = Field(default_factory=list)
+    key_concepts: List[str] = Field(default_factory=list)
+    technical_terms: List[str] = Field(default_factory=list)
+    quality_metrics: Dict[str, float] = Field(default_factory=dict)  # e.g., {"clarity": 0.8, "technical_depth": 0.7}
+
+class ContentReference(BaseModel):
+    """Reference to content from source materials."""
+    content: str
+    source_type: str  # "notebook", "markdown", "code"
+    relevance_score: float
+    category: str  # "concept", "example", "implementation", "best_practice"
+    source_location: Optional[str] = None
+
+class BlogDraftState(BaseModel):
+    """State for the blog draft generation process."""
+    # Input state
+    outline: FinalOutline
+    notebook_content: ContentStructure = Field(description="Parsed notebook content")
+    markdown_content: ContentStructure = Field(description="Parsed markdown content")
+    current_section_index: int = 0
+    model: Any = Field(description="LLM model instance")
+
+    # Content state
+    sections: List[DraftSection] = Field(default_factory=list)
+    current_section: Optional[DraftSection] = None
+    completed_sections: Set[int] = Field(default_factory=set)
+    
+    # Generation tracking
+    generation_stage: str = "planning"  # "planning", "drafting", "enhancing", "finalizing"
+    iteration_count: int = 0
+    max_iterations: int = 3
+
+    # Reference mapping
+    content_mapping: Dict[str, List[ContentReference]] = Field(default_factory=dict)  # Maps sections to relevant content
+    
+    # Blog structure
+    table_of_contents: List[Dict[str, str]] = Field(default_factory=list)
+    transitions: Dict[str, str] = Field(default_factory=dict)  # Transitions between sections
+    
+    # Metadata
+    status: Dict[str, str] = Field(default_factory=dict)
+    errors: List[str] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)  # Performance and quality metrics
+    
+    # Feedback Incorporation
+    user_feedback_provided: bool = Field(default_factory=bool)

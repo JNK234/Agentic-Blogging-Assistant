@@ -26,7 +26,7 @@ class AzureSettings(ModelSettings):
     api_version: str
     deployment_name: str
     embeddings_deployment_name: str
-
+    # model_name: str = "gpt-4o"
 @dataclass
 class AnthropicSettings(ModelSettings):
     model_name: str = "claude-2"
@@ -58,7 +58,8 @@ class Settings:
             api_base=os.getenv('AZURE_OPENAI_API_BASE'),
             api_version=os.getenv('AZURE_OPENAI_API_VERSION'),
             deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
-            embeddings_deployment_name=os.getenv('AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT_NAME')
+            embeddings_deployment_name=os.getenv('AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT_NAME'),
+            # model_name=os.getenv('AZURE_OPENAI_MODEL_NAME', 'gpt-4o')
         )
         
         # Anthropic settings

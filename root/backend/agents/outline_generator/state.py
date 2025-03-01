@@ -42,7 +42,8 @@ class FinalOutline(BaseModel):
 
     def to_json(self) -> str:
         """Convert the FinalOutline instance to a JSON string."""
-        return json.dumps(asdict(self), indent=2)
+        # Use Pydantic's model_dump() method instead of dataclasses.asdict()
+        return json.dumps(self.model_dump(), indent=2)
 
 class OutlineState(BaseModel):
     # Input state

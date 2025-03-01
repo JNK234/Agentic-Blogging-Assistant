@@ -11,7 +11,7 @@ async def main():
     project_name = "Task Project 2"
     notebook_path = "data/uploads/Task Project 2/text Processing.ipynb"
     markdown_path = "data/uploads/Task Project 2/Working with Text Data.md"
-    model_name = "azure"  # Or any other valid model name
+    model_name = "claude"  # Or any other valid model name
 
     # Get model instance
     model = ModelFactory().create_model(model_name)
@@ -46,7 +46,7 @@ async def main():
         logging.error("Outline generation failed")
         return
 
-    # logging.info(f"Generated outline: {outline_json}")
+    logging.info(f"Generated outline: {outline_json}")
     # logging.info(f"Notebook content: {notebook_content}")
     # logging.info(f"Markdown content: {markdown_content}")
 

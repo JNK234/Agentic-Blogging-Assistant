@@ -1,14 +1,18 @@
 """
 Outline generator agent that uses content parsing agent for input processing.
+Includes caching of generated outlines for efficient retrieval.
 """
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import logging
+import hashlib
+import json
 
 from root.backend.prompts.prompt_manager import PromptManager
 from root.backend.agents.outline_generator.graph import create_outline_graph
 from root.backend.agents.outline_generator.state import OutlineState
 from root.backend.agents.content_parsing_agent import ContentParsingAgent
 from root.backend.agents.base_agent import BaseGraphAgent
+from root.backend.services.vector_store_service import VectorStoreService
 from ..parsers import ContentStructure
 
 logging.basicConfig(level=logging.INFO) 
@@ -23,6 +27,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         )
         self.prompt_manager = PromptManager()
         self.content_parser = content_parser  # Use the passed content parser
+        self.vector_store = VectorStoreService()  # For caching outlines
         self._initialized = False
         
     async def initialize(self):
@@ -92,6 +97,40 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             content_type=metadata.get("content_type", "unknown")
         )
 
+    def _create_cache_key(self, project_name: str, notebook_hash: Optional[str], markdown_hash: Optional[str]) -> str:
+        """Create a deterministic cache key from input parameters.
+        
+        Args:
+            project_name: Name of the project
+            notebook_hash: Hash of notebook content (or None)
+            markdown_hash: Hash of markdown content (or None)
+            
+        Returns:
+            A unique cache key string
+        """
+        # Create a string with all parameters
+        key_parts = [
+            f"project:{project_name}",
+            f"notebook:{notebook_hash or 'none'}",
+            f"markdown:{markdown_hash or 'none'}"
+        ]
+        
+        # Join and hash to create a deterministic key
+        key_string = "|".join(key_parts)
+        return hashlib.sha256(key_string.encode()).hexdigest()
+    
+    def _check_outline_cache(self, cache_key: str, project_name: str) -> Optional[str]:
+        """Check if an outline exists in cache for the given parameters.
+        
+        Args:
+            cache_key: The cache key to look up
+            project_name: Project name for filtering
+            
+        Returns:
+            Cached outline JSON string or None if not found
+        """
+        return self.vector_store.retrieve_outline_cache(cache_key, project_name)
+        
     async def generate_outline(
         self, 
         project_name: str,
@@ -99,7 +138,8 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         markdown_path: Optional[str] = None,
         notebook_hash: Optional[str] = None,
         markdown_hash: Optional[str] = None,
-        model=None  # For backward compatibility
+        model=None,  # For backward compatibility
+        use_cache: bool = True  # Whether to use cached outlines
     ) -> Tuple[str, Optional[str], Optional[str]]:
         """
         Generates a blog outline using parsed content from files.
@@ -111,6 +151,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             notebook_hash: Optional content hash for notebook (if already processed)
             markdown_hash: Optional content hash for markdown (if already processed)
             model: Optional model override (for backward compatibility)
+            use_cache: Whether to use cached outlines (default: True)
             
         Returns:
             Tuple of (outline JSON, notebook content, markdown content)
@@ -165,6 +206,15 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             except Exception as e:
                 logging.error(f"Error processing markdown: {str(e)}")
         
+        # Check cache if enabled
+        if use_cache:
+            cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash)
+            cached_outline = self._check_outline_cache(cache_key, project_name)
+            
+            if cached_outline:
+                logging.info(f"Using cached outline for project: {project_name}")
+                return cached_outline, notebook_content, markdown_content
+        
         # Initialize state
         initial_state = OutlineState(
             notebook_content=notebook_content,
@@ -185,6 +235,32 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             
             if state['final_outline']:
                 final_outline_json = state['final_outline']
+                
+                # Cache the result if caching is enabled
+                if use_cache and notebook_hash and markdown_hash:
+                    cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash)
+                    source_hashes = [h for h in [notebook_hash, markdown_hash] if h]
+                    
+                    # Check if final_outline_json is a FinalOutline instance and convert to JSON string
+                    from root.backend.agents.outline_generator.state import FinalOutline
+                    if isinstance(final_outline_json, FinalOutline):
+                        # Use the to_json method to convert to a JSON string
+                        outline_json_str = final_outline_json.to_json()
+                    elif isinstance(final_outline_json, str):
+                        # Already a string, use as is
+                        outline_json_str = final_outline_json
+                    else:
+                        # Try to convert to string
+                        outline_json_str = str(final_outline_json)
+                        
+                    logging.info(f"Caching outline with key {cache_key}")
+                    self.vector_store.store_outline_cache(
+                        outline_json=outline_json_str,
+                        cache_key=cache_key,
+                        project_name=project_name,
+                        source_hashes=source_hashes
+                    )
+                
                 return final_outline_json, notebook_content, markdown_content
             else:
                 msg = "Error: Final outline not found"
@@ -195,3 +271,11 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             msg = f"Error generating outline: {str(e)}"
             logging.exception(msg)
             return msg, None, None
+            
+    def clear_outline_cache(self, project_name: Optional[str] = None):
+        """Clear cached outlines for a project or all projects.
+        
+        Args:
+            project_name: Optional project name to clear cache for
+        """
+        self.vector_store.clear_outline_cache(project_name)
