@@ -52,6 +52,12 @@ SECTION INFORMATION:
 Title: {section_title}
 Learning Goals: {learning_goals}
 
+ORIGINAL DOCUMENT STRUCTURE:
+{original_structure}
+
+STRUCTURAL INSIGHTS:
+{structural_insights}
+
 RELEVANT CONTENT:
 {formatted_content}
 
@@ -62,30 +68,38 @@ TASK:
 Write a comprehensive and engaging blog section that:
 
 1. Structure:
+   - Follow the original document structure where applicable
+   - Maintain the hierarchical relationships between topics
    - Start with a clear technical introduction
    - Break down complex concepts into digestible parts
    - Build concepts progressively
    - Conclude with key takeaways
 
-2. Technical Depth:
+2. Content Preservation:
+   - Prioritize using content from the original document
+   - Maintain the original explanations and examples where possible
+   - Preserve the logical flow of the original content
+   - Use the original section headers as a guide
+
+3. Technical Depth:
    - Use appropriate technical terminology and jargon
    - Explain advanced concepts with precision
    - Include relevant technical specifications
    - Reference industry standards where applicable
 
-3. Code Examples:
+4. Code Examples:
    - Provide well-commented code snippets
    - Explain each significant code block
    - Include setup and configuration details
    - Show best practices in implementation
 
-4. Implementation Focus:
+5. Implementation Focus:
    - Include practical implementation details
    - Highlight common pitfalls and solutions
    - Discuss performance considerations
    - Address security implications if relevant
 
-5. Educational Style:
+6. Educational Style:
    - Use professional technical tone
    - Include callouts for important points
    - Add technical tips and tricks
@@ -104,11 +118,14 @@ Ensure the content is:
 - Well-structured
 - Practical and implementable
 - Suitable for professional developers
+- Consistent with the original document's organization
     """,
     input_variables=[
         "format_instructions",
         "section_title",
         "learning_goals",
+        "original_structure",
+        "structural_insights",
         "formatted_content",
         "previous_context",
     ],
@@ -124,6 +141,12 @@ SECTION INFORMATION:
 Title: {section_title}
 Learning Goals: {learning_goals}
 
+ORIGINAL DOCUMENT STRUCTURE:
+{original_structure}
+
+STRUCTURAL INSIGHTS:
+{structural_insights}
+
 CURRENT CONTENT:
 {existing_content}
 
@@ -132,19 +155,23 @@ ADDITIONAL RELEVANT CONTENT:
 
 TASK:
 Enhance the existing content by:
-1. Adding more technical depth where needed
-2. Improving code examples with better comments and explanations
-3. Adding practical implementation details
-4. Clarifying complex concepts
-5. Adding best practices and tips
-6. Ensuring all learning goals are thoroughly addressed
+1. Following the original document structure where applicable
+2. Preserving the logical flow of the original content
+3. Adding more technical depth where needed
+4. Improving code examples with better comments and explanations
+5. Adding practical implementation details
+6. Clarifying complex concepts
+7. Adding best practices and tips
+8. Ensuring all learning goals are thoroughly addressed
 
 IMPORTANT:
 - Maintain the original structure and flow
+- Prioritize using content from the original document
 - Keep the technical accuracy high
 - Ensure code examples are well-explained
 - Add concrete examples for abstract concepts
 - Highlight key points and takeaways
+- Preserve the hierarchical relationships between topics
 
 FORMAT:
 - Use markdown formatting
@@ -156,6 +183,8 @@ FORMAT:
         "format_instructions",
         "section_title",
         "learning_goals",
+        "original_structure",
+        "structural_insights",
         "existing_content",
         "formatted_content",
     ],
@@ -214,6 +243,7 @@ Evaluate the content on the following criteria:
 3. Clarity: Is the content easy to understand?
 4. Code quality: Are code examples well-written and explained?
 5. Engagement: Is the content engaging and interesting?
+6. Structural consistency: Does it maintain a logical structure that follows the original document's organization?
 
 FORMAT YOUR RESPONSE AS A JSON OBJECT:
 {{
@@ -222,6 +252,7 @@ FORMAT YOUR RESPONSE AS A JSON OBJECT:
     "clarity": 0.0-1.0,
     "code_quality": 0.0-1.0,
     "engagement": 0.0-1.0,
+    "structural_consistency": 0.0-1.0,
     "overall_score": 0.0-1.0,
     "improvement_needed": true/false,
     "improvement_suggestions": ["suggestion1", "suggestion2", ...]
@@ -255,6 +286,14 @@ Revise the content to address all feedback points while:
 3. Enhancing clarity and engagement
 4. Improving code examples if needed
 5. Ensuring all learning goals are thoroughly addressed
+6. Preserving the hierarchical relationships between topics
+7. Maintaining consistency with the original document's organization
+
+IMPORTANT:
+- If the feedback mentions structural consistency, ensure your revisions align with the original document structure
+- Preserve the logical flow of the original content
+- Maintain the hierarchical relationships between topics
+- Use the original section headers as a guide where applicable
 
 FORMAT:
 - Use markdown formatting
@@ -302,6 +341,9 @@ BLOG TITLE: {blog_title}
 DIFFICULTY LEVEL: {difficulty_level}
 PREREQUISITES: {prerequisites}
 
+ORIGINAL DOCUMENT STRUCTURE:
+{original_structure}
+
 SECTIONS:
 {sections_content}
 
@@ -315,6 +357,15 @@ Compile a complete blog post that:
 3. Uses transitions between sections
 4. Ends with a comprehensive conclusion
 5. Maintains consistent formatting and style throughout
+6. Preserves the hierarchical relationships between topics
+7. Maintains the logical flow of the original content
+
+IMPORTANT:
+- Follow the original document structure where applicable
+- Preserve the structure of each section as provided
+- Maintain the hierarchical relationships between topics
+- Ensure the blog follows a logical progression that aligns with the original document's organization
+- Use the transitions to create smooth connections between sections while preserving the original flow
 
 FORMAT:
 - Use markdown formatting
@@ -327,6 +378,7 @@ FORMAT:
         "blog_title",
         "difficulty_level",
         "prerequisites",
+        "original_structure",
         "sections_content",
         "transitions",
     ],
@@ -342,25 +394,31 @@ SECTION INFORMATION:
 Title: {section_title}
 Learning Goals: {learning_goals}
 
+RELEVANT DOCUMENT STRUCTURE:
+{relevant_headers}
+
 CONTENT REFERENCES:
 {content_references}
 
 TASK:
 1. Evaluate each content reference for relevance to the section
-2. Adjust relevance scores if needed
+2. Adjust relevance scores based on structural alignment with original headers
 3. Categorize content appropriately (concept, example, implementation, best_practice)
-4. Identify the most valuable content for this section
+4. Identify how each piece fits into the document structure
+5. Prioritize content that maintains the original document's organization
 
 Your output MUST be a list of JSON objects, each containing:
 - content_snippet: A short snippet of the content for identification
 - adjusted_relevance: A score from 0.0 to 1.0 indicating relevance
 - category: One of "concept", "example", "implementation", "best_practice"
 - notes: Optional notes about why this content is relevant
+- structural_fit: Optional notes about how this content fits into the original document structure
     """,
     input_variables=[
         "format_instructions",
         "section_title",
         "learning_goals",
+        "relevant_headers",
         "content_references",
     ],
 )
