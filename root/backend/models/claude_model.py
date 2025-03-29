@@ -9,7 +9,7 @@ class ClaudeModel:
                 model_name=model_settings.model_name,
                 api_key=model_settings.api_key,
                 temperature=0.2,
-                max_tokens=4000
+                max_tokens=4096
             )
         except Exception as e:
             logging.error(f"Failed to initialize Claude LLM chain: {str(e)}")
@@ -25,4 +25,5 @@ class ClaudeModel:
         return self.llm.invoke(prompt)
 
     async def ainvoke(self, prompt: str):
-        return await self.llm.ainvoke(prompt)
+        response = await self.llm.ainvoke(prompt)
+        return response

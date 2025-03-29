@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
 #from root.backend.utils.file_parser import ParsedContent
 from root.backend.services.vector_store_service import VectorStoreService
+from root.backend.utils.serialization import to_json, model_to_dict, serialize_object
 from dataclasses import asdict
 import json
 
@@ -10,6 +11,7 @@ class ContentAnalysis(BaseModel):
     technical_concepts: List[str]
     complexity_indicators: List[str]
     learning_objectives: List[str]
+    section_structure: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Hierarchical section structure from source content")
 
 class DifficultyLevel(BaseModel):
     level: str = Field(description="Difficulty level (Beginner/Intermediate/Advanced)")
@@ -18,7 +20,7 @@ class DifficultyLevel(BaseModel):
 class Prerequisites(BaseModel):
     required_knowledge: List[str]
     recommended_tools: List[str]
-    setup_instructions: Optional[List[str]] = None
+    setup_instructions: Optional[List[str]] = []
 
 class OutlineSection(BaseModel):
     title: str
@@ -40,10 +42,13 @@ class FinalOutline(BaseModel):
     sections: List[OutlineSection]
     conclusion: str
 
-    def to_json(self) -> str:
-        """Convert the FinalOutline instance to a JSON string."""
-        # Use Pydantic's model_dump() method instead of dataclasses.asdict()
-        return json.dumps(self.model_dump(), indent=2)
+    # def to_json(self) -> str:
+    #     """Convert the FinalOutline instance to a JSON string."""
+    #     return to_json(self, indent=2)
+        
+    # def model_dump(self):
+    #     """Make the object JSON serializable by returning a dictionary representation."""
+    #     return model_to_dict(self)
 
 class OutlineState(BaseModel):
     # Input state

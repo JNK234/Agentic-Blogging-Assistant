@@ -2,9 +2,9 @@
 Simplified vector store service using ChromaDB for content storage and retrieval.
 Supports caching of generated outlines for efficient retrieval.
 """
-from chromadb import Client, Settings
+from chromadb import Client, Settings as ChromaSettings # Renamed to avoid conflict
 from typing import Dict, List, Optional
-from root.backend.services.azure_embedding import AzureEmbeddingFunction
+from root.backend.models.embeddings.embedding_factory import EmbeddingFactory # Import the factory
 import hashlib
 import logging
 import os
@@ -18,16 +18,19 @@ class VectorStoreService:
         try:
             # Setup storage
             os.makedirs("root/data/vector_store", exist_ok=True)
-            
-            # Initialize ChromaDB
-            self.client = Client(Settings(
+
+            # Get the configured embedding function from the factory
+            self.embedding_fn = EmbeddingFactory.get_embedding_function()
+            logging.info(f"Using embedding function: {type(self.embedding_fn).__name__}")
+
+            # Initialize ChromaDB Client
+            self.client = Client(ChromaSettings( # Use renamed Settings
                 persist_directory="root/data/vector_store",
                 anonymized_telemetry=False,
                 is_persistent=True
             ))
-            self.embedding_fn = AzureEmbeddingFunction()
 
-            # Single collection for all content
+            # Get or create the collection, passing the embedding function instance
             self.collection = self.client.get_or_create_collection(
                 name="content",
                 embedding_function=self.embedding_fn
@@ -57,13 +60,10 @@ class VectorStoreService:
             for i, meta in enumerate(metadata):
                 meta["content_hash"] = content_hash
                 meta["chunk_order"] = i  # Add chunk order to metadata
-            
-            embeddings = [self.embedding_fn(chunk) for chunk in chunks]
-            
+                                        
             # Store chunks with ordered IDs
             self.collection.add(
                 documents=chunks,
-                embeddings=embeddings,
                 metadatas=metadata,
                 ids=[f"chunk_{content_hash}_{i:04d}" for i in range(len(chunks))]  # Zero-padded ordering
             )
@@ -169,7 +169,7 @@ class VectorStoreService:
                 "timestamp": datetime.now().isoformat()
             }
             
-            embeddings = [self.embedding_fn(chunk) for chunk in [outline_json]]
+            # embeddings = [self.embedding_fn(chunk) for chunk in [outline_json]]
             
             # Store the outline as a single document - ChromaDB expects a list of documents
             # but the embedding function expects a single string
@@ -177,7 +177,7 @@ class VectorStoreService:
                 documents=[outline_json],  # Keep as a list with a single string
                 metadatas=[metadata],
                 ids=[f"outline_{cache_key}"],
-                embeddings=embeddings  # Skip embedding generation, let ChromaDB handle it
+                # embeddings=embeddings  # Skip embedding generation, let ChromaDB handle it
             )
             
             logging.info(f"Cached outline with key {cache_key} for project {project_name}")

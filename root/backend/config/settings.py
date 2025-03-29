@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 @dataclass
@@ -21,12 +21,19 @@ class OpenAISettings(ModelSettings):
     max_tokens: Optional[int] = 1000
 
 @dataclass
+class SentenceTransformerSettings:
+    """Settings specific to Sentence Transformer models."""
+    model_name: str = "all-MiniLM-L6-v2" # Default to a popular lightweight model
+
+@dataclass
 class AzureSettings(ModelSettings):
     api_base: str
     api_version: str
     deployment_name: str
     embeddings_deployment_name: str
     # model_name: str = "gpt-4o"
+    max_tokens: Optional[int] = 1000
+    
 @dataclass
 class AnthropicSettings(ModelSettings):
     model_name: str = "claude-2"
@@ -39,6 +46,23 @@ class DeepseekSettings(ModelSettings):
     temperature: float = 0.7
     max_tokens: Optional[int] = 1000
 
+@dataclass
+class GeminiSettings(ModelSettings):
+    """Settings specific to Google Gemini models."""
+    model_name: Optional[str] = "gemini-pro" # Default model
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = 2048 # Gemini often has different token limits
+
+@dataclass
+class OpenRouterSettings(ModelSettings):
+    base_url: str = " https://openrouter.ai/api/v1/chat/completions"
+    model_name: str = "openrouter/auto"
+    headers: dict = field(default_factory=lambda: {
+        "HTTP-Referer": os.getenv('OPENROUTER_REFERER_URL'),
+        "X-Title": os.getenv('OPENROUTER_APP_NAME')
+    })
+    max_tokens: Optional[int] = 1000
+
 class Settings:
     """Central settings management"""
     def __init__(self):
@@ -46,10 +70,15 @@ class Settings:
         self._load_settings()
 
     def _load_settings(self):
+        # --- Embedding Provider Selection ---
+        self.embedding_provider = os.getenv('EMBEDDING_PROVIDER', 'azure').lower() # Default to azure
+
+        # --- LLM Provider Settings ---
         # OpenAI settings
         self.openai = OpenAISettings(
             api_key=os.getenv('OPENAI_API_KEY'),
             model_name=os.getenv('OPENAI_MODEL_NAME', 'gpt-3.5-turbo'),
+            max_tokens=os.getenv('OPENAI_MAX_TOKENS', 4096)
         )
         
         # Azure OpenAI settings
@@ -60,28 +89,54 @@ class Settings:
             deployment_name=os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME'),
             embeddings_deployment_name=os.getenv('AZURE_OPENAI_EMBEDDINGS_DEPLOYMENT_NAME'),
             # model_name=os.getenv('AZURE_OPENAI_MODEL_NAME', 'gpt-4o')
+            max_tokens=os.getenv('AZURE_MAX_TOKENS', 4096)
         )
         
         # Anthropic settings
         self.anthropic = AnthropicSettings(
             api_key=os.getenv('ANTHROPIC_API_KEY'),
             model_name=os.getenv('ANTHROPIC_MODEL_NAME', 'claude-3-haiku-20240307'),
+            max_tokens=os.getenv('ANTHROPIC_MAX_TOKENS', 4096)
         )
         
         # Deepseek settings
         self.deepseek = DeepseekSettings(
             api_key=os.getenv('DEEPSEEK_API_KEY'),
             model_name=os.getenv('DEEPSEEK_MODEL_NAME', 'deepseek-chat'),
+            max_tokens=os.getenv('DEEPSEEK_MAX_TOKENS', 4096)
         )
 
+        # OpenRouter settings
+        self.openrouter = OpenRouterSettings(
+            api_key=os.getenv('OPENROUTER_API_KEY'),
+            model_name=os.getenv('OPENROUTER_MODEL_NAME', 'openrouter/auto'),
+            max_tokens=os.getenv('OPENROUTER_MAX_TOKENS', 4096)
+        )
+
+        # Gemini settings
+        self.gemini = GeminiSettings(
+            api_key=os.getenv('GEMINI_API_KEY'),
+            model_name=os.getenv('GEMINI_MODEL_NAME', 'gemini-2.0-flash-001'), # gemini-2.5-pro-exp-03-25
+            max_tokens=os.getenv('GEMINI_MAX_TOKENS', 8192) # Use a reasonable default
+        )
+
+        # --- Embedding Provider Settings ---
+        # Sentence Transformer settings (only model name needed for now)
+        self.sentence_transformer = SentenceTransformerSettings(
+            model_name=os.getenv('SENTENCE_TRANSFORMER_MODEL_NAME', 'all-MiniLM-L6-v2')
+        )
+        # Note: Azure embedding settings are already loaded under self.azure
+
     def get_model_settings(self, provider: str):
-        """Get settings for specific model provider"""
+        """Get settings for specific LLM provider"""
         provider = provider.lower()
         settings_map = {
             'openai': self.openai,
             'azure': self.azure,
-            'claude': self.anthropic,
+            'claude': self.anthropic, # Note: Claude uses AnthropicSettings
             'deepseek': self.deepseek,
+            'openrouter': self.openrouter,
+            'gemini': self.gemini, # Add gemini mapping
         }
         if provider not in settings_map:
             raise ValueError(f"Unknown provider: {provider}")

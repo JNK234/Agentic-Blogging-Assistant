@@ -45,7 +45,7 @@ class ContentParsingAgent(BaseGraphAgent):
             path = Path(file_path)
             # Convert path to absolute path
             path = path.resolve()
-            print(path)
+            # print(path)
             if not path.exists():
                 return False, f"File not found: {file_path}"
             if path.suffix.lower() not in ParserFactory.supported_extensions():
@@ -81,14 +81,18 @@ class ContentParsingAgent(BaseGraphAgent):
                 project_name=project_name
             )
             
+            # print(initial_state.model_dump().keys())
+                        
             # Execute graph
             final_state = await self.run_graph(initial_state)
             
-            if final_state.get("errors", None):
-                logging.error(f"Errors during processing: {final_state.errors}")
+            # print(final_state.keys())
+                        
+            if final_state.get('errors', None):
+                logging.error(f"Errors during processing: {final_state.get('errors', None)}")
                 return None
                 
-            return final_state['content_hash']
+            return final_state.get('content_hash', None)
             
         except Exception as e:
             logging.error(f"Error processing file {file_path}: {e}")
@@ -137,11 +141,12 @@ class ContentParsingAgent(BaseGraphAgent):
                 })
                 
             # Add code segments as sections
-            for code in content.code_segments:
-                sections.append({
-                    "content": code,
-                    "type": "code"
-                })
+            if hasattr(content, 'code_segments') and content.code_segments:
+                for code in content.code_segments:
+                    sections.append({
+                        "content": code,
+                        "type": "code"
+                    })
                 
             chunks = self._chunk_content(sections)
             

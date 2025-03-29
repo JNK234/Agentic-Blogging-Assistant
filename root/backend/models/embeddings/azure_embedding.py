@@ -4,9 +4,10 @@ Azure OpenAI embedding function for ChromaDB.
 from typing import List
 import logging
 from langchain_openai import AzureOpenAIEmbeddings
+from chromadb import Documents, EmbeddingFunction, Embeddings
 from root.backend.config.settings import Settings
 
-class AzureEmbeddingFunction:
+class AzureEmbeddingFunction(EmbeddingFunction):
     """Custom embedding function using Azure OpenAI for ChromaDB."""
     
     def __init__(self):
@@ -25,20 +26,24 @@ class AzureEmbeddingFunction:
             logging.error(f"Failed to initialize Azure OpenAI embeddings: {str(e)}")
             raise
     
-    def __call__(self, input: str) -> List[float]:
+    def __call__(self, input: Documents) -> Embeddings:
         """
-        Generate embeddings for a single text input.
+        Generate embeddings for documents following ChromaDB's EmbeddingFunction protocol.
         
         Args:
-            input: The text to generate embeddings for
+            input: List of text documents to embed
             
         Returns:
-            Embedding as a list of floats
+            List of embeddings, where each embedding is a list of floats
         """
         try:
-            # Generate embeddings
-            embeddings = self.embeddings.embed_documents([input])
-            return embeddings[0]  # Return single embedding
+            # Check if input is empty
+            if not input:
+                return []
+                
+            # Generate embeddings for all documents at once
+            embeddings = self.embeddings.embed_documents(input)
+            return embeddings
         except Exception as e:
             logging.error(f"Error generating embeddings: {str(e)}")
             raise

@@ -16,8 +16,9 @@ class ContentParsingState(BaseModel):
     content_chunks: Optional[List[str]] = None
     metadata: Optional[Dict] = None
     content_hash: Optional[str] = None
+    chunk_metadata: Optional[List] = None
     
     # Error handling
-    errors: List[str] = Field(default_factory=list)
+    errors: List[str] = []
     
     model_config = {"arbitrary_types_allowed": True}

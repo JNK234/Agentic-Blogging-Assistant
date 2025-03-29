@@ -24,14 +24,14 @@ from root.backend.agents.blog_draft_generator_agent import BlogDraftGeneratorAge
 from root.backend.agents.outline_generator_agent import OutlineGeneratorAgent
 from root.backend.agents.content_parsing_agent import ContentParsingAgent
 from root.backend.agents.outline_generator.state import FinalOutline
-
-print(os.listdir())
+from root.backend.services.vector_store_service import VectorStoreService # Added import
 
 load_dotenv()
 
 # 2. Constants and Configuration
 class AppConfig:
-    UPLOAD_PATH = Path("root/data/uploads")
+    # Use relative path from the project root
+    UPLOAD_PATH = Path("root/data/uploads") 
     PAGE_TITLE = "Agentic Blogging Assistant"
     PAGE_ICON = "📝"
     LAYOUT = "wide"
@@ -61,7 +61,9 @@ class SessionManager:
                 'final_draft': None,
                 'show_section_content': False,  # New flag to control section content display
                 'sections_generated': [],
-                'current_section_index': 0
+                'current_section_index': 0,
+                'outline_was_cached': False,    # Added to track outline caching status
+                'files_were_cached': False      # Added to track file caching status
             }
     
     @staticmethod
@@ -87,8 +89,44 @@ class SidebarUI:
                 # LLM type selection
                 llm_provider = st.selectbox(
                     "Select LLM Provider",
-                    ["Deepseek", "Claude", "OpenAI"]
+                    ["Deepseek", "Claude", "OpenAI", "Gemini", "openrouter"] # Added Gemini
                 )
+                
+                # OpenRouter specific settings
+                openrouter_model = None
+                max_tokens = None
+                temperature = None
+                
+                if llm_provider == "OpenRouter":
+                    openrouter_model = st.selectbox(
+                        "Select OpenRouter Model",
+                        [
+                            "openrouter/auto",  # Default auto-selection
+                            "anthropic/claude-3-opus",
+                            "anthropic/claude-3-sonnet",
+                            "anthropic/claude-3-haiku",
+                            "google/gemini-pro",
+                            "meta-llama/llama-2-70b-chat",
+                            "mistral/mistral-medium",
+                            "mistral/mistral-small"
+                        ]
+                    )
+                    temperature = st.slider(
+                        "Temperature",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.7,
+                        step=0.1,
+                        help="Controls randomness in the output. Higher values make the output more random, lower values make it more deterministic."
+                    )
+                    max_tokens = st.number_input(
+                        "Max Tokens",
+                        min_value=100,
+                        max_value=4096,
+                        value=1000,
+                        step=100,
+                        help="Maximum number of tokens to generate"
+                    )
                 
                 # File uploaders
                 notebook_file = st.file_uploader("Upload Jupyter Notebook", type=["ipynb"])
@@ -113,40 +151,57 @@ class SidebarUI:
                         with st.spinner("Initializing LLM..."):
                             try:
                                 # Initialize model
-                                model = ModelFactory().create_model(llm_provider)
+                                model_factory = ModelFactory()
+                                
+                                model = model_factory.create_model(llm_provider.lower())
                                 SessionManager.set('model', model)
                                 
                                 # Store project name
                                 SessionManager.set('project_name', blog_name)
                                 
-                                # Initialize content parser
-                                content_parser = ContentParsingAgent(model)
-                                asyncio.run(content_parser.initialize())
+                                # Create and initialize all agents in a single async operation
+                                async def initialize_agents():
+                                    # Initialize content parser
+                                    content_parser = ContentParsingAgent(model)
+                                    await content_parser.initialize()
+                                    
+                                    # Initialize outline agent
+                                    outline_agent = OutlineGeneratorAgent(model, content_parser)
+                                    await outline_agent.initialize()
+                                    
+                                    # Initialize draft agent
+                                    draft_agent = BlogDraftGeneratorAgent(model, content_parser)
+                                    await draft_agent.initialize()
+                                    
+                                    return content_parser, outline_agent, draft_agent
+                                
+                                # Run initialization and store results
+                                content_parser, outline_agent, draft_agent = asyncio.run(initialize_agents())
                                 SessionManager.set('content_parser', content_parser)
-                                
-                                # Initialize outline agent
-                                outline_agent = OutlineGeneratorAgent(model, content_parser)
-                                asyncio.run(outline_agent.initialize())
                                 SessionManager.set('outline_agent', outline_agent)
-                                
-                                # Initialize draft agent
-                                draft_agent = BlogDraftGeneratorAgent(model, content_parser)
-                                asyncio.run(draft_agent.initialize())
                                 SessionManager.set('draft_agent', draft_agent)
                                 
                                 st.sidebar.success("Assistant initialized successfully!")
+                                
+                                # Show a notification if cached files were used
+                                if SessionManager.get('files_were_cached', False):
+                                    st.sidebar.info("♻️ Using cached content from previously processed files")
+                                    
                                 st.sidebar.write("Project Details:")
                                 st.sidebar.write(f"- Blog Name: {blog_name}")
                                 st.sidebar.write(f"- LLM Provider: {llm_provider}")
                                 for file in saved_files:
                                     st.sidebar.write(f"✓ {file}")
                             except ValueError as e:
+                                logger.error(f"SidebarUI.render: Failed to initialize LLM: {str(e)}", exc_info=True)
                                 st.sidebar.error(f"Failed to initialize LLM: {str(e)}")
                                 SessionManager.set('model', None)
                             except Exception as e:
-                                st.sidebar.error(f"An error occurred: {str(e)}")
+                                logger.error(f"SidebarUI.render: Error during LLM/agent initialization: {str(e)}", exc_info=True)
+                                st.sidebar.error(f"An error occurred during initialization: {str(e)}")
                     except Exception as e:
-                        st.sidebar.error(f"An error occurred: {str(e)}")
+                        logger.error(f"SidebarUI.render: Error saving files: {str(e)}", exc_info=True)
+                        st.sidebar.error(f"An error occurred while saving files: {str(e)}")
 
 class OutlineGeneratorUI:
     def render(self):
@@ -170,86 +225,217 @@ class OutlineGeneratorUI:
 
         # Handle outline generation
         if generate_outline_button:
-            async def generate():
-                if not SessionManager.get('notebook_path') or not SessionManager.get('markdown_path'):
-                    st.error("Please upload both Jupyter Notebook and Markdown files first.")
-                elif not SessionManager.get('outline_agent') or not SessionManager.get('content_parser'):
-                    st.error("Failed to initialize required agents.")
-                else:
+            # Check prerequisites synchronously first
+            if not (SessionManager.get('notebook_path') or SessionManager.get('markdown_path')):
+                st.error("Please upload at least one file (Jupyter Notebook or Markdown) first.")
+            elif not SessionManager.get('outline_agent') or not SessionManager.get('content_parser'):
+                st.error("Failed to initialize required agents.")
+            else:
+                # Define the async workflow
+                async def generate_outline_async():
                     try:
                         project_name = SessionManager.get('project_name')
                         notebook_path = SessionManager.get('notebook_path')
                         markdown_path = SessionManager.get('markdown_path')
                         content_parser = SessionManager.get('content_parser')
                         outline_agent = SessionManager.get('outline_agent')
-                        model = SessionManager.get('model')
                         
-                        # Process files with content parser
-                        with st.spinner("Processing input files..."):
-                            notebook_hash = await content_parser.process_file_with_graph(notebook_path, project_name)
-                            markdown_hash = await content_parser.process_file_with_graph(markdown_path, project_name)
-                            
-                            if not notebook_hash or not markdown_hash:
-                                st.error("Failed to process input files")
-                                return
-                                
-                            # Store hashes in session state
-                            SessionManager.set('notebook_hash', notebook_hash)
-                            SessionManager.set('markdown_hash', markdown_hash)
+                        # Get existing content hashes from session state if available
+                        # Retrieve paths from session state
+                        notebook_path = SessionManager.get('notebook_path')
+                        markdown_path = SessionManager.get('markdown_path')
                         
-                        # Generate outline using the content hashes
+                        # Initialize hashes to None
+                        processed_notebook_hash = None
+                        processed_markdown_hash = None
+
+                        # Always attempt to process files if paths exist.
+                        # The content_parser agent has internal checks to avoid reprocessing.
+                        if notebook_path:
+                            with st.spinner("Processing notebook file (checking cache)..."):
+                                logger.info(f"Ensuring notebook file is processed: {notebook_path}")
+                                # process_file_with_graph returns the hash if processed or found in cache
+                                processed_notebook_hash = await content_parser.process_file_with_graph(notebook_path, project_name)
+                                if processed_notebook_hash:
+                                    SessionManager.set('notebook_hash', processed_notebook_hash) # Update session hash
+                                    logger.info(f"Notebook hash confirmed/processed: {processed_notebook_hash}")
+                                else:
+                                    logger.error(f"Failed to process notebook: {notebook_path}")
+                                    st.error(f"Failed to process notebook: {Path(notebook_path).name}")
+                                    
+                        if markdown_path:
+                            with st.spinner("Processing markdown file (checking cache)..."):
+                                logger.info(f"Ensuring markdown file is processed: {markdown_path}")
+                                # process_file_with_graph returns the hash if processed or found in cache
+                                processed_markdown_hash = await content_parser.process_file_with_graph(markdown_path, project_name)
+                                if processed_markdown_hash:
+                                    SessionManager.set('markdown_hash', processed_markdown_hash) # Update session hash
+                                    logger.info(f"Markdown hash confirmed/processed: {processed_markdown_hash}")
+                                else:
+                                    logger.error(f"Failed to process markdown: {markdown_path}")
+                                    st.error(f"Failed to process markdown: {Path(markdown_path).name}")
+
+                        # Check if we have at least one valid content source *after* processing attempts
+                        if not processed_notebook_hash and not processed_markdown_hash:
+                            st.error("Failed to process any input files")
+                            return
+                        
+                        # Log cache key components for debugging using the processed hashes
+                        cache_key_components = {
+                            "project_name": project_name,
+                            "notebook_hash": processed_notebook_hash,
+                            "markdown_hash": processed_markdown_hash
+                        }
+                        logger.info(f"Cache key components: {cache_key_components}")
+
+                        # Generate outline using the processed content hashes
                         with st.spinner("Generating outline..."):
-                            outline_json, notebook_content, markdown_content = await outline_agent.generate_outline(
+                            outline_result, notebook_content, markdown_content, was_cached = await outline_agent.generate_outline(
                                 project_name=project_name,
-                                notebook_hash=notebook_hash,
-                                markdown_hash=markdown_hash
+                                notebook_hash=processed_notebook_hash, # Use processed hash
+                                markdown_hash=processed_markdown_hash  # Use processed hash
                             )
-                            
-                            if not outline_json:
-                                st.error("Outline generation failed")
+
+                            # Store cache status for UI notification
+                            SessionManager.set('outline_was_cached', was_cached)
+
+                            # --- Start: Ensure content is loaded if outline was cached ---
+                            if was_cached:
+                                logger.info("Outline was retrieved from cache. Verifying content availability...")
+                                vector_store = VectorStoreService() # Initialize service to fetch content
+
+                                # Check and fetch notebook content if needed
+                                if processed_notebook_hash and not notebook_content:
+                                    logger.info(f"Notebook content missing for cached outline. Fetching using hash: {processed_notebook_hash}")
+                                    try:
+                                        # Fetch content based on hash and project name
+                                        cached_docs = vector_store.search_content(
+                                            metadata_filter={
+                                                "content_hash": processed_notebook_hash,
+                                                "project_name": project_name,
+                                                "file_type": ".ipynb" # Ensure correct file type
+                                            },
+                                            limit=1 # Expecting only one match
+                                        )
+                                        if cached_docs:
+                                            # Assuming the content is stored in page_content or similar field
+                                            # Adjust based on actual vector store document structure
+                                            notebook_content = cached_docs[0].get("page_content")
+                                            if notebook_content:
+                                                logger.info("Successfully fetched cached notebook content.")
+                                            else:
+                                                logger.warning("Fetched document for notebook hash, but content field is missing/empty.")
+                                        else:
+                                            logger.warning(f"Could not find cached notebook content for hash: {processed_notebook_hash}")
+                                    except Exception as fetch_err:
+                                        logger.error(f"Error fetching cached notebook content: {fetch_err}", exc_info=True)
+
+                                # Check and fetch markdown content if needed
+                                if processed_markdown_hash and not markdown_content:
+                                    logger.info(f"Markdown content missing for cached outline. Fetching using hash: {processed_markdown_hash}")
+                                    try:
+                                        # Fetch content based on hash and project name
+                                        cached_docs = vector_store.search_content(
+                                            metadata_filter={
+                                                "content_hash": processed_markdown_hash,
+                                                "project_name": project_name,
+                                                "file_type": ".md" # Ensure correct file type
+                                            },
+                                            limit=1 # Expecting only one match
+                                        )
+                                        if cached_docs:
+                                            # Assuming the content is stored in page_content or similar field
+                                            markdown_content = cached_docs[0].get("page_content")
+                                            if markdown_content:
+                                                logger.info("Successfully fetched cached markdown content.")
+                                            else:
+                                                logger.warning("Fetched document for markdown hash, but content field is missing/empty.")
+                                        else:
+                                            logger.warning(f"Could not find cached markdown content for hash: {processed_markdown_hash}")
+                                    except Exception as fetch_err:
+                                        logger.error(f"Error fetching cached markdown content: {fetch_err}", exc_info=True)
+                            # --- End: Ensure content is loaded if outline was cached ---
+
+                            if not outline_result or (isinstance(outline_result, str) and "error" in outline_result.lower()):
+                                st.error(f"Outline generation failed: {outline_result}")
                                 return
-                                
+
+                            # Handle different return types (ensure this happens *after* potential content fetching)
+                            if isinstance(outline_result, str):
+                                try:
+                                    # Try to parse as JSON
+                                    outline_obj = json.loads(outline_result)
+                                except json.JSONDecodeError:
+                                    st.error(f"Invalid outline format: {outline_result}")
+                                    return
+                            else:
+                                # Already an object
+                                outline_obj = outline_result
+                            
                             # Store processed content and outline
                             SessionManager.set('notebook_content', notebook_content)
                             SessionManager.set('markdown_content', markdown_content)
-                            SessionManager.set('generated_outline', json.loads(outline_json))
+                            SessionManager.set('generated_outline', outline_obj)
                             
-                            st.success("Outline generated successfully!")
-                            
-                            # Render the outline
-                            self._render_outline(outline_json)
-                            
-                            # Add button to navigate to Blog Draft tab
-                            def switch_to_blog_draft():
-                                SessionManager.set('current_tab', "Blog Draft")
-                                
-                            st.button("Continue to Blog Draft", on_click=switch_to_blog_draft)
-
+                            return True
                     except Exception as e:
-                        st.error(f"An error occurred: {type(e).__name__}: {str(e)}")
-            
-            asyncio.run(generate())
+                        logger.exception(f"OutlineGeneratorUI.generate_outline_async: Error generating outline: {str(e)}")
+                        st.error(f"An error occurred during outline generation: {type(e).__name__}: {str(e)}")
+                        return False
+                
+                # Run the async workflow and handle the result
+                if asyncio.run(generate_outline_async()):
+                    # Show appropriate success message based on cache status
+                    if SessionManager.get('outline_was_cached', False):
+                        st.success("✅ Outline retrieved from cache!")
+                        st.info("Using cached outline from previous generation with the same content.")
+                    else:
+                        st.success("✅ Outline generated successfully!")
+                    
+                    # Render the outline
+                    self._render_outline(SessionManager.get('generated_outline'))
+                    
+                    # Add button to navigate to Blog Draft tab
+                    def switch_to_blog_draft():
+                        SessionManager.set('current_tab', "Blog Draft")
+                        
+                    st.button("Continue to Blog Draft", on_click=switch_to_blog_draft)
 
     def _render_outline(self, outline_data):
         """Render the complete outline."""
-        # Handle string input
-        
-        # print(type(outline_data.model_dump()))
-        
-        if isinstance(outline_data, FinalOutline):
-            outline_data = outline_data.model_dump()
-        
-        if isinstance(outline_data, str):
-            try:
-                import json
-                outline_data = json.loads(outline_data)
-            except json.JSONDecodeError:
-                st.error("Failed to parse outline. Invalid JSON format.")
-                st.text(outline_data)  # Show raw string as fallback
+        # Handle different input types to ensure consistent dictionary format
+        try:
+            # Case 1: It's a FinalOutline object
+            if isinstance(outline_data, FinalOutline):
+                outline_data = outline_data.model_dump()
+            
+            # Case 2: It's a string (JSON)
+            elif isinstance(outline_data, str):
+                try:
+                    outline_data = json.loads(outline_data)
+                except json.JSONDecodeError:
+                    st.error("Failed to parse outline. Invalid JSON format.")
+                    st.text(outline_data)  # Show raw string as fallback
+                    return
+            
+            # Case 3: Neither a dict nor any of above
+            if not isinstance(outline_data, dict):
+                st.error(f"Invalid outline format. Expected dictionary but got {type(outline_data)}.")
+                st.text(str(outline_data))  # Show raw value as fallback
                 return
-
-        if not isinstance(outline_data, dict):
-            st.error("Invalid outline format. Expected a dictionary.")
+                
+            # At this point, outline_data should be a dictionary
+            logger.info(f"Rendering outline: {outline_data.get('title', 'Untitled')}")
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"OutlineGeneratorUI._render_outline: Failed to parse outline JSON: {str(e)}", exc_info=True)
+            st.error(f"Failed to parse outline data: Invalid JSON format.")
+            st.text(str(outline_data)) # Show raw data as fallback
+            return
+        except Exception as e:
+            logger.exception(f"OutlineGeneratorUI._render_outline: Error processing outline data: {str(e)}")
+            st.error(f"Error processing outline data: {type(e).__name__}: {str(e)}")
+            st.text(str(outline_data)) # Show raw data as fallback
             return
 
         st.title(outline_data["title"])
@@ -289,8 +475,11 @@ class OutlineGeneratorUI:
             
             # Setup Instructions
             st.subheader("Setup Instructions")
-            for instruction in prerequisites["setup_instructions"]:
-                st.markdown(f"- {instruction}")
+            if prerequisites.get("setup_instructions") is None or not prerequisites.get("setup_instructions"):
+                st.markdown("No setup instructions provided.")
+            else:
+                for instruction in prerequisites.get("setup_instructions"):
+                    st.markdown(f"- {instruction}")
 
     def _render_section(self, section):
         """Render a single section of the outline."""
@@ -338,8 +527,13 @@ class BlogDraftUI:
             st.warning("Please generate an outline first before proceeding to draft generation.")
             return False
         
-        if not SessionManager.get('notebook_content') or not SessionManager.get('markdown_content'):
-            st.warning("Missing processed content. Please regenerate the outline.")
+        # Check if at least one content source is available
+        notebook_content_present = SessionManager.get('notebook_content') is not None
+        markdown_content_present = SessionManager.get('markdown_content') is not None
+        
+        if not notebook_content_present and not markdown_content_present:
+            st.warning("Missing processed content for both notebook and markdown. Please regenerate the outline or check file processing.")
+            logger.warning("Validation failed: Neither notebook nor markdown content is available.")
             return False
             
         return True
@@ -449,12 +643,44 @@ class BlogDraftUI:
             
             # Generate the current section
             with st.spinner(f"Generating section {current_section_index + 1}: {current_section['title']}..."):
-                asyncio.run(self._generate_section(current_section_index))
+                # Create a placeholder for real-time progress updates
+                progress_message = st.empty()
+                progress_message.info("Starting generation...")
+                
+                # Run the async operation
+                result = asyncio.run(self._generate_section(current_section_index, progress_callback=progress_message.info))
+                
+                # Clear progress message on completion
+                progress_message.empty()
+                
+                if not result:
+                    st.error(f"Failed to generate section {current_section_index + 1}")
+                else:
+                    st.success(f"Section {current_section_index + 1} generated successfully!")
     
-    async def _generate_section(self, section_index):
-        """Generate a single section of the blog draft."""
+    async def _generate_section(self, section_index, progress_callback=None):
+        """Generate a single section of the blog draft.
+        
+        Args:
+            section_index: Index of the section to generate
+            progress_callback: Optional function to call with status updates
+        
+        Returns:
+            Boolean indicating success or failure
+        """
         logger.info(f"Generating section {section_index + 1}")
-        progress_placeholder = st.empty()
+        
+        # Use callback if provided, otherwise create placeholders
+        if progress_callback:
+            def update_progress(msg):
+                logger.info(msg)
+                progress_callback(msg)
+        else:
+            progress_placeholder = st.empty()
+            def update_progress(msg):
+                logger.info(msg)
+                progress_placeholder.info(msg)
+                
         error_placeholder = st.empty()
         
         try:
@@ -464,16 +690,22 @@ class BlogDraftUI:
             markdown_content = SessionManager.get('markdown_content')
             draft_agent = SessionManager.get('draft_agent')
             
-            if not all([outline, notebook_content, markdown_content, draft_agent]):
-                logger.error("Missing required data for section generation")
-                error_placeholder.error("Missing required data for section generation.")
-                return
+            # Check for essential components and at least one content source
+            if not outline or not draft_agent or (not notebook_content and not markdown_content):
+                missing_items = []
+                if not outline: missing_items.append("outline")
+                if not draft_agent: missing_items.append("draft_agent")
+                if not notebook_content and not markdown_content: missing_items.append("notebook/markdown content")
+                
+                error_message = f"Missing required data for section generation: {', '.join(missing_items)}"
+                logger.error(error_message)
+                error_placeholder.error(error_message)
+                return False # Return False on failure
             
             current_section = outline['sections'][section_index]
             
             # Show progress message
-            progress_placeholder.info(f"Starting generation for section: {current_section['title']}...")
-            logger.info(f"Starting generation for section: {current_section['title']}")
+            update_progress(f"Starting generation for section: {current_section['title']}...")
             
             # Reset the draft agent's state for this section to ensure fresh generation
             # This ensures we don't reuse cached state from previous generations
@@ -481,14 +713,27 @@ class BlogDraftUI:
                 draft_agent.current_state = None
                 logger.info("Reset draft agent state to ensure fresh generation")
             
-            # Set a timeout for section generation (10 minutes)
-            import asyncio
+            # Convert outline to proper format if needed
             try:
+                if not isinstance(outline, FinalOutline):
+                    outline_obj = FinalOutline.model_validate(outline)
+                else:
+                    outline_obj = outline
+            except Exception as e:
+                logger.error(f"Failed to validate outline: {str(e)}")
+                error_placeholder.error(f"Invalid outline format: {str(e)}")
+                return False
+                
+            # Set a timeout for section generation (10 minutes)
+            try:
+                # Show progress updates during generation
+                update_progress(f"Mapping content for section: {current_section['title']}...")
+                
                 # Generate the section content with timeout
                 section_content = await asyncio.wait_for(
                     draft_agent.generate_section(
                         section=current_section,
-                        outline=FinalOutline.model_validate(outline),
+                        outline=outline_obj,
                         notebook_content=notebook_content,
                         markdown_content=markdown_content,
                         current_section_index=section_index,
@@ -497,10 +742,13 @@ class BlogDraftUI:
                     ),
                     timeout=600  # 10 minutes timeout
                 )
+                
+                update_progress(f"Completed generation for section: {current_section['title']}")
+                
             except asyncio.TimeoutError:
-                logger.error(f"Section generation timed out for {current_section['title']}")
+                logger.error(f"BlogDraftUI._generate_section: Section generation timed out for {current_section['title']}", exc_info=True)
                 error_placeholder.error(f"Section generation timed out after 10 minutes. Please try again with fewer iterations.")
-                return
+                return False
             
             # Log the result for debugging
             logger.info(f"Section generation result for {current_section['title']}: {'Success' if section_content else 'Failed'}")
@@ -540,29 +788,27 @@ class BlogDraftUI:
                 logger.info(f"Section {section_index + 1} ({current_section['title']}) generated successfully")
                 logger.info(f"Updated sections_generated list now has {len(sections_generated)} sections")
                 
-                # Clear progress message and show success
-                progress_placeholder.empty()
-                st.success(f"Section {section_index + 1} ({current_section['title']}) generated successfully!")
-                
-                # Force a rerun to update the UI
-                st.rerun()
+                # We'll let the caller handle UI updates to avoid rerun loops
+                return True
             else:
                 logger.error(f"Failed to generate section {section_index + 1} ({current_section['title']})")
-                progress_placeholder.empty()
                 error_placeholder.error(f"Failed to generate section {section_index + 1} ({current_section['title']}). Check logs for details.")
+                return False
                 
         except Exception as e:
-            logger.exception(f"Error generating section {section_index + 1}: {str(e)}")
-            progress_placeholder.empty()
+            logger.exception(f"BlogDraftUI._generate_section: Error generating section {section_index + 1}: {str(e)}")
             
             # Provide more helpful error message for recursion limit errors
-            if "recursion limit" in str(e).lower():
-                error_placeholder.error(
+            if isinstance(e, RecursionError) or "recursion limit" in str(e).lower():
+                error_msg = (
                     f"Error generating section {section_index + 1}: Recursion limit reached. " +
                     "This is likely due to complexity in the section. Try again with fewer iterations."
                 )
             else:
-                error_placeholder.error(f"Error generating section {section_index + 1}: {str(e)}")
+                error_msg = f"Error generating section {section_index + 1}: {str(e)}"
+                
+            error_placeholder.error(error_msg)
+            return False
     
     async def _regenerate_section_with_feedback(self, section_index, feedback):
         """Regenerate a section with user feedback."""
@@ -578,10 +824,18 @@ class BlogDraftUI:
             draft_agent = SessionManager.get('draft_agent')
             sections_generated = SessionManager.get('sections_generated', [])
             
-            if not all([outline, notebook_content, markdown_content, draft_agent]) or section_index >= len(sections_generated):
-                logger.error("Missing required data for section regeneration")
-                error_placeholder.error("Missing required data for section regeneration.")
-                return
+            # Check for essential components and at least one content source
+            if not outline or not draft_agent or (not notebook_content and not markdown_content) or section_index >= len(sections_generated):
+                missing_items = []
+                if not outline: missing_items.append("outline")
+                if not draft_agent: missing_items.append("draft_agent")
+                if not notebook_content and not markdown_content: missing_items.append("notebook/markdown content")
+                if section_index >= len(sections_generated): missing_items.append("valid section index")
+
+                error_message = f"Missing required data for section regeneration: {', '.join(missing_items)}"
+                logger.error(error_message)
+                error_placeholder.error(error_message)
+                return # Return early on failure
             
             section = sections_generated[section_index]
             
@@ -612,7 +866,7 @@ class BlogDraftUI:
                     timeout=600  # 10 minutes timeout
                 )
             except asyncio.TimeoutError:
-                logger.error(f"Section regeneration timed out for {section['title']}")
+                logger.error(f"BlogDraftUI._regenerate_section_with_feedback: Section regeneration timed out for {section['title']}", exc_info=True)
                 progress_placeholder.empty()
                 error_placeholder.error(f"Section regeneration timed out after 10 minutes. Please try again with fewer iterations.")
                 return
@@ -649,11 +903,11 @@ class BlogDraftUI:
                 error_placeholder.error(f"Failed to regenerate section {section_index + 1} ({section['title']}). Check logs for details.")
                 
         except Exception as e:
-            logger.exception(f"Error regenerating section {section_index + 1}: {str(e)}")
+            logger.exception(f"BlogDraftUI._regenerate_section_with_feedback: Error regenerating section {section_index + 1}: {str(e)}")
             progress_placeholder.empty()
             
             # Provide more helpful error message for recursion limit errors
-            if "recursion limit" in str(e).lower():
+            if isinstance(e, RecursionError) or "recursion limit" in str(e).lower():
                 error_placeholder.error(
                     f"Error regenerating section {section_index + 1}: Recursion limit reached. " +
                     "This is likely due to complexity in the section. Try again with fewer iterations."
@@ -678,10 +932,30 @@ class BlogDraftUI:
             blog_parts = [
                 f"# {outline['title']}\n",
                 f"**Difficulty Level**: {outline['difficulty_level']}\n",
-                "\n## Prerequisites\n",
-                f"{outline['prerequisites']}\n\n",
-                "## Table of Contents\n"
+                "\n## Prerequisites\n"
             ]
+
+            # Add prerequisites (handle structured dict like FastAPI)
+            prerequisites = outline.get("prerequisites", {})
+            if isinstance(prerequisites, dict):
+                if "required_knowledge" in prerequisites:
+                    blog_parts.append("\n### Required Knowledge\n")
+                    for item in prerequisites["required_knowledge"]:
+                        blog_parts.append(f"- {item}\n")
+                        
+                if "recommended_tools" in prerequisites:
+                    blog_parts.append("\n### Recommended Tools\n")
+                    for tool in prerequisites["recommended_tools"]:
+                        blog_parts.append(f"- {tool}\n")
+                        
+                if "setup_instructions" in prerequisites:
+                    blog_parts.append("\n### Setup Instructions\n")
+                    for instruction in prerequisites["setup_instructions"]:
+                        blog_parts.append(f"- {instruction}\n")
+            elif isinstance(prerequisites, str): # Fallback for simple string
+                blog_parts.append(f"{prerequisites}\n")
+            
+            blog_parts.append("\n## Table of Contents\n")
             
             # Add table of contents
             for i, section in enumerate(sections_generated):
@@ -717,8 +991,8 @@ class BlogDraftUI:
             st.rerun()
             
         except Exception as e:
-            logger.exception(f"Error compiling final draft: {str(e)}")
-            st.error(f"Error compiling final draft: {str(e)}")
+            logger.exception(f"BlogDraftUI._compile_final_draft: Error compiling final draft: {str(e)}")
+            st.error(f"Error compiling final draft: {type(e).__name__}: {str(e)}")
 
 class SettingsUI:
     def render(self):
@@ -729,28 +1003,119 @@ class SettingsUI:
 class FileHandler:
     @staticmethod
     def save_uploaded_files(blog_name, notebook_file, markdown_file):
-        """Save uploaded files to the appropriate directory."""
-        # Create blog project directory
-        blog_dir = AppConfig.UPLOAD_PATH / blog_name
-        blog_dir.mkdir(parents=True, exist_ok=True)
+        """Save uploaded files to the appropriate directory, checking for cached content."""
+        try:
+            # Create blog project directory
+            blog_dir = AppConfig.UPLOAD_PATH / blog_name
+            blog_dir.mkdir(parents=True, exist_ok=True)
             
-        # Save files if they were uploaded
-        saved_files = []
-        if notebook_file is not None:
-            notebook_path = blog_dir / notebook_file.name
-            with open(notebook_path, "wb") as f:
-                f.write(notebook_file.getbuffer())
-            SessionManager.set('notebook_path', str(notebook_path))
-            saved_files.append(f"Notebook: {notebook_file.name}")
+            logger.info(f"Created directory: {blog_dir}")
+            
+            # Initialize vector store for content hash checking
+            vector_store = VectorStoreService()
                 
-        if markdown_file is not None:
-            markdown_path = blog_dir / markdown_file.name
-            with open(markdown_path, "wb") as f:
-                f.write(markdown_file.getbuffer())
-            SessionManager.set('markdown_path', str(markdown_path))
-            saved_files.append(f"Markdown: {markdown_file.name}")
+            # Save files if they were uploaded
+            saved_files = []
             
-        return saved_files
+            # Process notebook file
+            if notebook_file is not None:
+                # Clean the filename to avoid special characters
+                notebook_filename = notebook_file.name.replace(" ", "_")
+                notebook_path = blog_dir / notebook_filename
+                
+                # Read content into memory to compute hash before saving
+                notebook_content = notebook_file.getbuffer()
+                content_hash = vector_store.compute_content_hash(
+                    notebook_content.tobytes().decode('utf-8', errors='ignore'), 
+                    ""
+                )
+                
+                # Check if file with this hash already exists in the project
+                existing_content = vector_store.search_content(
+                    metadata_filter={
+                        "content_hash": content_hash,
+                        "project_name": blog_name,
+                        "file_type": ".ipynb"
+                    }
+                )
+                
+                if existing_content:
+                    logger.info(f"Using cached notebook with hash: {content_hash}")
+                    # Use the existing file path from metadata
+                    existing_path = existing_content[0].get("metadata", {}).get("file_path")
+                    if existing_path and Path(existing_path).exists():
+                        notebook_path = Path(existing_path)
+                        logger.info(f"Using existing notebook file: {notebook_path}")
+                        # Update files_were_cached in the session state
+                        SessionManager.set('files_were_cached', True)
+                    else:
+                        # Save the file anyway if the existing path is invalid
+                        with open(notebook_path, "wb") as f:
+                            f.write(notebook_content)
+                        logger.info(f"Saved notebook file to: {notebook_path} (existing path invalid)")
+                else:
+                    # Save new file
+                    with open(notebook_path, "wb") as f:
+                        f.write(notebook_content)
+                    logger.info(f"Saved new notebook file to: {notebook_path}")
+                
+                # Store the absolute path and hash in session state
+                SessionManager.set('notebook_path', str(notebook_path))
+                SessionManager.set('notebook_hash', content_hash)
+                saved_files.append(f"Notebook: {notebook_filename} (Hash: {content_hash[:8]}...)")
+                    
+            # Process markdown file
+            if markdown_file is not None:
+                # Clean the filename to avoid special characters
+                markdown_filename = markdown_file.name.replace(" ", "_")
+                markdown_path = blog_dir / markdown_filename
+                
+                # Read content into memory to compute hash before saving
+                markdown_content = markdown_file.getbuffer()
+                content_hash = vector_store.compute_content_hash(
+                    markdown_content.tobytes().decode('utf-8', errors='ignore'), 
+                    ""
+                )
+                
+                # Check if file with this hash already exists in the project
+                existing_content = vector_store.search_content(
+                    metadata_filter={
+                        "content_hash": content_hash,
+                        "project_name": blog_name,
+                        "file_type": ".md"
+                    }
+                )
+                
+                if existing_content:
+                    logger.info(f"Using cached markdown with hash: {content_hash}")
+                    # Use the existing file path from metadata
+                    existing_path = existing_content[0].get("metadata", {}).get("file_path")
+                    if existing_path and Path(existing_path).exists():
+                        markdown_path = Path(existing_path)
+                        logger.info(f"Using existing markdown file: {markdown_path}")
+                        # Update files_were_cached in the session state
+                        SessionManager.set('files_were_cached', True)
+                    else:
+                        # Save the file anyway if the existing path is invalid
+                        with open(markdown_path, "wb") as f:
+                            f.write(markdown_content)
+                        logger.info(f"Saved markdown file to: {markdown_path} (existing path invalid)")
+                else:
+                    # Save new file
+                    with open(markdown_path, "wb") as f:
+                        f.write(markdown_content)
+                    logger.info(f"Saved new markdown file to: {markdown_path}")
+                
+                # Store the absolute path and hash in session state
+                SessionManager.set('markdown_path', str(markdown_path))
+                SessionManager.set('markdown_hash', content_hash)
+                saved_files.append(f"Markdown: {markdown_filename} (Hash: {content_hash[:8]}...)")
+                
+            return saved_files
+        except Exception as e:
+            logger.error(f"FileHandler.save_uploaded_files: Error saving uploaded files: {str(e)}", exc_info=True)
+            # Re-raise the exception to be caught by the caller (SidebarUI)
+            raise e
 
 # 6. Main Application
 class BloggingAssistant:

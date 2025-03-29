@@ -29,6 +29,9 @@ File Metadata:
 Notebook: {notebook_content_metadata}
 Markdown: {markdown_content_metadata}
 
+Section Headers (from markdown):
+{markdown_section_headers}
+
 Guidelines:
 1. Main Topics: Extract the main topics covered in both notebook and markdown content
 2. Technical Concepts: Identify specific technical concepts from code blocks and explanations
@@ -42,12 +45,17 @@ Guidelines:
    - Concepts to be mastered
    - Practical applications
    - Expected outcomes
+5. Section Structure: Consider the existing section headers from the markdown content
+   - Use them as guidance for the blog structure
+   - Maintain the hierarchical relationships between topics
+   - Incorporate the logical flow of the original content
 
-Your output MUST be a valid JSON object that includes ALL four of the following lists:
+Your output MUST be a valid JSON object that includes ALL of the following:
 - main_topics: List of primary topics covered
 - technical_concepts: List of specific technical concepts
 - complexity_indicators: List of elements indicating complexity
 - learning_objectives: List of clear learning goals
+- section_structure: List of section headers with their hierarchy, representing a logical content structure based on the original headers
 
 Ensure each list is complete and properly formatted according to the schema. If a list is empty, return an empty list [].
     """,
@@ -59,6 +67,7 @@ Ensure each list is complete and properly formatted according to the schema. If 
         "markdown_content_code_segments",
         "notebook_content_metadata",
         "markdown_content_metadata",
+        "markdown_section_headers",
     ],
 )
 
@@ -125,6 +134,9 @@ Create outline structure for:
 Main Topics:
 {main_topics}
 
+Source Document Section Structure:
+{section_structure}
+
 Difficulty Level:
 {difficulty_level}
 
@@ -132,6 +144,7 @@ Prerequisites:
 {prerequisites}
 
 Guidelines:
+- Use the source document section structure as a reference
 - Ensure logical topic progression
 - Include clear learning goals per section
 - Estimate time requirements
@@ -141,6 +154,7 @@ Guidelines:
     input_variables=[
         "format_instructions",
         "main_topics",
+        "section_structure",
         "difficulty_level",
         "prerequisites",
     ],
