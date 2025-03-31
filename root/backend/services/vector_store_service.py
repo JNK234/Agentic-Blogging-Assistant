@@ -107,8 +107,8 @@ class VectorStoreService:
                 distances = results["distances"][0]
             else:
                 results = self.collection.get(
-                    where=where if where else None,
-                    limit=n_results
+                    where=where if where else None
+                    # Removed limit=n_results when fetching by metadata only to ensure all chunks are retrieved
                 )
                 if results and results["documents"]:
                     documents = results["documents"]

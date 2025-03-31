@@ -5,6 +5,8 @@ import asyncio
 import json
 import logging
 from datetime import datetime
+import nest_asyncio # Add nest_asyncio import
+nest_asyncio.apply() # Apply the patch
 sys.path.append(".")
 
 # Configure logging
@@ -579,8 +581,19 @@ class BlogDraftUI:
         
         for i, section in enumerate(sections_generated):
             with st.expander(f"Section {i+1}: {section['title']}", expanded=False):
-                st.markdown(section['content'])
+                content = section.get('content', 'No content generated.') # Safely get content
                 
+                # Display content: Prioritize Markdown, fallback to JSON for dicts/lists
+                if isinstance(content, str):
+                    st.markdown(content)
+                elif isinstance(content, (dict, list)):
+                    st.warning("ℹ️ Content is in JSON format, displaying raw data:")
+                    st.json(content)
+                else:
+                    # Fallback for other unexpected types
+                    st.warning("ℹ️ Content is in an unexpected format, displaying as text:")
+                    st.code(str(content))
+
                 # Add feedback form for each section
                 with st.form(key=f"feedback_form_{i}"):
                     feedback = st.text_area("Provide feedback for this section:", key=f"feedback_{i}")
@@ -657,6 +670,7 @@ class BlogDraftUI:
                     st.error(f"Failed to generate section {current_section_index + 1}")
                 else:
                     st.success(f"Section {current_section_index + 1} generated successfully!")
+                    st.rerun() # Force UI refresh to show the new section
     
     async def _generate_section(self, section_index, progress_callback=None):
         """Generate a single section of the blog draft.
@@ -1144,20 +1158,20 @@ class BloggingAssistant:
             outline_tab, draft_tab, settings_tab = st.tabs(tab_names)
             
             # Get current tab from session state
-            current_tab = self.session.get('current_tab', tab_names[0])
+            # The st.tabs function handles displaying the correct tab based on user interaction.
+            # We render the content for all tabs unconditionally within their context managers
+            # so their state is preserved across reruns even when not visible.
+            # The 'current_tab' state variable is mainly used by the button callback.
             
-            # Render content based on current tab
+            # Render content unconditionally
             with outline_tab:
-                if current_tab == tab_names[0]:
-                    self.outline_generator.render()
+                self.outline_generator.render()
             
             with draft_tab:
-                if current_tab == tab_names[1]:
-                    self.blog_draft.render()
+                self.blog_draft.render()
                 
             with settings_tab:
-                if current_tab == tab_names[2]:
-                    self.settings.render()
+                self.settings.render()
         else:
             st.info("Please configure and initialize your assistant using the sidebar.")
 

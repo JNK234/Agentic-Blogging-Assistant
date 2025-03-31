@@ -46,10 +46,15 @@ class ContentReference(BaseModel):
     relevance_score: float
     category: str  # "concept", "example", "implementation", "best_practice"
     source_location: Optional[str] = None
+    structural_context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Stores header relationships and context from original document structure"
+    )
 
 class BlogDraftState(BaseModel):
     """State for the blog draft generation process."""
     # Input state
+    project_name: str = Field(description="Name of the project for context filtering") # Added project_name
     outline: FinalOutline
     notebook_content: ContentStructure = Field(description="Parsed notebook content")
     markdown_content: ContentStructure = Field(description="Parsed markdown content")
@@ -65,10 +70,15 @@ class BlogDraftState(BaseModel):
     generation_stage: str = "planning"  # "planning", "drafting", "enhancing", "finalizing"
     iteration_count: int = 0
     max_iterations: int = 3
+    quality_threshold: float = 0.8 # Added quality threshold
 
     # Reference mapping
-    content_mapping: Dict[str, List[ContentReference]] = Field(default_factory=dict)  # Maps sections to relevant content
-    
+    content_mapping: Dict[str, List[ContentReference]] = Field(default_factory=dict)  # Maps sections to relevant content (Original RAG)
+
+    # HyDE RAG specific fields
+    hypothetical_document: Optional[str] = Field(default=None, description="Hypothetical document generated for HyDE retrieval")
+    hyde_retrieved_context: Optional[List[Dict]] = Field(default=None, description="Context retrieved using HyDE")
+
     # Blog structure
     table_of_contents: List[Dict[str, str]] = Field(default_factory=list)
     transitions: Dict[str, str] = Field(default_factory=dict)  # Transitions between sections

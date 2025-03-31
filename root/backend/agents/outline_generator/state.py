@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, List, Optional, Any
 #from root.backend.utils.file_parser import ParsedContent
+from root.backend.parsers.base import ContentStructure # Added import
 from root.backend.services.vector_store_service import VectorStoreService
 from root.backend.utils.serialization import to_json, model_to_dict, serialize_object
 from dataclasses import asdict
@@ -52,8 +53,8 @@ class FinalOutline(BaseModel):
 
 class OutlineState(BaseModel):
     # Input state
-    notebook_content: Optional[Any] = Field(description="Parsed notebook content")
-    markdown_content: Optional[Any] = Field(description="Parsed markdown content")
+    notebook_content: Optional[ContentStructure] = Field(description="Parsed notebook content") # Updated type hint
+    markdown_content: Optional[ContentStructure] = Field(description="Parsed markdown content") # Updated type hint
     model: Any = Field(description="LLM model instance")
 
     # Intermediate states
@@ -69,4 +70,4 @@ class OutlineState(BaseModel):
     # status: Dict[str, str] = Field(default_factory=dict)
     # errors: List[str] = Field(default_factory=list)
 
-    # model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True) # Added config

@@ -37,12 +37,18 @@ def serialize_object(obj: Any, depth: int = 0, max_depth: int = 10) -> Any:
         return None
         
     # Handle Pydantic BaseModel instances
+    # model_dump() should return a dict/list structure that the subsequent checks can handle.
+    # Using mode='json' is often preferred for direct JSON readiness, but requires Pydantic v2.
+    # We assume the default dump is sufficient for recursive serialization here.
     if isinstance(obj, BaseModel):
-        return serialize_object(obj.model_dump(), depth + 1, max_depth)
+        # Return the dumped dict directly; subsequent checks will handle its contents.
+        return obj.model_dump() 
         
     # Handle dataclasses
+    # asdict() returns a dict; subsequent checks will handle its contents.
     if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
-        return serialize_object(dataclasses.asdict(obj), depth + 1, max_depth)
+        # Return the dict directly.
+        return dataclasses.asdict(obj)
         
     # Handle lists, tuples, and sets
     if isinstance(obj, (list, tuple, set)):

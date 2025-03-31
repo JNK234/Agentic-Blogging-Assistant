@@ -225,38 +225,44 @@ Your output MUST be a valid JSON object that includes:
     ],
 )
 
-# Quality Validation Prompt
+# Quality Validation Prompt (Revised for Robustness)
 QUALITY_VALIDATION_PROMPT = PromptTemplate(
-    template="""You are an expert content quality assessor. Evaluate the following blog section:
+    template="""You are an expert content quality assessor. Evaluate the following blog section based ONLY on the provided CONTENT.
 
 SECTION INFORMATION:
 Title: {section_title}
 Learning Goals: {learning_goals}
 
-CONTENT:
+CONTENT TO EVALUATE:
+--- START CONTENT ---
 {section_content}
+--- END CONTENT ---
 
 TASK:
-Evaluate the content on the following criteria:
-1. Completeness: Does it cover all learning goals?
-2. Technical accuracy: Is the information correct?
-3. Clarity: Is the content easy to understand?
-4. Code quality: Are code examples well-written and explained?
-5. Engagement: Is the content engaging and interesting?
-6. Structural consistency: Does it maintain a logical structure that follows the original document's organization?
+Evaluate the content based *strictly* on the following criteria. Provide a score between 0.0 and 1.0 for each metric, where 0.0 is poor and 1.0 is excellent.
+1. Completeness: Does the CONTENT cover all stated Learning Goals? (Score: 0.0-1.0)
+2. Technical Accuracy: Is the technical information in the CONTENT correct and precise? (Score: 0.0-1.0)
+3. Clarity: Is the CONTENT easy to understand, well-explained, and unambiguous? (Score: 0.0-1.0)
+4. Code Quality: Are code examples within the CONTENT well-written, correctly formatted, and adequately explained? (Score: 0.0-1.0, use 0.0 if no code exists)
+5. Engagement: Is the CONTENT engaging and likely to hold a technical reader's interest? (Score: 0.0-1.0)
+6. Structural Consistency: Does the CONTENT maintain a logical flow and organization consistent with typical technical documentation or the implied structure? (Score: 0.0-1.0)
 
-FORMAT YOUR RESPONSE AS A JSON OBJECT:
+OUTPUT REQUIREMENTS:
+Your response MUST be **ONLY** a single, valid JSON object containing the following keys and value types. Do NOT include any text before or after the JSON object.
+
 {{
-    "completeness": 0.0-1.0,
-    "technical_accuracy": 0.0-1.0,
-    "clarity": 0.0-1.0,
-    "code_quality": 0.0-1.0,
-    "engagement": 0.0-1.0,
-    "structural_consistency": 0.0-1.0,
-    "overall_score": 0.0-1.0,
-    "improvement_needed": true/false,
-    "improvement_suggestions": ["suggestion1", "suggestion2", ...]
+    "completeness": float,              # Score 0.0 to 1.0
+    "technical_accuracy": float,      # Score 0.0 to 1.0
+    "clarity": float,                 # Score 0.0 to 1.0
+    "code_quality": float,            # Score 0.0 to 1.0 (use 0.0 if no code)
+    "engagement": float,              # Score 0.0 to 1.0
+    "structural_consistency": float,  # Score 0.0 to 1.0
+    "overall_score": float,           # Calculated average of the above scores (0.0 to 1.0)
+    "improvement_needed": boolean,      # MUST be true or false (lowercase). True if overall_score < 0.8, false otherwise.
+    "improvement_suggestions": [string] # MUST be a JSON list of specific, actionable suggestions based on low scores. Use an empty list [] if no improvements are needed.
 }}
+
+**IMPORTANT:** Ensure ALL keys are present in the JSON. Scores MUST be numbers between 0.0 and 1.0. `improvement_needed` MUST be `true` or `false`. `improvement_suggestions` MUST be a list of strings (can be empty `[]`). Double-check the output is valid JSON.
     """,
     input_variables=[
         "section_title",
@@ -423,6 +429,20 @@ Your output MUST be a list of JSON objects, each containing:
     ],
 )
 
+# HyDE Generation Prompt
+HYDE_GENERATION_PROMPT = PromptTemplate(
+    template="""You are an expert technical writer simulating answering a query about a specific blog section.
+Given the section title and learning goals, write a concise, hypothetical paragraph that directly addresses what a user might expect to learn or find in this section.
+Focus on capturing the core concepts and potential content. This hypothetical answer will be used to find relevant source documents.
+
+SECTION TITLE: {section_title}
+LEARNING GOALS: {learning_goals}
+
+HYPOTHETICAL ANSWER (Write a short paragraph):""",
+    input_variables=["section_title", "learning_goals"],
+)
+
+
 # Export the prompts with their parsers
 PROMPT_CONFIGS = {
     "content_mapping": {
@@ -460,5 +480,9 @@ PROMPT_CONFIGS = {
     "blog_compilation": {
         "prompt": BLOG_COMPILATION_PROMPT,
         "parser": None  # Text output
+    },
+    "hyde_generation": {
+        "prompt": HYDE_GENERATION_PROMPT,
+        "parser": None # Text output
     }
 }

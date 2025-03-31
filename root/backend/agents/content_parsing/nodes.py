@@ -6,7 +6,15 @@ from pathlib import Path
 import logging
 from typing import List, Dict
 
-from root.backend.parsers import ParserFactory
+# LangChain imports for text splitting
+from langchain_text_splitters import (
+    RecursiveCharacterTextSplitter,
+    MarkdownHeaderTextSplitter,
+    PythonCodeTextSplitter,
+    TextSplitter
+)
+
+from root.backend.parsers import ParserFactory, ContentStructure
 from root.backend.services.vector_store_service import VectorStoreService
 from .state import ContentParsingState
 
@@ -40,152 +48,125 @@ async def parse_content(state: ContentParsingState) -> ContentParsingState:
         parser = ParserFactory.get_parser(state.file_path)
         state.parsed_content = parser.parse()
     except Exception as e:
-        state.errors.append(f"Parsing error: {str(e)}")
-    return state
+        error_msg = f"Parsing error: {str(e)}"
+        state.errors.append(error_msg)
+        logging.exception(f"Exception during parsing of {state.file_path}") # Log full traceback
+        # Ensure parsed_content is set to an empty structure on error
+        state.parsed_content = ContentStructure(main_content="", code_segments=[], content_type="unknown", metadata={"error": error_msg})
+    
+    # Check for empty content *after* the try-except block
+    if not state.parsed_content or not state.parsed_content.main_content:
+         # Check if there was an error stored in metadata by the parser itself
+         parse_error = state.parsed_content.metadata.get("error") if state.parsed_content else "Unknown parsing issue (parser returned None or empty content)"
+         # Avoid adding duplicate errors if already caught by exception
+         if f"Parsing failed or returned empty content: {parse_error}" not in state.errors and f"Parsing error: {parse_error}" not in state.errors:
+              state.errors.append(f"Parsing failed or returned empty content: {parse_error}")
+              logging.error(f"Parsing failed for {state.file_path}: {parse_error}")
+         # Ensure state.parsed_content is a valid (even if empty) ContentStructure object if it somehow became None
+         if not state.parsed_content:
+             state.parsed_content = ContentStructure(main_content="", code_segments=[], content_type="unknown", metadata={"error": parse_error})
 
-def _chunk_content(sections: List[Dict]) -> List[Dict]:
-    """Enhanced content chunking strategy that preserves section context."""
-    chunks = []
-    current_chunk = []
-    current_size = 0
-    max_chunk_size = 1000  # characters
-    current_section_info = None
-    
-    for section in sections:
-        content = section.get("content", "")
-        if not content:
-            continue
-            
-        # Capture section header information if available
-        section_info = None
-        if "header_text" in section and "header_level" in section:
-            section_info = {
-                "header_text": section["header_text"],
-                "header_level": section["header_level"]
-            }
-            current_section_info = section_info
-            
-        # If content is too large, split it
-        if len(content) > max_chunk_size:
-            # Add any existing content as a chunk
-            if current_chunk:
-                chunks.append({
-                    "content": "\n".join(current_chunk),
-                    "section_info": current_section_info
-                })
-                current_chunk = []
-                current_size = 0
-            
-            # Split large content into smaller chunks
-            words = content.split()
-            temp_chunk = []
-            temp_size = 0
-            
-            for word in words:
-                if temp_size + len(word) + 1 > max_chunk_size:
-                    chunks.append({
-                        "content": " ".join(temp_chunk),
-                        "section_info": current_section_info
-                    })
-                    temp_chunk = [word]
-                    temp_size = len(word)
-                else:
-                    temp_chunk.append(word)
-                    temp_size += len(word) + 1
-            
-            if temp_chunk:
-                chunks.append({
-                    "content": " ".join(temp_chunk),
-                    "section_info": current_section_info
-                })
-        else:
-            # If adding this section would exceed chunk size, create new chunk
-            if current_size + len(content) > max_chunk_size:
-                chunks.append({
-                    "content": "\n".join(current_chunk),
-                    "section_info": current_section_info
-                })
-                current_chunk = [content]
-                current_size = len(content)
-            else:
-                current_chunk.append(content)
-                current_size += len(content)
-    
-    # Add any remaining content
-    if current_chunk:
-        chunks.append({
-            "content": "\n".join(current_chunk),
-            "section_info": current_section_info
-        })
-    
-    return chunks
+    return state
+# Removed the old _chunk_content helper function as it's replaced by LangChain splitters
 
 async def chunk_content(state: ContentParsingState) -> ContentParsingState:
-    """Chunks the parsed content."""
+    """Chunks the parsed content using appropriate LangChain text splitters."""
     if not state.parsed_content:
         logging.warning("No parsed content available for chunking")
         state.errors.append("No parsed content available for chunking")
         return state
-        
+
     try:
-        # Create sections from main_content and code_segments
-        sections = []
-        
-        # Add main content as a section, preserving section headers if present
+        # Default chunking parameters (can be made configurable later)
+        chunk_size = 1000
+        chunk_overlap = 200
+
+        # Initialize splitters
+        recursive_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+        python_splitter = PythonCodeTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+        # Markdown splitter requires headers - adjust if parser provides them
+        headers_to_split_on = [
+            ("#", "Header 1"),
+            ("##", "Header 2"),
+            ("###", "Header 3"),
+        ]
+        markdown_splitter = MarkdownHeaderTextSplitter(
+            headers_to_split_on=headers_to_split_on,
+            strip_headers=False # Keep headers in the content
+        )
+
+        all_docs = [] # Will store LangChain Document objects
+
+        # Process main content (likely markdown or text)
         if state.parsed_content.main_content:
-            # If we have section headers in the metadata, use them to create separate sections
-            if (hasattr(state.parsed_content, 'metadata') and 
-                'section_headers' in state.parsed_content.metadata and
-                state.parsed_content.metadata['section_headers']):
-                
-                import json
-                section_headers = json.loads(state.parsed_content.metadata['section_headers'])
-                
-                # Split main content by section headers
-                # For simplicity, just use the existing section handling for now
-                section = {
-                    "content": state.parsed_content.main_content,
-                    "type": "markdown"
-                }
-                sections.append(section)
-            else:
-                sections.append({
-                    "content": state.parsed_content.main_content,
-                    "type": "markdown"
-                })
-            
-        # Add code segments as sections
+            content_type = state.parsed_content.content_type
+            main_content = state.parsed_content.main_content
+
+            splitter: TextSplitter # Type hint for clarity
+
+            if content_type == 'markdown':
+                # Try Markdown splitter first, fallback to recursive
+                try:
+                    # MarkdownHeaderTextSplitter expects metadata to be merged later
+                    md_docs = markdown_splitter.split_text(main_content)
+                    # Add file-level metadata to each doc later
+                    all_docs.extend(md_docs)
+                    logging.info(f"Used MarkdownHeaderTextSplitter for main content.")
+                except Exception as md_err:
+                    logging.warning(f"MarkdownHeaderTextSplitter failed ({md_err}), falling back to RecursiveCharacterTextSplitter.")
+                    docs = recursive_splitter.create_documents([main_content])
+                    all_docs.extend(docs)
+            else: # Treat as plain text or other types
+                logging.info(f"Using RecursiveCharacterTextSplitter for main content (type: {content_type}).")
+                docs = recursive_splitter.create_documents([main_content])
+                all_docs.extend(docs)
+
+        # Process code segments
         if hasattr(state.parsed_content, 'code_segments') and state.parsed_content.code_segments:
-            for code in state.parsed_content.code_segments:
-                sections.append({
-                    "content": code,
-                    "type": "code"
-                })
-            
-        # Get chunks with section info
-        chunk_results = _chunk_content(sections)
-        
-        # Extract content chunks and prepare per-chunk metadata
-        state.content_chunks = []
-        state.chunk_metadata = []
-        
-        logging.info(f"Number of chunk results: {len(chunk_results)}")
-        
-        for chunk_result in chunk_results:
-            state.content_chunks.append(chunk_result["content"])
-            
-            # Prepare per-chunk metadata to include section info
-            chunk_metadata = {}
-            if "section_info" in chunk_result and chunk_result["section_info"]:
-                chunk_metadata["section_info"] = chunk_result["section_info"]
-            state.chunk_metadata.append(chunk_metadata)
-            
-        logging.info(f"Chunking complete: {len(state.content_chunks)} chunks created")
+            logging.info(f"Processing {len(state.parsed_content.code_segments)} code segments.")
+            # Assume Python for now, could be enhanced based on file type
+            # Combine segments before splitting to maintain context if possible,
+            # or split individually if they represent distinct blocks.
+            # For simplicity, splitting individually here.
+            for code_segment in state.parsed_content.code_segments:
+                 # Check if segment is not empty or just whitespace
+                if code_segment and not code_segment.isspace():
+                    try:
+                        code_docs = python_splitter.create_documents([code_segment])
+                        # Add metadata indicating this is a code chunk
+                        for doc in code_docs:
+                            doc.metadata["content_part"] = "code"
+                        all_docs.extend(code_docs)
+                    except Exception as py_err:
+                        logging.warning(f"PythonCodeTextSplitter failed ({py_err}), falling back to RecursiveCharacterTextSplitter for code segment.")
+                        # Fallback for code that might not parse perfectly
+                        fallback_docs = recursive_splitter.create_documents([code_segment])
+                        for doc in fallback_docs:
+                            doc.metadata["content_part"] = "code_fallback"
+                        all_docs.extend(fallback_docs)
+                else:
+                    logging.debug("Skipping empty or whitespace-only code segment.")
+
+
+        # Extract page content and metadata from LangChain Documents
+        state.content_chunks = [doc.page_content for doc in all_docs]
+        # Start with metadata from the LangChain documents themselves
+        state.chunk_metadata = [doc.metadata for doc in all_docs]
+
+        logging.info(f"Chunking complete: {len(state.content_chunks)} chunks created using LangChain splitters.")
+
     except Exception as e:
-        error_msg = f"Chunking error: {str(e)}"
-        logging.error(error_msg)
+        error_msg = f"Chunking error using LangChain splitters: {str(e)}"
+        logging.exception(error_msg) # Log traceback for better debugging
         state.errors.append(error_msg)
     return state
+
 
 async def prepare_metadata(state: ContentParsingState) -> ContentParsingState:
     """Prepares metadata for storage."""

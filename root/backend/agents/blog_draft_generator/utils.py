@@ -4,12 +4,185 @@ Utility functions for the Blog Draft Generator.
 import logging
 import re
 import json
+import json
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from root.backend.services.vector_store_service import VectorStoreService
 from root.backend.agents.blog_draft_generator.state import ContentReference, CodeExample
 
 logging.basicConfig(level=logging.INFO)
+
+def build_hierarchical_structure(section_headers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Builds a hierarchical representation of document structure from headers.
+    
+    Args:
+        section_headers: List of section header dictionaries with level and text
+        
+    Returns:
+        List of dictionaries representing document hierarchy
+    """
+    hierarchy = []
+    header_stack = []
+    
+    # Sort headers by their position in the document
+    sorted_headers = sorted(section_headers, key=lambda h: h.get('position', 0))
+    
+    for header in sorted_headers:
+        level = header.get('level', 1)
+        
+        # Pop stack until we find a parent or empty the stack
+        while header_stack and header_stack[-1]['level'] >= level:
+            header_stack.pop()
+        
+        # Create node with parent reference
+        node = {
+            'text': header.get('text', ''),
+            'level': level,
+            'parent': header_stack[-1]['text'] if header_stack else None,
+            'children': []
+        }
+        
+        # Add as child to parent if exists
+        if header_stack:
+            header_stack[-1]['children'].append(node['text'])
+        
+        # Add to hierarchy and stack
+        hierarchy.append(node)
+        header_stack.append(node)
+    
+    return hierarchy
+
+def build_contextual_query(section_title: str, learning_goals: List[str], 
+                         relevant_headers: List[Dict[str, Any]], 
+                         document_structure: List[Dict[str, Any]]) -> str:
+    """
+    Builds a rich contextual query incorporating structural information.
+    
+    Args:
+        section_title: Title of the section
+        learning_goals: List of learning goals
+        relevant_headers: List of relevant headers with similarity scores
+        document_structure: Hierarchical document structure
+        
+    Returns:
+        Enhanced query string incorporating structural context
+    """
+    # Start with section title and learning goals
+    query_components = [section_title]
+    query_components.extend(learning_goals)
+    
+    # Add relevant headers with weighting based on similarity
+    for header in relevant_headers[:3]:  # Top 3 most relevant headers
+        query_components.append(f"{header['text']}")
+    
+    # Add structural context from document hierarchy
+    for header in relevant_headers[:2]:  # Top 2 headers
+        # Find this header in document structure
+        for node in document_structure:
+            if node['text'] == header['text']:
+                # Add parent context if exists
+                if node['parent']:
+                    query_components.append(f"Related to {node['parent']}")
+                
+                # Add children context if exists
+                for child in node['children'][:2]:  # Top 2 children
+                    query_components.append(f"Includes {child}")
+    
+    # Combine into a weighted query string
+    return " ".join(query_components)
+
+def process_search_results(search_results: List[Dict[str, Any]], 
+                         relevant_headers: List[Dict[str, Any]], 
+                         document_structure: List[Dict[str, Any]]) -> List[ContentReference]:
+    """
+    Processes search results with structural awareness.
+    
+    Args:
+        search_results: List of search results from vector store
+        relevant_headers: List of relevant headers with similarity scores
+        document_structure: Hierarchical document structure
+        
+    Returns:
+        List of ContentReference objects with structural context
+    """
+    references = []
+    
+    # Create a mapping of header text to its structural information
+    header_structure = {node['text']: node for node in document_structure}
+    
+    for result in search_results:
+        # Calculate structural relevance boost
+        structural_boost = 0.0
+        structural_context = {}
+        
+        # Check if result content contains or relates to relevant headers
+        for header in relevant_headers:
+            if header['text'] in result['content']:
+                # Boost based on header similarity
+                structural_boost += header.get('similarity', 0.5) * 0.2
+                
+                # Add header to structural context
+                if header['text'] in header_structure:
+                    node = header_structure[header['text']]
+                    structural_context[header['text']] = {
+                        'level': node['level'],
+                        'parent': node['parent'],
+                        'children': node['children']
+                    }
+                    
+                    # Additional boost if header has parent-child relationships
+                    if node['parent'] and node['parent'] in result['content']:
+                        structural_boost += 0.1
+                        
+                    for child in node['children']:
+                        if child in result['content']:
+                            structural_boost += 0.05
+        
+        # Create ContentReference with structural awareness
+        reference = ContentReference(
+            content=result['content'],
+            source_type=result['metadata'].get('source_type', 'markdown'),
+            relevance_score=min(1.0, result['relevance'] + structural_boost),
+            category=determine_content_category(result, relevant_headers),
+            source_location=result['metadata'].get('source_location', ''),
+            structural_context=structural_context if structural_context else None
+        )
+        
+        references.append(reference)
+    
+    # Sort by adjusted relevance
+    references.sort(key=lambda x: x.relevance_score, reverse=True)
+    return references
+
+def determine_content_category(result: Dict[str, Any], 
+                             relevant_headers: List[Dict[str, Any]]) -> str:
+    """
+    Determines the category of content based on its characteristics and context.
+    
+    Args:
+        result: Search result dictionary
+        relevant_headers: List of relevant headers
+        
+    Returns:
+        Category string
+    """
+    content = result['content'].lower()
+    
+    # Check for code examples
+    if '```' in content or 'example:' in content:
+        return 'example'
+    
+    # Check for implementation details
+    if any(term in content for term in ['implementation', 'setup', 'configure', 'install']):
+        return 'implementation'
+    
+    # Check for best practices
+    if any(term in content for term in ['best practice', 'recommended', 'tip', 'important']):
+        return 'best_practice'
+    
+    # Default to concept
+    return 'concept'
 
 def extract_code_blocks(content: str) -> List[Dict[str, str]]:
     """
@@ -143,19 +316,37 @@ def store_blog_in_vector_store(
 
 def parse_json_safely(json_str: str, default_value: Any = None) -> Any:
     """
-    Safely parses JSON with fallback to default value.
-    
+    Safely parses JSON, stripping optional markdown fences, with fallback to default value.
+
     Args:
-        json_str: JSON string to parse
+        json_str: JSON string to parse, potentially wrapped in ```json ... ``` or ``` ... ```
         default_value: Default value to return if parsing fails
-        
+
     Returns:
         Parsed JSON or default value
     """
+    # Regex to find JSON content within ```json ... ``` or ``` ... ```
+    # Handles potential leading/trailing whitespace within the fences
+    match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', json_str, re.DOTALL)
+    if match:
+        # If fences are found, extract the content within them
+        content_to_parse = match.group(1).strip()
+        logging.info("Stripped markdown fences from JSON string.")
+    else:
+        # If no fences, assume the whole string is the JSON content
+        content_to_parse = json_str.strip()
+
+    # Handle empty string after stripping
+    if not content_to_parse:
+        logging.warning("JSON content is empty after stripping fences/whitespace. Returning default value.")
+        return default_value
+
     try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
-        logging.warning("Failed to parse JSON, returning default value")
+        # Attempt to parse the extracted or original content
+        return json.loads(content_to_parse)
+    except json.JSONDecodeError as e:
+        # Log the error and the problematic content (truncated) for debugging
+        logging.warning(f"Failed to parse JSON: {e}. Content attempted: '{content_to_parse[:100]}...' Returning default value.")
         return default_value
 
 def format_code_examples(code_examples: List[CodeExample]) -> str:

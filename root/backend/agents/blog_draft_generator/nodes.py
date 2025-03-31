@@ -3,6 +3,8 @@ from typing import Dict, List, Optional
 from datetime import datetime
 import json
 import re
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity # Added for semantic similarity
 from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback
 from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS
 from root.backend.agents.blog_draft_generator.utils import (
@@ -11,59 +13,163 @@ from root.backend.agents.blog_draft_generator.utils import (
     extract_section_metrics,
     parse_json_safely,
     format_code_examples,
-    generate_table_of_contents
+    generate_table_of_contents,
+    build_hierarchical_structure,
+    build_contextual_query,
+    process_search_results,
+    determine_content_category
 )
 from root.backend.services.vector_store_service import VectorStoreService
 
 logging.basicConfig(level=logging.INFO)
 
 async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
-    """Maps content to sections using vector search for semantic matching."""
+    """Maps content to sections using vector search for semantic matching with section headers."""
     logging.info("Executing node: semantic_content_mapper")
     
-    # Initialize vector store service if not already available
+    # Initialize vector store service
     vector_store = VectorStoreService()
+    # Get the embedding function instance from the service
+    embedding_fn = getattr(vector_store, 'embedding_fn', None)
+    if not embedding_fn:
+        # Log a more critical error or raise if embeddings are essential
+        logging.error("Embedding function not found in VectorStoreService. Semantic header matching will fail or be basic.")
+        # Depending on requirements, could raise ValueError here
+
     content_mapping = {}
-    
+
     # Set generation stage
     state.generation_stage = "mapping"
     
-    # For each section in the outline, use vector search to find relevant content
+    # Extract section headers from markdown metadata
+    section_headers = []
+    if (state.markdown_content and 
+        hasattr(state.markdown_content, 'metadata') and 
+        state.markdown_content.metadata and 
+        'section_headers' in state.markdown_content.metadata):
+        
+        section_headers = json.loads(state.markdown_content.metadata['section_headers'])
+        logging.info(f"Found {len(section_headers)} section headers in markdown metadata")
+        
+        # Add position information if not present
+        for i, header in enumerate(section_headers):
+            if 'position' not in header:
+                header['position'] = i
+    
+    # Build hierarchical structure from headers
+    document_structure = build_hierarchical_structure(section_headers)
+    logging.info(f"Built hierarchical document structure with {len(document_structure)} nodes")
+    
+    # For each section in the outline, use vector search with contextual awareness
     for section in state.outline.sections:
         section_title = section.title
         learning_goals = section.learning_goals
         
-        # Create a rich query combining section title and learning goals
-        query = f"{section_title}: {', '.join(learning_goals)}"
-        logging.info(f"Searching for content relevant to: {query}")
+        logging.info(f"Processing section: {section_title}")
         
-        # Search for markdown content first (with higher result count)
+        # Find semantically relevant headers
+        relevant_headers = []
+        # The following 'if section_headers:' was causing indentation errors.
+        # The conditions are handled within the enhanced matching block below.
+        # Removing the outer if statement.
+        # --- Enhanced Semantic Header Matching using Embeddings ---
+        if section_headers and embedding_fn: # Check if we have headers and the function
+            try:
+                # Prepare texts for embedding
+                target_text = f"{section_title} - {' '.join(learning_goals)}"
+                header_texts = [h.get('text', '') for h in section_headers]
+
+                # Generate embeddings using the embedding function directly
+                # Call with a list for single item, then extract the first embedding
+                # Assuming embedding_fn is async, add await
+                target_embedding_list = await embedding_fn([target_text])
+                if not target_embedding_list:
+                     raise ValueError("Embedding function returned empty list for target text.")
+                target_embedding = target_embedding_list[0]
+
+                # Call with the list of header texts
+                # Assuming embedding_fn is async, add await
+                header_embeddings = await embedding_fn(header_texts)
+                if len(header_embeddings) != len(header_texts):
+                    raise ValueError(f"Embedding function returned {len(header_embeddings)} embeddings for {len(header_texts)} header texts.")
+
+                # Calculate cosine similarity (needs embeddings in correct shape)
+                # Ensure target_embedding is 2D for cosine_similarity
+                similarities = cosine_similarity([target_embedding], header_embeddings)[0]
+
+                # Create relevant_headers list with similarity scores
+                similarity_threshold = 0.6 # Adjust this threshold as needed
+                for header, sim in zip(section_headers, similarities):
+                    if sim >= similarity_threshold:
+                        relevant_headers.append({
+                            'text': header.get('text', ''),
+                            'level': header.get('level', 1),
+                            'similarity': float(sim) # Ensure it's a float
+                        })
+
+                # Sort by similarity
+                relevant_headers.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+                logging.info(f"Found {len(relevant_headers)} semantically relevant headers (threshold > {similarity_threshold}) for section '{section_title}' using embeddings.")
+
+            except Exception as e:
+                logging.error(f"Error during semantic header matching for section '{section_title}': {e}. Falling back to basic text overlap.")
+                # Fallback to basic text overlap if embedding fails
+                relevant_headers = [] # Reset before fallback
+                for header in section_headers:
+                    header_text = header.get('text', '').lower()
+                    section_text = section_title.lower()
+                    if (header_text in section_text or section_text in header_text or any(goal.lower() in header_text for goal in learning_goals)):
+                        relevant_headers.append({ 'text': header.get('text', ''), 'level': header.get('level', 1), 'similarity': 0.5 }) # Assign lower default similarity
+                relevant_headers.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+        elif section_headers: # Fallback if embedding function is missing but headers exist
+            logging.warning(f"No embedding function available for semantic matching for section '{section_title}'. Using basic text overlap.")
+            for header in section_headers:
+                header_text = header.get('text', '').lower()
+                section_text = section_title.lower()
+                if (header_text in section_text or section_text in header_text or any(goal.lower() in header_text for goal in learning_goals)):
+                    relevant_headers.append({ 'text': header.get('text', ''), 'level': header.get('level', 1), 'similarity': 0.5 })
+            relevant_headers.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+        # --- End of Enhanced Matching ---
+        
+        # Build contextual query with header hierarchy awareness
+        if relevant_headers:
+            contextual_query = build_contextual_query(
+                section_title,
+                learning_goals,
+                relevant_headers,
+                document_structure
+            )
+            logging.info(f"Enhanced query with structural context: {contextual_query}")
+        else:
+            # Fallback to basic query if no relevant headers found
+            contextual_query = f"{section_title}: {', '.join(learning_goals)}"
+            logging.info(f"Using basic query (no relevant headers): {contextual_query}")
+        
+        # Perform vector search with enhanced query
         markdown_results = vector_store.search_content(
-            query=query,
+            query=contextual_query,
             metadata_filter={"source_type": "markdown"},
-            n_results=15  # Get more markdown results
+            n_results=15
         )
         
         # Search for code examples
         code_results = vector_store.search_content(
-            query=query,
+            query=contextual_query,
             metadata_filter={"source_type": "code"},
             n_results=10
         )
         
-        # Convert search results to ContentReference objects
+        # Process search results with structural awareness
         references = []
         
-        # Process markdown results (prioritized)
-        for result in markdown_results:
-            reference = ContentReference(
-                content=result["content"],
-                source_type="markdown",
-                relevance_score=min(1.0, result["relevance"] + 0.1),  # Boost markdown relevance
-                category=result["metadata"].get("category", "concept"),
-                source_location=result["metadata"].get("source_location", "")
+        # Process markdown results with structural awareness
+        if markdown_results:
+            markdown_references = process_search_results(
+                markdown_results,
+                relevant_headers,
+                document_structure
             )
-            references.append(reference)
+            references.extend(markdown_references)
         
         # Process code results
         for result in code_results:
@@ -99,15 +205,24 @@ async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
         # Sort references by relevance
         references.sort(key=lambda x: x.relevance_score, reverse=True)
         
-        # Use LLM to validate and enhance the most relevant content
+        # Use LLM to validate and enhance the content mapping with structural awareness
         if references:
+            # Format headers for context
+            formatted_headers = ""
+            if relevant_headers:
+                formatted_headers = "\n".join([
+                    f"{'#' * h['level']} {h['text']} (Similarity: {h.get('similarity', 0):.2f})"
+                    for h in relevant_headers[:5]
+                ])
+            
             # Take top 10 references for LLM validation
             top_references = references[:10]
             formatted_references = "\n\n".join([
                 f"Content: {ref.content[:300]}...\n"
                 f"Type: {ref.source_type}\n"
                 f"Relevance: {ref.relevance_score}\n"
-                f"Category: {ref.category}"
+                f"Category: {ref.category}\n"
+                f"Structural Context: {ref.structural_context if ref.structural_context else 'None'}"
                 for ref in top_references
             ])
             
@@ -116,6 +231,7 @@ async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
                 "format_instructions": PROMPT_CONFIGS["content_validation"]["parser"].get_format_instructions(),
                 "section_title": section_title,
                 "learning_goals": ", ".join(learning_goals),
+                "relevant_headers": formatted_headers,
                 "content_references": formatted_references
             }
             
@@ -124,10 +240,12 @@ async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
             
             try:
                 response = await state.model.ainvoke(prompt)
-                logging.info(f"\n\nContent validation response for section {section_title}:\n{response.content}\n\n")
+                response = response if isinstance(response, str) else response.content
+                
+                logging.info(f"\n\nContent validation response for section {section_title}:\n{response}\n\n")
                 
                 # Parse the response to get validated references
-                validated_items = parse_json_safely(response.content, [])
+                validated_items = parse_json_safely(response, [])
                 
                 # Update references with LLM validation
                 if validated_items:
@@ -143,7 +261,8 @@ async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
                                     source_type=ref.source_type,
                                     relevance_score=item.get("adjusted_relevance", ref.relevance_score),
                                     category=item.get("category", ref.category),
-                                    source_location=ref.source_location
+                                    source_location=ref.source_location,
+                                    structural_context=ref.structural_context
                                 )
                                 validated_references.append(validated_ref)
                                 break
@@ -164,8 +283,102 @@ async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
     state.content_mapping = content_mapping
     return state
 
+# --- New HyDE Nodes ---
+
+async def generate_hypothetical_document(state: BlogDraftState) -> BlogDraftState:
+    """Generates a hypothetical document/answer for the current section to improve retrieval."""
+    logging.info("Executing node: generate_hypothetical_document")
+    if state.current_section is None:
+        logging.warning("No current section to generate hypothetical document for.")
+        state.errors.append("Cannot generate hypothetical document without a current section.")
+        return state
+
+    section_title = state.current_section.title
+    # Find the corresponding section in the outline to get learning goals
+    outline_section = next((s for s in state.outline.sections if s.title == section_title), None)
+    learning_goals = outline_section.learning_goals if outline_section else []
+
+    logging.info(f"Generating hypothetical document for section: '{section_title}'")
+
+    # Prepare prompt input
+    input_vars = {
+        "section_title": section_title,
+        "learning_goals": ", ".join(learning_goals)
+    }
+
+    # Check if the prompt exists in config
+    if "hyde_generation" not in PROMPT_CONFIGS:
+        logging.error("HyDE generation prompt configuration not found in PROMPT_CONFIGS.")
+        state.errors.append("Missing HyDE prompt configuration.")
+        # Fallback: Use a simple query string if prompt is missing
+        state.hypothetical_document = f"{section_title}: {', '.join(learning_goals)}"
+        logging.warning(f"Using fallback query for HyDE due to missing prompt: {state.hypothetical_document}")
+        return state
+
+    # Format prompt and invoke LLM
+    try:
+        prompt = PROMPT_CONFIGS["hyde_generation"]["prompt"].format(**input_vars)
+        response = await state.model.ainvoke(prompt)
+        hypothetical_doc = response if isinstance(response, str) else response.content
+
+        state.hypothetical_document = hypothetical_doc
+        logging.info(f"Generated hypothetical document (length: {len(hypothetical_doc)}): {hypothetical_doc[:150]}...")
+
+    except Exception as e:
+        logging.exception(f"Error generating hypothetical document for section '{section_title}': {e}")
+        state.errors.append(f"HyDE generation failed: {str(e)}")
+        # Fallback: Use a simple query string on error
+        state.hypothetical_document = f"{section_title}: {', '.join(learning_goals)}"
+        logging.warning(f"Using fallback query for HyDE due to error: {state.hypothetical_document}")
+
+    return state
+
+async def retrieve_context_with_hyde(state: BlogDraftState) -> BlogDraftState:
+    """Retrieves context from vector store using the generated hypothetical document."""
+    logging.info("Executing node: retrieve_context_with_hyde")
+    if not state.hypothetical_document:
+        logging.warning("No hypothetical document generated, skipping HyDE retrieval.")
+        # Decide if this should be an error or if we proceed without HyDE context
+        # For now, let's allow proceeding, section_generator might handle missing context
+        state.hyde_retrieved_context = []
+        return state
+
+    try:
+        # Initialize vector store service (consider passing it via state if needed frequently)
+        vector_store = VectorStoreService()
+        project_name = state.project_name # Get project name directly from state
+
+        logging.info(f"Retrieving context using HyDE query (length: {len(state.hypothetical_document)}): {state.hypothetical_document[:150]}...")
+
+        # Perform vector search using the hypothetical document as the query
+        # Combine markdown and code results? Or keep separate? Let's combine for now.
+        # Adjust n_results as needed
+        retrieved_docs = vector_store.search_content(
+            query=state.hypothetical_document,
+            metadata_filter={"project_name": project_name}, # Filter by project
+            n_results=15 # Retrieve a decent number of chunks
+        )
+
+        # Store the raw results (list of dicts) in the state
+        state.hyde_retrieved_context = retrieved_docs
+        logging.info(f"Retrieved {len(retrieved_docs)} context chunks using HyDE.")
+
+        # Optional: Log retrieved content snippets for debugging
+        # for i, doc in enumerate(retrieved_docs[:3]):
+        #     logging.debug(f"  HyDE Result {i+1} (Relevance: {doc.get('relevance', 0):.2f}): {doc.get('content', '')[:100]}...")
+
+    except Exception as e:
+        logging.exception(f"Error retrieving context with HyDE: {e}")
+        state.errors.append(f"HyDE retrieval failed: {str(e)}")
+        state.hyde_retrieved_context = [] # Ensure it's an empty list on error
+
+    return state
+
+# --- End New HyDE Nodes ---
+
+
 async def section_generator(state: BlogDraftState) -> BlogDraftState:
-    """Generates content for current section."""
+    """Generates content for current section using retrieved HyDE context."""
     logging.info("Executing node: section_generator")
     print(f"Section generator - Starting generation for section index {state.current_section_index}")
     
@@ -181,45 +394,116 @@ async def section_generator(state: BlogDraftState) -> BlogDraftState:
     section_title = section.title
     learning_goals = section.learning_goals
     
-    print(f"Section generator - Generating content for '{section_title}'")
+    print(f"Section generator - Generating content for '{section_title}' using HyDE context")
+
+    # Get relevant context retrieved via HyDE
+    hyde_context_list = state.hyde_retrieved_context if state.hyde_retrieved_context else []
+    logging.info(f"Using {len(hyde_context_list)} context chunks retrieved via HyDE.")
+
+    # Format the HyDE context for the prompt (e.g., top 5 chunks)
+    # Each item in hyde_context_list is a dict like {'content': '...', 'metadata': {...}, 'relevance': ...}
+    formatted_hyde_context = "\n\n---\n\n".join([
+        f"Retrieved Context (Relevance: {ctx.get('relevance', 0):.2f}):\n{ctx.get('content', '')}"
+        for ctx in hyde_context_list[:5] # Limit context length for prompt
+    ])
+
+    if not formatted_hyde_context:
+        logging.warning(f"No context retrieved via HyDE for section '{section_title}'. Generation quality may be affected.")
+        formatted_hyde_context = "No specific context was retrieved. Please generate the section based on the title and learning goals."
+
+    # --- The following logic for original structure/insights might be less relevant now,
+    # --- or could be adapted to use metadata from hyde_retrieved_context if needed.
+    # --- For now, let's simplify and focus on using the HyDE context directly. ---
+
+    # Extract section headers from markdown metadata (Keep for potential future use)
+    section_headers = []
+    if (state.markdown_content and 
+        hasattr(state.markdown_content, 'metadata') and 
+        state.markdown_content.metadata and 
+        'section_headers' in state.markdown_content.metadata):
+        
+        section_headers = json.loads(state.markdown_content.metadata['section_headers'])
     
-    # Get relevant content for this section
-    relevant_content = state.content_mapping.get(section_title, [])
+    # Find relevant headers for this section
+    relevant_headers = []
+    if section_headers:
+        # Simple semantic matching for headers
+        for header in section_headers:
+            header_text = header.get('text', '').lower()
+            section_text = section_title.lower()
+            
+            # Check for text overlap or containment
+            if (header_text in section_text or 
+                section_text in header_text or 
+                any(goal.lower() in header_text for goal in learning_goals)):
+                
+                relevant_headers.append(header)
     
-    # Format content for the prompt using utility function
-    formatted_content = format_content_references(relevant_content)
-    
+    # Format headers for the prompt
+    original_structure = ""
+    if relevant_headers:
+        original_structure = "Original document structure:\n"
+        # Sort by position or level
+        sorted_headers = sorted(relevant_headers, key=lambda h: h.get('position', h.get('level', 1)))
+        for header in sorted_headers:
+            level = header.get('level', 1)
+            text = header.get('text', '')
+            indent = "  " * (level - 1)
+            original_structure += f"{indent}{'#' * level} {text}\n"
+
     # Get previous section content for context if available
     previous_context = ""
     if state.current_section_index > 0 and state.sections:
         prev_section = state.sections[-1]
         previous_context = f"""
         Previous Section: {prev_section.title}
-        Content Summary: {prev_section.content}...
+        Content Summary: {prev_section.content[:300]}...
         """
     
-    # Prepare input variables for the prompt
+    # Extract structural context from content references
+    structural_insights = ""
+    if relevant_headers:
+        # Find references with structural context
+        structured_refs = [ref for ref in relevant_headers if ref.structural_context]
+        if structured_refs:
+            structural_insights = "Structural insights from content analysis:\n"
+            for ref in structured_refs[:3]:  # Limit to top 3
+                if ref.structural_context:
+                    structural_insights += f"- Content related to: {list(ref.structural_context.keys())}\n"
+                    for header, context in ref.structural_context.items():
+                        if context.get('parent'):
+                            structural_insights += f"  - Parent topic: {context.get('parent')}\n"
+                        if context.get('children'):
+                            structural_insights += f"  - Related subtopics: {', '.join(context.get('children')[:3])}\n"
+
+    # Prepare input variables for the prompt, using formatted_hyde_context
     input_variables = {
         "format_instructions": PROMPT_CONFIGS["section_generation"]["parser"].get_format_instructions() if PROMPT_CONFIGS["section_generation"]["parser"] else "",
         "section_title": section_title,
         "learning_goals": ", ".join(learning_goals),
-        "formatted_content": formatted_content,
-        "previous_context": previous_context
+        "formatted_content": formatted_hyde_context, # Use HyDE context here
+        "previous_context": previous_context,
+        # Keep original_structure and structural_insights for now, though their relevance might decrease
+        "original_structure": original_structure,
+        "structural_insights": structural_insights
     }
-    
+
     # Format prompt and get LLM response
     prompt = PROMPT_CONFIGS["section_generation"]["prompt"].format(**input_variables)
     
     try:
         response = await state.model.ainvoke(prompt)
         
+        # Handle potential string response vs. object response
+        section_content = response if isinstance(response, str) else response.content
+        
         # Log the response content
-        logging.info(f"\n\nSection generation response for {section_title}:\n{response.content}\n\n")
+        logging.info(f"\n\nSection generation response for {section_title}:\n{section_content}\n\n")
         
         # Create a new draft section
         draft_section = DraftSection(
             title=section_title,
-            content=response.content,
+            content=section_content,
             feedback=[],
             versions=[],
             current_version=1,
@@ -243,7 +527,7 @@ async def section_generator(state: BlogDraftState) -> BlogDraftState:
     return state
 
 async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
-    """Enhances section content."""
+    """Enhances section content while maintaining original document structure."""
     logging.info("Executing node: content_enhancer")
     
     # Update generation stage
@@ -259,10 +543,62 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
     relevant_content = state.content_mapping.get(section_title, [])
     existing_content = state.current_section.content
     
+    # Extract section headers from markdown metadata
+    section_headers = []
+    if (state.markdown_content and 
+        hasattr(state.markdown_content, 'metadata') and 
+        state.markdown_content.metadata and 
+        'section_headers' in state.markdown_content.metadata):
+        
+        section_headers = json.loads(state.markdown_content.metadata['section_headers'])
+    
+    # Find relevant headers for this section
+    relevant_headers = []
+    if section_headers:
+        # Simple semantic matching for headers
+        for header in section_headers:
+            header_text = header.get('text', '').lower()
+            section_text = section_title.lower()
+            
+            # Check for text overlap or containment
+            if (header_text in section_text or 
+                section_text in header_text or 
+                any(goal.lower() in header_text for goal in learning_goals)):
+                
+                relevant_headers.append(header)
+    
+    # Format headers for the prompt
+    original_structure = ""
+    if relevant_headers:
+        original_structure = "Original document structure:\n"
+        # Sort by position or level
+        sorted_headers = sorted(relevant_headers, key=lambda h: h.get('position', h.get('level', 1)))
+        for header in sorted_headers:
+            level = header.get('level', 1)
+            text = header.get('text', '')
+            indent = "  " * (level - 1)
+            original_structure += f"{indent}{'#' * level} {text}\n"
+    
     # Format content for the prompt using utility function
     # Only use high-relevance content for enhancement
     high_relevance_content = [ref for ref in relevant_content if ref.relevance_score > 0.5]
     formatted_content = format_content_references(high_relevance_content)
+    
+    # Extract structural context from content references
+    structural_insights = ""
+    if high_relevance_content:
+        # Find references with structural context
+        structured_refs = [ref for ref in high_relevance_content if ref.structural_context]
+        if structured_refs:
+            structural_insights = "Structural insights from content analysis:\n"
+            for ref in structured_refs[:3]:  # Limit to top 3
+                if ref.structural_context:
+                    structural_insights += f"- Content related to: {list(ref.structural_context.keys())}\n"
+                    for header, context in ref.structural_context.items():
+                        if context.get('parent'):
+                            structural_insights += f"  - Parent topic: {context.get('parent')}\n"
+                        if context.get('children'):
+                            structural_insights += f"  - Related subtopics: {', '.join(context.get('children')[:3])}\n"
     
     # Prepare input variables for the prompt
     input_variables = {
@@ -270,7 +606,9 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
         "section_title": section_title,
         "learning_goals": ", ".join(learning_goals),
         "existing_content": existing_content,
-        "formatted_content": formatted_content
+        "formatted_content": formatted_content,
+        "original_structure": original_structure,
+        "structural_insights": structural_insights
     }
     
     # Format prompt and get LLM response
@@ -279,8 +617,10 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
     try:
         response = await state.model.ainvoke(prompt)
         
+        response = response if isinstance(response, str) else response.content
+        
         # Log the response content
-        logging.info(f"\n\nContent enhancement response for {section_title}:\n{response.content}\n\n")
+        logging.info(f"\n\nContent enhancement response for {section_title}:\n{response}\n\n")
         
         # Store the original content as a version
         state.current_section.versions.append(SectionVersion(
@@ -291,7 +631,7 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
         ))
         
         # Update the section content
-        state.current_section.content = response.content
+        state.current_section.content = response
         state.current_section.current_version += 1
         
     except Exception as e:
@@ -344,11 +684,13 @@ async def code_example_extractor(state: BlogDraftState) -> BlogDraftState:
         try:
             response = await state.model.ainvoke(prompt)
             
+            response = response if isinstance(response, str) else response.content
+            
             # Log the response content
-            logging.info(f"\n\nCode example extraction response for example {i+1}:\n{response.content}\n\n")
+            logging.info(f"\n\nCode example extraction response for example {i+1}:\n{response}\n\n")
             
             # Parse the response
-            result = parse_json_safely(response.content, {})
+            result = parse_json_safely(response, {})
             
             code_example = CodeExample(
                 code=result.get("code", code),
@@ -408,23 +750,75 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
     try:
         response = await state.model.ainvoke(prompt)
         
+        response = response if isinstance(response, str) else response.content
+        
         # Log the response content
-        logging.info(f"\n\nQuality validation response for {section_title}:\n{response.content}\n\n")
+        logging.info(f"\n\nQuality validation response for {section_title}:\n{response}\n\n")
         
         # Parse the response
-        result = parse_json_safely(response.content, {})
-        
+        parsed_result = parse_json_safely(response, {})
+        logging.info(f"Parsed quality validation result: {parsed_result}")
+
+        # --- Robust Quality Metric Handling ---
+        required_metrics = [
+            "completeness", "technical_accuracy", "clarity",
+            "code_quality", "engagement", "structural_consistency", "overall_score"
+        ]
+        quality_metrics = {}
+        parsing_successful = True
+
+        if not parsed_result:
+            logging.warning(f"Quality validation LLM response for '{section_title}' was not valid JSON or was empty.")
+            parsing_successful = False
+        else:
+            for metric in required_metrics:
+                if metric not in parsed_result or not isinstance(parsed_result[metric], (float, int)):
+                    logging.warning(f"Metric '{metric}' missing or invalid type in quality validation response for '{section_title}'. Response: {response}")
+                    # Assign a default low score if missing/invalid to trigger feedback
+                    quality_metrics[metric] = 0.0
+                    # We might consider parsing_successful = False here too, depending on strictness
+                else:
+                    quality_metrics[metric] = float(parsed_result[metric])
+
+        # If parsing failed completely, assign all defaults
+        if not parsing_successful:
+             quality_metrics = {metric: 0.0 for metric in required_metrics}
+             logging.info(f"Assigned default low scores for '{section_title}' due to parsing failure.")
+
         # Store quality metrics
-        state.current_section.quality_metrics = {
-            "completeness": result.get("completeness", 0.0),
-            "technical_accuracy": result.get("technical_accuracy", 0.0),
-            "clarity": result.get("clarity", 0.0),
-            "code_quality": result.get("code_quality", 0.0),
-            "engagement": result.get("engagement", 0.0),
-            "overall_score": result.get("overall_score", 0.0)
-        }
+        state.current_section.quality_metrics = quality_metrics
+        # --- End of Robust Handling ---
+
+        # Calculate overall score if it wasn't correctly parsed or provided (as a fallback)
+        # Note: The robust handling above already assigns 0.0 if 'overall_score' is missing/invalid
+        if "overall_score" not in quality_metrics or quality_metrics["overall_score"] == 0.0 and parsing_successful and any(quality_metrics[m] > 0.0 for m in quality_metrics if m != "overall_score"):
+            logging.warning(f"Recalculating overall_score for '{section_title}' as it was missing or potentially invalid.")
+            metrics = quality_metrics
+            valid_scores = [metrics[m] for m in required_metrics if m != "overall_score" and m in metrics]
+            overall = sum(valid_scores) / len(valid_scores) if valid_scores else 0.0
+            state.current_section.quality_metrics["overall_score"] = overall
+            print(f"Recalculated overall score: {overall}")
+
+        # Determine if improvement is needed based on overall score
+        # Use the potentially updated overall_score
+        overall_score = state.current_section.quality_metrics.get("overall_score", 0.0)
+        # Lowered threshold slightly as semantic matching might be stricter
+        quality_threshold = state.quality_threshold # Use threshold from state
+        improvement_needed = overall_score < quality_threshold
+        print(f"Overall score: {overall_score:.2f}, Quality Threshold: {quality_threshold}, Improvement needed: {improvement_needed}")
+
+        # --- The following block seems duplicated/incorrectly placed after the previous edit ---
+        # --- Removing it to fix syntax errors ---
+        # "completeness": result.get("completeness", 0.0),
+        # "technical_accuracy": result.get("technical_accuracy", 0.0),
+        # "clarity": result.get("clarity", 0.0),
+        # "code_quality": result.get("code_quality", 0.0),
+        # "engagement": result.get("engagement", 0.0),
+        # "structural_consistency": result.get("structural_consistency", 0.0),
+        # "overall_score": result.get("overall_score", 0.0)
+        # }
         
-        # Calculate overall score if not provided
+        # Calculate overall score if not provided (This logic is already handled above)
         if "overall_score" not in state.current_section.quality_metrics:
             metrics = state.current_section.quality_metrics
             overall = sum([
@@ -432,16 +826,17 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
                 metrics.get("technical_accuracy", 0.0),
                 metrics.get("clarity", 0.0),
                 metrics.get("code_quality", 0.0),
-                metrics.get("engagement", 0.0)
-            ]) / 5.0
-            state.current_section.quality_metrics["overall_score"] = overall
-            print(f"Calculated overall score: {overall}")
-        
-        # Determine if improvement is needed based on overall score
-        overall_score = state.current_section.quality_metrics.get("overall_score", 0.0)
-        improvement_needed = overall_score < 0.85  # Set a threshold for quality
-        print(f"Overall score: {overall_score}, Improvement needed: {improvement_needed}")
-        
+                metrics.get("engagement", 0.0),
+                metrics.get("structural_consistency", 0.0)
+            ]) / 6.0
+            # state.current_section.quality_metrics["overall_score"] = overall # Already handled
+            # print(f"Calculated overall score: {overall}") # Already handled
+
+        # Determine if improvement is needed based on overall score (This logic is already handled above)
+        # overall_score = state.current_section.quality_metrics.get("overall_score", 0.0) # Already handled
+        # improvement_needed = overall_score < 0.85  # Set a threshold for quality # Already handled
+        # print(f"Overall score: {overall_score}, Improvement needed: {improvement_needed}") # Already handled
+
         # Increment iteration count
         state.iteration_count += 1
         print(f"Incremented iteration count to: {state.iteration_count}")
@@ -496,6 +891,9 @@ async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
     if quality_metrics.get("engagement", 1.0) < 0.8:
         feedback_points.append("Make the content more engaging with real-world applications.")
     
+    if quality_metrics.get("structural_consistency", 1.0) < 0.8:
+        feedback_points.append("Better align the content with the original document's structure and organization.")
+    
     # If no specific issues, provide general enhancement feedback
     if not feedback_points:
         feedback_points = ["Add more technical depth and practical examples."]
@@ -516,7 +914,7 @@ async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
     return state
 
 async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
-    """Incorporates feedback into the section content."""
+    """Incorporates feedback into the section content while maintaining original document structure."""
     logging.info("Executing node: feedback_incorporator")
     print(f"Feedback incorporator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
     
@@ -539,13 +937,73 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     section_index = state.current_section_index - 1
     learning_goals = state.outline.sections[section_index].learning_goals
     existing_content = state.current_section.content
+    relevant_content = state.content_mapping.get(section_title, [])
+    
+    # Extract section headers from markdown metadata
+    section_headers = []
+    if (state.markdown_content and 
+        hasattr(state.markdown_content, 'metadata') and 
+        state.markdown_content.metadata and 
+        'section_headers' in state.markdown_content.metadata):
+        
+        # section_headers = state.markdown_content.metadata['section_headers']
+        
+        section_headers = json.loads(state.markdown_content.metadata['section_headers'])
+    
+    # Find relevant headers for this section
+    relevant_headers = []
+    if section_headers:
+        # Simple semantic matching for headers
+        for header in section_headers:
+            header_text = header.get('text', '').lower()
+            section_text = section_title.lower()
+            
+            # Check for text overlap or containment
+            if (header_text in section_text or 
+                section_text in header_text or 
+                any(goal.lower() in header_text for goal in learning_goals)):
+                
+                relevant_headers.append(header)
+    
+    # Format headers for the prompt
+    original_structure = ""
+    if relevant_headers:
+        original_structure = "Original document structure:\n"
+        # Sort by position or level
+        sorted_headers = sorted(relevant_headers, key=lambda h: h.get('position', h.get('level', 1)))
+        for header in sorted_headers:
+            level = header.get('level', 1)
+            text = header.get('text', '')
+            indent = "  " * (level - 1)
+            original_structure += f"{indent}{'#' * level} {text}\n"
+    
+    # Extract structural context from content references
+    structural_insights = ""
+    if relevant_content:
+        # Find references with structural context
+        structured_refs = [ref for ref in relevant_content if ref.structural_context]
+        if structured_refs:
+            structural_insights = "Structural insights from content analysis:\n"
+            for ref in structured_refs[:3]:  # Limit to top 3
+                if ref.structural_context:
+                    structural_insights += f"- Content related to: {list(ref.structural_context.keys())}\n"
+                    for header, context in ref.structural_context.items():
+                        if context.get('parent'):
+                            structural_insights += f"  - Parent topic: {context.get('parent')}\n"
+                        if context.get('children'):
+                            structural_insights += f"  - Related subtopics: {', '.join(context.get('children')[:3])}\n"
+    
+    # Check if feedback is about structural consistency
+    structural_feedback = "structural" in feedback.lower() or "structure" in feedback.lower() or "organization" in feedback.lower()
     
     # Prepare input variables for the prompt
     input_variables = {
         "section_title": section_title,
         "learning_goals": ", ".join(learning_goals),
         "existing_content": existing_content,
-        "feedback": feedback
+        "feedback": feedback,
+        "original_structure": original_structure if structural_feedback else "",
+        "structural_insights": structural_insights if structural_feedback else ""
     }
     
     # Format prompt and get LLM response
@@ -554,8 +1012,10 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     try:
         response = await state.model.ainvoke(prompt)
         
+        response = response if isinstance(response, str) else response.content
+        
         # Log the response content
-        logging.info(f"\n\nFeedback incorporation response for {section_title}:\n{response.content}\n\n")
+        logging.info(f"\n\nFeedback incorporation response for {section_title}:\n{response}\n\n")
         
         # Store the original content as a version
         state.current_section.versions.append(SectionVersion(
@@ -566,7 +1026,7 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
         ))
         
         # Update the section content and version
-        state.current_section.content = response.content
+        state.current_section.content = response
         state.current_section.current_version += 1
         
         # Mark feedback as addressed
@@ -645,11 +1105,13 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
         try:
             response = await state.model.ainvoke(prompt)
             
+            response = response if isinstance(response, str) else response.content
+            
             # Log the response content
-            logging.info(f"\n\nTransition generation response from {current_section.title} to {next_section_title}:\n{response.content}\n\n")
+            logging.info(f"\n\nTransition generation response from {current_section.title} to {next_section_title}:\n{response}\n\n")
             
             # Store the transition
-            state.transitions[f"{current_section.title}_to_{next_section_title}"] = response.content
+            state.transitions[f"{current_section.title}_to_{next_section_title}"] = response
             
             print(f"Successfully generated transition from '{current_section.title}' to '{next_section_title}'")
             print(f"Next section to generate: '{next_section_title}'")
@@ -667,7 +1129,7 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
     return state
 
 async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
-    """Compiles the final blog post."""
+    """Compiles the final blog post while maintaining original document structure."""
     logging.info("Executing node: blog_compiler")
     
     # Update generation stage
@@ -677,6 +1139,28 @@ async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
     blog_title = state.outline.title
     difficulty_level = state.outline.difficulty_level
     prerequisites = state.outline.prerequisites
+    
+    # Extract section headers from markdown metadata
+    section_headers = []
+    if (state.markdown_content and 
+        hasattr(state.markdown_content, 'metadata') and 
+        state.markdown_content.metadata and 
+        'section_headers' in state.markdown_content.metadata):
+        
+        # section_headers = state.markdown_content.metadata['section_headers']
+        section_headers = json.loads(state.markdown_content.metadata['section_headers'])
+    
+    # Format original document structure for the prompt
+    original_structure = ""
+    if section_headers:
+        original_structure = "Original document structure:\n"
+        # Sort by position or level
+        sorted_headers = sorted(section_headers, key=lambda h: h.get('position', h.get('level', 1)))
+        for header in sorted_headers:
+            level = header.get('level', 1)
+            text = header.get('text', '')
+            indent = "  " * (level - 1)
+            original_structure += f"{indent}{'#' * level} {text}\n"
     
     # Get sections content
     sections_content = "\n\n".join([
@@ -696,7 +1180,8 @@ async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
         "difficulty_level": difficulty_level,
         "prerequisites": prerequisites,
         "sections_content": sections_content,
-        "transitions": transitions
+        "transitions": transitions,
+        "original_structure": original_structure
     }
     
     # Format prompt and get LLM response
@@ -705,11 +1190,13 @@ async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
     try:
         response = await state.model.ainvoke(prompt)
         
+        response = response if isinstance(response, str) else response.content
+        
         # Log the response content
-        logging.info(f"\n\nBlog compilation response:\n{response.content}\n\n")
+        logging.info(f"\n\nBlog compilation response:\n{response}\n\n")
         
         # Store the final blog post
-        state.final_blog_post = response.content
+        state.final_blog_post = response
         
         # Update generation stage
         state.generation_stage = "completed"
