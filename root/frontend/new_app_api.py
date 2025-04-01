@@ -54,8 +54,11 @@ class SessionManager:
                 'python_hashes': [], # Store multiple python file hashes if needed
                 'job_id': None, # ID for the current outline/draft generation job
                 'generated_outline': None,
-                'generated_sections': {}, # Dict mapping index to section data {title, content}
-                'final_draft': None,
+                'generated_sections': {}, # Dict mapping index to section data {title, raw_content, formatted_content}
+                'final_draft': None, # Compiled draft before refinement
+                'refined_draft': None, # Draft after adding intro/conclusion
+                'summary': None, # Generated summary
+                'title_options': None, # List of generated TitleOption objects
                 'social_content': None, # Dict for {breakdown, linkedin, x, newsletter}
                 'current_section_index': 0,
                 'total_sections': 0,
@@ -633,16 +636,106 @@ class BlogDraftUI:
                 st.markdown(final_draft)
             with st.expander("Markdown Source", expanded=False):
                 st.text_area("Markdown", final_draft, height=400)
-            st.info("Proceed to the 'Social Posts' tab to generate promotional content.")
+            st.info("Proceed to the 'Refine & Finalize' tab to add introduction, conclusion, summary, and titles.") # Updated instruction
+
+
+class RefinementUI:
+    """Handles the Refine & Finalize Tab."""
+    def render(self):
+        st.header("3. Refine & Finalize Blog")
+
+        if not SessionManager.get('final_draft'):
+            st.warning("Please compile the draft on the 'Blog Draft' tab first.")
+            return
+
+        job_id = SessionManager.get('job_id')
+        project_name = SessionManager.get('project_name')
+        final_draft = SessionManager.get('final_draft')
+
+        st.subheader("Compiled Draft Preview")
+        st.download_button(
+            label="Download Compiled Draft (.md)",
+            data=final_draft,
+            file_name=f"{project_name}_compiled_draft.md",
+            mime="text/markdown",
+            key="download_compiled_draft_refine_tab"
+        )
+        with st.expander("View Compiled Draft", expanded=False):
+            st.markdown(final_draft)
+
+        st.markdown("---")
+        st.subheader("Generate Introduction, Conclusion, Summary & Titles")
+
+        if st.button("Refine Blog", key="refine_blog_btn"):
+            SessionManager.set_status("Refining blog draft...")
+            SessionManager.clear_error()
+            try:
+                with st.spinner("Calling API to refine blog..."):
+                    # Assuming api_client has a refine_blog function
+                    result = asyncio.run(api_client.refine_blog(
+                        project_name=project_name,
+                        job_id=job_id,
+                        base_url=SessionManager.get('api_base_url')
+                    ))
+                SessionManager.set('refined_draft', result.get('refined_draft'))
+                SessionManager.set('summary', result.get('summary'))
+                SessionManager.set('title_options', result.get('title_options')) # Expecting a list of dicts
+                SessionManager.set_status("Blog refined successfully.")
+                logger.info(f"Blog refined for job ID: {job_id}")
+            except AttributeError:
+                 SessionManager.set_error("API Error: `refine_blog` function not found in `api_client.py`. Please update the client.")
+                 SessionManager.set_status("Refinement failed.")
+            except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
+                SessionManager.set_error(f"API Error refining blog: {str(api_err)}")
+                SessionManager.set_status("Refinement failed.")
+            except Exception as e:
+                logger.exception(f"Unexpected error during blog refinement: {e}")
+                SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
+                SessionManager.set_status("Refinement failed.")
+
+        # Display Refinement Results
+        refined_draft = SessionManager.get('refined_draft')
+        summary = SessionManager.get('summary')
+        title_options = SessionManager.get('title_options') # This should be List[Dict]
+
+        if refined_draft:
+            st.markdown("---")
+            st.subheader("Refined Blog Draft")
+            st.download_button(
+                label="Download Refined Draft (.md)",
+                data=refined_draft,
+                file_name=f"{project_name}_refined_draft.md",
+                mime="text/markdown",
+                key="download_refined_draft"
+            )
+            with st.expander("Preview Refined Draft", expanded=True):
+                st.markdown(refined_draft)
+
+        if summary:
+             st.subheader("Generated Summary")
+             st.markdown(summary)
+
+        if title_options:
+            st.subheader("Generated Title & Subtitle Options")
+            for i, option in enumerate(title_options):
+                with st.container(border=True):
+                    st.markdown(f"**Option {i+1}:**")
+                    st.markdown(f"**Title:** {option.get('title', 'N/A')}")
+                    st.markdown(f"**Subtitle:** {option.get('subtitle', 'N/A')}")
+                    st.caption(f"Reasoning: {option.get('reasoning', 'N/A')}")
+
+        if refined_draft:
+             st.info("Proceed to the 'Social Posts' tab to generate promotional content using the refined draft.")
 
 
 class SocialPostsUI:
     """Handles the Social Posts Tab."""
     def render(self):
-        st.header("3. Generate Social Media Content")
+        st.header("4. Generate Social Media Content") # Updated header number
 
-        if not SessionManager.get('final_draft'):
-            st.warning("Please compile the final draft on the 'Blog Draft' tab first.")
+        # Check for refined draft now
+        if not SessionManager.get('refined_draft'):
+            st.warning("Please refine the blog draft on the 'Refine & Finalize' tab first.")
             return
 
         job_id = SessionManager.get('job_id')
@@ -696,6 +789,7 @@ class BloggingAssistantAPIApp:
         self.sidebar = SidebarUI()
         self.outline_generator = OutlineGeneratorUI()
         self.blog_draft = BlogDraftUI()
+        self.refinement = RefinementUI() # Added refinement UI instance
         self.social_posts = SocialPostsUI()
 
     def setup(self):
@@ -722,9 +816,9 @@ class BloggingAssistantAPIApp:
 
 
         if SessionManager.get('is_initialized'):
-            # Create tabs only after initialization
-            tab_outline, tab_draft, tab_social = st.tabs([
-                "Outline", "Blog Draft", "Social Posts"
+            # Create tabs only after initialization, including the new Refine tab
+            tab_outline, tab_draft, tab_refine, tab_social = st.tabs([
+                "1. Outline", "2. Blog Draft", "3. Refine & Finalize", "4. Social Posts"
             ])
 
             with tab_outline:
@@ -732,6 +826,9 @@ class BloggingAssistantAPIApp:
 
             with tab_draft:
                 self.blog_draft.render()
+
+            with tab_refine: # Added tab rendering
+                self.refinement.render()
 
             with tab_social:
                 self.social_posts.render()

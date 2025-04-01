@@ -254,6 +254,36 @@ async def compile_draft(
             logger.error(f"HTTP request failed during draft compilation: {e}")
             raise ConnectionError(f"Failed to connect to API for draft compilation: {e}")
 
+
+async def refine_blog(
+    project_name: str,
+    job_id: str,
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    Requests the backend to refine the compiled blog draft.
+
+    Args:
+        project_name: The name of the project.
+        job_id: The ID of the job containing the compiled draft.
+        base_url: The base URL of the API.
+
+    Returns:
+        The JSON response containing the refined draft, summary, and title options.
+    """
+    api_url = _get_api_url(f"/refine_blog/{project_name}", base_url)
+    data = {"job_id": job_id}
+
+    async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
+        try:
+            logger.info(f"Requesting blog refinement for job {job_id} at {api_url}")
+            response = await client.post(api_url, data=data)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during blog refinement: {e}")
+            raise ConnectionError(f"Failed to connect to API for blog refinement: {e}")
+
+
 async def generate_social_content(
     project_name: str,
     job_id: str,

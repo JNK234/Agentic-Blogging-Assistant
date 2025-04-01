@@ -14,8 +14,10 @@ from cachetools import TTLCache # For simple in-memory state cache
 from root.backend.agents.outline_generator_agent import OutlineGeneratorAgent
 from root.backend.agents.content_parsing_agent import ContentParsingAgent
 from root.backend.agents.blog_draft_generator_agent import BlogDraftGeneratorAgent
-from root.backend.agents.social_media_agent import SocialMediaAgent # Added import
+from root.backend.agents.social_media_agent import SocialMediaAgent
+from root.backend.agents.blog_refinement_agent import BlogRefinementAgent # Updated import path
 from root.backend.agents.outline_generator.state import FinalOutline
+from root.backend.agents.blog_refinement.state import RefinementResult # Added refinement result state
 from root.backend.utils.serialization import serialize_object
 from root.backend.models.model_factory import ModelFactory
 
@@ -126,18 +128,22 @@ async def get_or_create_agents(model_name: str):
         draft_agent = BlogDraftGeneratorAgent(model, content_parser)
         await draft_agent.initialize()
 
-        social_agent = SocialMediaAgent(model) # Added social agent
+        refinement_agent = BlogRefinementAgent(model) # Added refinement agent
+        await refinement_agent.initialize()
+
+        social_agent = SocialMediaAgent(model)
         await social_agent.initialize()
-        
+
         # Cache the agents
         agent_cache[cache_key] = {
             "model": model,
             "content_parser": content_parser,
             "outline_agent": outline_agent,
             "draft_agent": draft_agent,
-            "social_agent": social_agent # Added social agent to cache
+            "refinement_agent": refinement_agent, # Added refinement agent to cache
+            "social_agent": social_agent
         }
-        
+
         return agent_cache[cache_key]
     except Exception as e:
         logger.exception(f"Failed to create agents: {str(e)}")
@@ -648,26 +654,42 @@ async def compile_draft(
         # Combine all parts
         final_draft = "\n".join(blog_parts)
 
-        # --- Enhancement: Store final draft in cache ---
+        # --- Enhancement: Store final draft in cache AND save to file ---
+        draft_saved_to_file = False
         try:
             if job_id in state_cache:
                 state_cache[job_id]["final_draft"] = final_draft
-                # Re-insert to update TTL (optional)
-                # state_cache[job_id] = state_cache[job_id]
                 logger.info(f"Stored final draft in cache for job_id: {job_id}")
+
+                # Save the compiled draft to the project's upload directory
+                project_dir = Path(UPLOAD_DIRECTORY) / project_name
+                project_dir.mkdir(parents=True, exist_ok=True) # Ensure directory exists
+                # Sanitize project name slightly for filename safety
+                safe_project_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in project_name)
+                draft_filename = f"{safe_project_name}_compiled_draft.md"
+                draft_filepath = project_dir / draft_filename
+                try:
+                    with open(draft_filepath, "w", encoding="utf-8") as f:
+                        f.write(final_draft)
+                    logger.info(f"Saved compiled draft to: {draft_filepath}")
+                    draft_saved_to_file = True
+                except IOError as io_err:
+                    logger.error(f"Failed to save compiled draft to file {draft_filepath}: {io_err}")
+                    # Continue even if file saving fails, but log it
+
             else:
-                logger.warning(f"Job state for {job_id} expired before final draft could be stored.")
+                logger.warning(f"Job state for {job_id} expired before final draft could be stored or saved.")
         except Exception as cache_update_err:
-            logger.error(f"Failed to update cache with final draft for job {job_id}: {cache_update_err}")
+            logger.error(f"Failed to update cache/save file for job {job_id}: {cache_update_err}")
         # --- End Enhancement ---
 
         # Use our serialization utility to ensure proper JSON serialization
-        return JSONResponse(
-            content=serialize_object({
-                "job_id": job_id, # Return job_id
-                "draft": final_draft
-            })
-        )
+        response_content = {
+            "job_id": job_id,
+            "draft": final_draft,
+            "draft_saved": draft_saved_to_file # Indicate if file save was successful
+        }
+        return JSONResponse(content=serialize_object(response_content))
 
         # --- Optional: Cleanup state after successful compilation ---
         # Consider delaying cleanup or making it optional if the draft is needed for social posts
@@ -697,12 +719,13 @@ async def compile_draft(
             status_code=500
         )
 
-@app.post("/generate_social_content/{project_name}")
-async def generate_social_content(
+
+@app.post("/refine_blog/{project_name}")
+async def refine_blog(
     project_name: str, # Keep project_name for potential future use/logging
     job_id: str = Form(...) # Use job_id to retrieve compiled draft and model
 ) -> JSONResponse:
-    """Generate social media content (LinkedIn, X, Newsletter) from a compiled draft."""
+    """Refine a compiled blog draft using the BlogRefinementAgent."""
     try:
         # Retrieve state from cache
         job_state = state_cache.get(job_id)
@@ -713,19 +736,115 @@ async def generate_social_content(
                 status_code=404
             )
 
-        # Check if final draft exists in the state
-        final_draft = job_state.get("final_draft")
-        if not final_draft:
-            logger.error(f"Final draft not found in cache for job_id: {job_id}")
+        # Check if final (compiled) draft exists in the state
+        compiled_draft = job_state.get("final_draft")
+        if not compiled_draft:
+            logger.error(f"Compiled draft not found in cache for job_id: {job_id}")
             return JSONResponse(
-                content={"error": f"Final draft not found for job_id: {job_id}. Please compile the draft first."},
+                content={"error": f"Compiled draft not found for job_id: {job_id}. Please compile the draft first."},
                 status_code=400 # Bad request, draft needs compilation
+            )
+
+        # Extract model name from state
+        model_name = job_state.get("model_name")
+        if not model_name:
+             logger.error(f"Model name not found in cache for job_id: {job_id}")
+             return JSONResponse(
+                content={"error": "Model name missing from job state."},
+                status_code=500
+            )
+
+        # Get or create agents using model_name from state
+        agents = await get_or_create_agents(model_name)
+        refinement_agent = agents.get("refinement_agent")
+
+        if not refinement_agent:
+            logger.error(f"BlogRefinementAgent not found for model {model_name}")
+            return JSONResponse(
+                content={"error": "Blog refinement agent could not be initialized."},
+                status_code=500
+            )
+
+        # Run the refinement process using the graph
+        logger.info(f"Refining blog draft for job_id: {job_id} using graph...")
+        # Call the graph execution method instead of the old 'refine'
+        refinement_result: Optional[RefinementResult] = await refinement_agent.refine_blog_with_graph(
+            blog_draft=compiled_draft
+        )
+
+        if not refinement_result:
+            logger.error(f"Failed to refine blog draft for job_id: {job_id}")
+            return JSONResponse(
+                content={"error": "Failed to refine blog draft."},
+                status_code=500
+            )
+
+        # --- Enhancement: Store refinement results in cache ---
+        try:
+            if job_id in state_cache:
+                state_cache[job_id]["refined_draft"] = refinement_result.refined_draft
+                state_cache[job_id]["summary"] = refinement_result.summary
+                state_cache[job_id]["title_options"] = refinement_result.title_options
+                logger.info(f"Stored refinement results in cache for job_id: {job_id}")
+            else:
+                logger.warning(f"Job state for {job_id} expired before refinement results could be stored.")
+        except Exception as cache_update_err:
+            logger.error(f"Failed to update cache with refinement results for job {job_id}: {cache_update_err}")
+        # --- End Enhancement ---
+
+        # Return the refinement results
+        return JSONResponse(
+            content=serialize_object({
+                "job_id": job_id,
+                "refined_draft": refinement_result.refined_draft,
+                "summary": refinement_result.summary,
+                "title_options": refinement_result.title_options
+            })
+        )
+
+    except Exception as e:
+        logger.exception(f"Blog refinement failed: {str(e)}")
+        error_detail = {
+            "error": f"Blog refinement failed: {str(e)}",
+            "type": str(type(e).__name__),
+            "details": str(e)
+        }
+        return JSONResponse(
+            content=serialize_object(error_detail),
+            status_code=500
+        )
+
+
+@app.post("/generate_social_content/{project_name}")
+async def generate_social_content(
+    project_name: str, # Keep project_name for potential future use/logging
+    job_id: str = Form(...) # Use job_id to retrieve refined draft and model
+) -> JSONResponse:
+    """Generate social media content (LinkedIn, X, Newsletter) from a REFINED draft."""
+    try:
+        # Retrieve state from cache
+        job_state = state_cache.get(job_id)
+        if not job_state:
+            logger.error(f"Job state not found for job_id: {job_id}")
+            return JSONResponse(
+                content={"error": f"Job state not found for job_id: {job_id}. Please refine draft first."},
+                status_code=404
+            )
+
+        # Check if REFINED draft exists in the state
+        refined_draft = job_state.get("refined_draft")
+        if not refined_draft:
+            logger.error(f"Refined draft not found in cache for job_id: {job_id}")
+            return JSONResponse(
+                content={"error": f"Refined draft not found for job_id: {job_id}. Please refine the draft first."},
+                status_code=400 # Bad request, draft needs refinement
             )
 
         # Extract necessary info from state
         model_name = job_state.get("model_name")
-        outline_data = job_state.get("outline", {})
-        blog_title = outline_data.get("title", "Blog Post") # Get title from outline
+        # Use one of the generated titles if available, otherwise fallback
+        title_options = job_state.get("title_options", [])
+        blog_title = title_options[0].title if title_options and isinstance(title_options[0], TitleOption) else job_state.get("outline", {}).get("title", "Blog Post")
 
         if not model_name:
              logger.error(f"Model name not found in cache for job_id: {job_id}")
@@ -745,10 +864,10 @@ async def generate_social_content(
                 status_code=500
             )
 
-        # Generate social content
-        logger.info(f"Generating social content for job_id: {job_id}")
+        # Generate social content using the REFINED draft
+        logger.info(f"Generating social content for job_id: {job_id} using refined draft.")
         social_content = await social_agent.generate_content(
-            blog_content=final_draft,
+            blog_content=refined_draft, # Use refined draft here
             blog_title=blog_title
         )
 
