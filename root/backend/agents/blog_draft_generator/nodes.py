@@ -485,7 +485,8 @@ async def section_generator(state: BlogDraftState) -> BlogDraftState:
         "previous_context": previous_context,
         # Keep original_structure and structural_insights for now, though their relevance might decrease
         "original_structure": original_structure,
-        "structural_insights": structural_insights
+        "structural_insights": structural_insights,
+        "current_section_data": json.dumps(section.model_dump()) # Pass the current section data (including constraints) as JSON string
     }
 
     # Format prompt and get LLM response

@@ -48,11 +48,12 @@ SECTION_GENERATION_PROMPT = PromptTemplate(
 
 {format_instructions}
 
-SECTION INFORMATION:
+SECTION INFORMATION (From Outline):
 Title: {section_title}
 Learning Goals: {learning_goals}
+Constraints: {current_section_data} # Contains include_code, max_subpoints, max_code_examples
 
-ORIGINAL DOCUMENT STRUCTURE:
+ORIGINAL DOCUMENT STRUCTURE (For Reference):
 {original_structure}
 
 STRUCTURAL INSIGHTS:
@@ -65,15 +66,24 @@ PREVIOUS SECTION CONTEXT:
 {previous_context}
 
 TASK:
+Write a comprehensive and engaging blog section that adheres strictly to the provided constraints:
+
+**Constraints to Follow:**
+- **Code Inclusion:** Refer to `current_section_data.include_code`. If `false`, DO NOT include any code examples. If `true`, proceed with code generation.
+- **Subpoint Limit:** The number of distinct sub-topics or points discussed should not exceed `current_section_data.max_subpoints`. Be concise if the limit is low.
+- **Code Example Limit:** If `include_code` is `true`, generate a maximum of `current_section_data.max_code_examples` relevant code snippets. Choose the most illustrative examples.
+
+**TASK:**
 Write a comprehensive and engaging blog section that:
 
 1. Structure:
-   - Follow the original document structure where applicable
-   - Maintain the hierarchical relationships between topics
-   - Start with a clear technical introduction
+   - Adhere to the `max_subpoints` constraint from `current_section_data`.
+   - Follow the original document structure where applicable.
+   - Maintain the hierarchical relationships between topics.
+   - Start with a clear technical introduction *specific to this section's topic*, building upon the previous context if available.
    - Break down complex concepts into digestible parts
    - Build concepts progressively
-   - Conclude with key takeaways
+   - Conclude by reinforcing the section's key learning goals or summarizing the main technical points covered *in this section*. Avoid generic summaries.
 
 2. Content Preservation:
    - Prioritize using content from the original document
@@ -91,10 +101,11 @@ Write a comprehensive and engaging blog section that:
    - Provide well-commented code snippets
    - Explain each significant code block
    - Include setup and configuration details
-   - Show best practices in implementation
+   - Show best practices in implementation.
+   - **IMPORTANT**: Only include code examples if `current_section_data.include_code` is `true`. Limit the number of examples to `current_section_data.max_code_examples`.
 
 5. Implementation Focus:
-   - Include practical implementation details
+   - Include practical implementation details.
    - Highlight common pitfalls and solutions
    - Discuss performance considerations
    - Address security implications if relevant
@@ -128,6 +139,7 @@ Ensure the content is:
         "structural_insights",
         "formatted_content",
         "previous_context",
+        "current_section_data", # Added
     ],
 )
 
@@ -170,7 +182,7 @@ IMPORTANT:
 - Keep the technical accuracy high
 - Ensure code examples are well-explained
 - Add concrete examples for abstract concepts
-- Highlight key points and takeaways
+- Reinforce the section's key learning goals or summarize the main technical points covered *in this section*. Avoid generic summaries or takeaways.
 - Preserve the hierarchical relationships between topics
 
 FORMAT:

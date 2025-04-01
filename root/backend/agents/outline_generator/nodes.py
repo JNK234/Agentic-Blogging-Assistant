@@ -145,7 +145,9 @@ async def outline_structurer(state: OutlineState) -> OutlineState:
                 "required_knowledge": state.prerequisites.required_knowledge if state.prerequisites else [],
                 "recommended_tools": state.prerequisites.recommended_tools if state.prerequisites else [],
                 "setup_instructions": state.prerequisites.setup_instructions if state.prerequisites else []
-            }
+            },
+            "user_guidelines": state.user_guidelines if state.user_guidelines else "No specific guidelines provided.",
+            "technical_concepts": str(state.analysis_result.technical_concepts) if state.analysis_result else "[]"
         }
 
         # Format prompt and get LLM response

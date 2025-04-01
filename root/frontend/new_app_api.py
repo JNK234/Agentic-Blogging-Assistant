@@ -10,6 +10,7 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 import httpx # For catching specific exceptions
 from pathlib import Path
+import json # Added for parsing section content
 
 # Import the API client functions
 import api_client
@@ -91,6 +92,133 @@ class SessionManager:
         """Sets a status message."""
         st.session_state.api_app_state['status_message'] = message
         logger.info(f"UI Status Set: {message}")
+
+
+# --- Helper Functions ---
+def display_readable_outline(outline_data: Optional[Dict[str, Any]]):
+    """Displays the outline dictionary in a readable format using Streamlit."""
+    if not outline_data:
+        st.info("No outline data to display.")
+        return
+
+    # Display Title
+    title = outline_data.get("title", "Blog Outline")
+    st.subheader(title)
+
+    # Display Sections and Subsections
+    sections = outline_data.get("sections")
+    if isinstance(sections, list) and sections:
+        for i, section in enumerate(sections):
+            if isinstance(section, dict):
+                section_title = section.get("title", f"Section {i+1}")
+                st.markdown(f"**{i+1}. {section_title}**")
+
+                subsections = section.get("subsections")
+                if isinstance(subsections, list) and subsections:
+                    for sub_i, subsection in enumerate(subsections):
+                        # Ensure subsection is treated as a string
+                        st.markdown(f"    - {str(subsection)}")
+            else:
+                # Handle case where section is just a string (less likely based on structure)
+                 st.markdown(f"**{i+1}. {str(section)}**")
+
+    else:
+        st.markdown("*No sections defined in the outline.*")
+
+
+def format_section_content_as_markdown(content_data: Any) -> str:
+    """
+    Formats potentially structured section content into a consistent Markdown string.
+
+    Tries to parse the input as JSON if it's a string. If it's a dictionary
+    (either parsed or directly passed), it formats known keys like 'title',
+    'content', and 'code_examples' into Markdown. Other keys are displayed generically.
+    If parsing fails or the input isn't structured, it's treated as plain text/Markdown.
+
+    Args:
+        content_data: The raw content received for a section. Can be a string
+                      (potentially JSON), a dictionary, or None.
+
+    Returns:
+        A formatted Markdown string suitable for st.markdown.
+    """
+    if not content_data:
+        return "*No content available for this section.*"
+
+    data = None
+    if isinstance(content_data, str):
+        try:
+            # Attempt to parse the string as JSON
+            parsed_json = json.loads(content_data)
+            if isinstance(parsed_json, dict):
+                data = parsed_json
+            else:
+                 # If it parses but isn't a dict, treat as plain text
+                 return content_data
+        except json.JSONDecodeError:
+            # If it's not valid JSON, assume it's already Markdown or plain text
+            return content_data
+    elif isinstance(content_data, dict):
+        data = content_data
+    else:
+        # Handle unexpected types by converting to string
+        logger.warning(f"Unexpected content type received: {type(content_data)}. Displaying as string.")
+        return str(content_data)
+
+    # If we successfully got a dictionary, format it without modifying the original
+    if data:
+        markdown_parts = []
+        # Use a copy or access keys directly to avoid modifying the original 'data'
+        local_data = data.copy() # Work on a copy
+
+        # Use H3 for sub-section title if present
+        title = local_data.get("title")
+        if title:
+             markdown_parts.append(f"### {title}")
+
+        # Main content block
+        content = local_data.get("content")
+        if content:
+            markdown_parts.append(str(content))
+
+        # Format code examples, avoiding double-fencing
+        examples = local_data.get("code_examples")
+        if examples:
+            markdown_parts.append("\n**Code Examples:**\n") # Add header regardless of type
+            if isinstance(examples, list) and examples:
+                for i, example in enumerate(examples):
+                    lang = ""
+                    code = ""
+                    if isinstance(example, dict):
+                        lang = example.get("language", "")
+                        code = example.get("code", "")
+                    else:
+                        code = str(example) # Assume the list item is the code string
+
+                    code_str = str(code).strip()
+                    # Check if it already looks like a fenced block
+                    if code_str.startswith("```") and code_str.endswith("```"):
+                        markdown_parts.append(code_str) # Use as-is
+                    else:
+                        markdown_parts.append(f"``` {lang}\n{code_str}\n```") # Add fences
+
+            elif isinstance(examples, str): # Handle single code example string
+                 code_str = examples.strip()
+                 if code_str.startswith("```") and code_str.endswith("```"):
+                     markdown_parts.append(code_str) # Use as-is
+                 else:
+                     # Assume python if language not specified for single string example
+                     markdown_parts.append(f"``` python\n{code_str}\n```")
+
+        # Note: We no longer need to handle 'remaining keys' as we are not deleting.
+        # If other keys need specific formatting, add logic here.
+
+        return "\n\n".join(filter(None, markdown_parts)) # Join non-empty parts
+    else:
+        # This case handles non-dict data or data that became None/empty after parsing attempts
+        # but handles edge cases where data becomes None/empty after processing
+        return str(content_data)
+
 
 # --- UI Components ---
 
@@ -257,7 +385,15 @@ class OutlineGeneratorUI:
              st.info("No processed notebook or markdown files found. Outline generation requires at least one.")
              # Optionally allow generating outline without content? Requires backend change.
 
+        # Add text area for user guidelines here
+        user_guidelines = st.text_area("Optional Guidelines:",
+                                       help="Provide specific instructions for the outline generation (e.g., 'Focus on practical examples', 'Exclude section on history').",
+                                       key="user_guidelines_input")
+
         if st.button("Generate Outline", key="gen_outline_btn"):
+            # Retrieve guideline text inside the button's logic block
+            guideline_text = st.session_state.get('user_guidelines_input', '') # Get value using key
+
             if not notebook_hash and not markdown_hash:
                 st.error("Cannot generate outline without processed notebook or markdown content.")
                 return
@@ -271,6 +407,7 @@ class OutlineGeneratorUI:
                         model_name=model_name,
                         notebook_hash=notebook_hash,
                         markdown_hash=markdown_hash,
+                        user_guidelines=guideline_text, # Pass the retrieved guidelines
                         base_url=SessionManager.get('api_base_url')
                     ))
                 SessionManager.set('job_id', result.get('job_id'))
@@ -294,8 +431,8 @@ class OutlineGeneratorUI:
         outline = SessionManager.get('generated_outline')
         if outline:
             st.subheader("Generated Outline")
-            # Simple display for now, can be enhanced like the original app
-            st.json(outline, expanded=False) # Use st.json for easy viewing
+            # Display the outline in a readable format
+            display_readable_outline(outline)
             st.success(f"Outline ready for Job ID: `{SessionManager.get('job_id')}`")
             st.markdown("---")
             st.info("Proceed to the 'Blog Draft' tab to generate sections.")
@@ -353,11 +490,26 @@ class BlogDraftUI:
                             quality_threshold=quality_thresh,
                             base_url=SessionManager.get('api_base_url')
                         ))
-                    # Store the generated section content
+                    # Store the generated section content, ensuring it's a string
+                    section_content_raw = result.get("section_content")
+                    section_title_raw = result.get("section_title", current_section_info.get('title', 'Untitled'))
+
+                    if isinstance(section_content_raw, str):
+                        section_content = section_content_raw
+                    elif section_content_raw is None:
+                        section_content = "Error: No content received from API."
+                        logger.warning(f"generate_section for job {job_id}, section {current_section_index} returned None content. Full result: {result}")
+                    else:
+                        # Handle unexpected non-string content
+                        logger.error(f"generate_section for job {job_id}, section {current_section_index} returned non-string content: {type(section_content_raw)}. Value: {section_content_raw}")
+                        section_content = f"Error: Received unexpected content format: {type(section_content_raw)}. Check logs."
+
                     new_sections = SessionManager.get('generated_sections', {})
+                    # Store both raw and formatted content
                     new_sections[current_section_index] = {
-                        "title": result.get("section_title", current_section_info.get('title', 'Untitled')),
-                        "content": result.get("section_content", "Error: No content received.")
+                        "title": section_title_raw,
+                        "raw_content": section_content_raw, # Store original API response (might be dict or string)
+                        "formatted_content": format_section_content_as_markdown(section_content_raw) # Store formatted version
                     }
                     SessionManager.set('generated_sections', new_sections)
                     SessionManager.set('current_section_index', current_section_index + 1)
@@ -374,24 +526,33 @@ class BlogDraftUI:
             # --- Draft Compilation ---
             st.subheader("All Sections Generated!")
             if st.button("Compile Final Draft", key="compile_draft_btn"):
-                SessionManager.set_status("Compiling final draft...")
+                SessionManager.set_status("Compiling final draft from formatted sections...")
                 SessionManager.clear_error()
                 try:
-                    with st.spinner("Calling API to compile draft..."):
-                         result = asyncio.run(api_client.compile_draft(
-                             project_name=project_name,
-                             job_id=job_id,
-                             base_url=SessionManager.get('api_base_url')
-                         ))
-                    SessionManager.set('final_draft', result.get('draft'))
-                    SessionManager.set_status("Draft compiled successfully.")
-                    logger.info(f"Draft compiled for job ID: {job_id}")
-                except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
-                    SessionManager.set_error(f"API Error compiling draft: {str(api_err)}")
-                    SessionManager.set_status("Draft compilation failed.")
+                    # --- Frontend Draft Compilation ---
+                    blog_title = SessionManager.get('generated_outline', {}).get('title', 'My Blog Post')
+                    sections_data = SessionManager.get('generated_sections', {})
+                    sorted_indices = sorted(sections_data.keys())
+
+                    draft_parts = [f"# {blog_title}\n"] # Start with H1 title
+
+                    for index in sorted_indices:
+                        section = sections_data.get(index, {})
+                        section_title = section.get('title', f'Section {index + 1}')
+                        formatted_content = section.get('formatted_content', '')
+
+                        draft_parts.append(f"## {section_title}\n") # Add H2 for section title
+                        draft_parts.append(formatted_content)
+
+                    final_draft_content = "\n\n".join(draft_parts)
+                    SessionManager.set('final_draft', final_draft_content)
+                    SessionManager.set_status("Draft compiled successfully in frontend.")
+                    logger.info(f"Draft compiled in frontend for job ID: {job_id}")
+                    # No API call needed here anymore
+                    # --- End Frontend Draft Compilation ---
                 except Exception as e:
-                    logger.exception(f"Unexpected error during draft compilation: {e}")
-                    SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
+                    logger.exception(f"Unexpected error during frontend draft compilation: {e}")
+                    SessionManager.set_error(f"An unexpected error occurred during compilation: {str(e)}")
                     SessionManager.set_status("Draft compilation failed.")
 
         st.markdown("---")
@@ -402,8 +563,9 @@ class BlogDraftUI:
             sorted_indices = sorted(generated_sections.keys())
             for index in sorted_indices:
                 section_data = generated_sections[index]
-                with st.expander(f"Section {index + 1}: {section_data.get('title', 'Untitled')}", expanded=False):
-                    st.markdown(section_data.get('content', 'No content.'))
+                with st.expander(f"Section {index + 1}: {section_data.get('title', 'Untitled')}", expanded=True): # Expand by default now
+                    # Display the pre-formatted content stored in the state
+                    st.markdown(section_data.get('formatted_content', '*Error: Formatted content not found.*'))
                     # Feedback Form
                     with st.form(key=f"feedback_form_{index}"):
                         feedback_text = st.text_area("Provide feedback to regenerate this section:", key=f"feedback_text_{index}")
@@ -422,11 +584,33 @@ class BlogDraftUI:
                                     # Add advanced options if needed, e.g., from sliders outside the form
                                     base_url=SessionManager.get('api_base_url')
                                 ))
-                            # Update the section content
-                            generated_sections[index]['content'] = result.get("section_content", "Error: Regeneration failed.")
-                            SessionManager.set('generated_sections', generated_sections)
-                            SessionManager.set_status(f"Section {index + 1} regenerated.")
-                            st.rerun() # Update UI
+                            # Update the section content, ensuring it's a string
+                            section_content_raw = result.get("section_content")
+
+                            if isinstance(section_content_raw, str):
+                                section_content = section_content_raw
+                            elif section_content_raw is None:
+                                section_content = "Error: Regeneration failed to return content."
+                                logger.warning(f"regenerate_section for job {job_id}, section {index} returned None content. Full result: {result}")
+                            else:
+                                # Handle unexpected non-string content
+                                logger.error(f"regenerate_section for job {job_id}, section {index} returned non-string content: {type(section_content_raw)}. Value: {section_content_raw}")
+                                # Note: section_content variable is not directly used below, but error logging is kept.
+
+                            # Explicitly fetch the latest state right before updating
+                            current_sections_state = SessionManager.get('generated_sections', {})
+                            if index in current_sections_state:
+                                current_sections_state[index]['raw_content'] = section_content_raw # Update raw content
+                                current_sections_state[index]['formatted_content'] = format_section_content_as_markdown(section_content_raw) # Update formatted content
+                                # Note: Title is assumed unchanged during regeneration, but could be updated if API returns it
+                                SessionManager.set('generated_sections', current_sections_state) # Save updated state
+                                SessionManager.set_status(f"Section {index + 1} regenerated.")
+                                st.rerun() # Update UI
+                            else:
+                                # Handle case where the section index somehow disappeared
+                                SessionManager.set_error(f"Error: Could not find section {index + 1} in state to update after regeneration.")
+                                SessionManager.set_status("Section regeneration failed (state error).")
+
                         except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
                             SessionManager.set_error(f"API Error regenerating section: {str(api_err)}")
                             SessionManager.set_status("Section regeneration failed.")

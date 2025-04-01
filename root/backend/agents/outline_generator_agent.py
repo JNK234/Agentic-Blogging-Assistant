@@ -147,6 +147,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         markdown_path: Optional[str] = None,
         notebook_hash: Optional[str] = None,
         markdown_hash: Optional[str] = None,
+        user_guidelines: Optional[str] = None, # Added
         model=None,  # For backward compatibility
         use_cache: bool = True  # Whether to use cached outlines
     ) -> Tuple[Optional[Dict[str, Any]], Optional[ContentStructure], Optional[ContentStructure], bool]: # Return type changed
@@ -159,6 +160,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             markdown_path: Optional path to markdown file
             notebook_hash: Optional content hash for notebook (if already processed)
             markdown_hash: Optional content hash for markdown (if already processed)
+            user_guidelines: Optional user-provided guidelines for generation
             model: Optional model override (for backward compatibility)
             use_cache: Whether to use cached outlines (default: True)
 
@@ -257,7 +259,8 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             "difficulty_level": None,
             "prerequisites": None,
             "outline_structure": None,
-            "final_outline": None
+            "final_outline": None,
+            "user_guidelines": user_guidelines # Added
         }
 
         # Execute graph

@@ -125,31 +125,58 @@ Guidelines:
 
 # Outline Structuring Prompt
 OUTLINE_STRUCTURING_PROMPT = PromptTemplate(
-    template="""You are a technical content analyzer. Output must be valid JSON matching the format instructions with required content from the input only.
+    template="""You are a highly skilled technical writer and content structurer. Your task is to create a detailed blog post outline based on the provided analysis and guidelines.
+Output MUST be valid JSON matching the format instructions precisely.
 
 {format_instructions}
 
-Create outline structure for:
+**Input Information:**
 
-Main Topics:
-{main_topics}
+1.  **Main Topics Identified:**
+    {main_topics}
 
-Source Document Section Structure:
-{section_structure}
+2.  **Source Document Section Structure (for reference):**
+    {section_structure}
 
-Difficulty Level:
-{difficulty_level}
+3.  **Identified Technical Concepts:**
+    {technical_concepts}
 
-Prerequisites:
-{prerequisites}
+4.  **Assessed Difficulty Level:**
+    {difficulty_level}
 
-Guidelines:
-- Use the source document section structure as a reference
-- Ensure logical topic progression
-- Include clear learning goals per section
-- Estimate time requirements
-- Add relevant subsections
-- The entire output MUST be valid JSON according to format_instructions and nothing else. Do not include any conversational text or explanations or schemas.
+5.  **Identified Prerequisites:**
+    {prerequisites}
+
+6.  **User Provided Guidelines:**
+    {user_guidelines}
+
+**Task:** Create a structured outline (`OutlineStructure`) with sections (`OutlineSection`).
+
+**Guidelines for Outline Creation:**
+
+1.  **Logical Flow:** Ensure a clear and logical progression of topics, using `main_topics` and `section_structure` as primary guides.
+2.  **Section Content:** For each `OutlineSection`:
+    *   Define a clear `title`.
+    *   List relevant `subsections` (as strings).
+    *   Specify concise `learning_goals`.
+    *   Optionally provide an `estimated_time`.
+3.  **Code Inclusion (`include_code` flag):**
+    *   **Priority:** Strictly follow any explicit instructions in `user_guidelines` regarding code inclusion/exclusion for specific sections.
+    *   **Source Analysis:** Examine `technical_concepts` and `section_structure`. If the source document clearly contains relevant code examples for a section's topic, lean towards setting `include_code: true`.
+    *   **Necessity:** Set `include_code: true` only if code significantly enhances understanding, demonstrates a crucial practical implementation, or is explicitly requested/present in source. Avoid code for purely theoretical or introductory sections unless specified otherwise.
+    *   **Default:** If unsure, default to `include_code: false`.
+4.  **Subpoint Limits (`max_subpoints`):**
+    *   Aim for a maximum of 4 `subsections` per section by default (`max_subpoints: 4`).
+    *   If `include_code` is `true` for a section, consider reducing the limit slightly (e.g., `max_subpoints: 3`) to manage complexity.
+    *   Adhere to any limits specified in `user_guidelines`.
+5.  **Code Example Limits (`max_code_examples`):**
+    *   If `include_code` is `true`, suggest a default maximum of 1-2 code examples (`max_code_examples: 1` or `2`).
+    *   Adjust based on `user_guidelines` if provided.
+6.  **De-duplication:** Review the overall outline. Ensure sections and subsections cover distinct topics. Avoid proposing redundant content or repetitive code examples suggested by the `technical_concepts` or `section_structure`.
+7.  **Focus:** Structure only the technical core content derived from the source and analysis. Do NOT create generic 'Introduction' or 'Conclusion' sections for the overall blog post here; focus on the technical flow.
+8.  **Output Format:** The entire output MUST be a single, valid JSON object conforming exactly to the `OutlineStructure` schema provided in `format_instructions`. No extra text, explanations, or markdown formatting outside the JSON structure.
+
+Generate the `OutlineStructure` JSON object now.
     """,
     input_variables=[
         "format_instructions",
@@ -157,6 +184,8 @@ Guidelines:
         "section_structure",
         "difficulty_level",
         "prerequisites",
+        "user_guidelines", # Added
+        "technical_concepts", # Added
     ],
 )
 

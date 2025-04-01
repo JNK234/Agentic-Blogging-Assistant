@@ -28,6 +28,9 @@ class OutlineSection(BaseModel):
     subsections: List[str]
     learning_goals: List[str]
     estimated_time: Optional[str] = None
+    include_code: bool = Field(default=False, description="Whether code examples are recommended")
+    max_subpoints: Optional[int] = Field(default=4, description="Suggested max subsections")
+    max_code_examples: Optional[int] = Field(default=1, description="Suggested max code examples if code included")
 
 class OutlineStructure(BaseModel):
     title: str
@@ -56,6 +59,7 @@ class OutlineState(BaseModel):
     notebook_content: Optional[ContentStructure] = Field(description="Parsed notebook content") # Updated type hint
     markdown_content: Optional[ContentStructure] = Field(description="Parsed markdown content") # Updated type hint
     model: Any = Field(description="LLM model instance")
+    user_guidelines: Optional[str] = Field(default=None, description="Optional user-provided guidelines for outline generation")
 
     # Intermediate states
     analysis_result: Optional[ContentAnalysis] = None

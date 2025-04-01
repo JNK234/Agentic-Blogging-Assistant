@@ -110,6 +110,7 @@ async def generate_outline(
     model_name: str,
     notebook_hash: Optional[str] = None,
     markdown_hash: Optional[str] = None,
+    user_guidelines: Optional[str] = None, # Added
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -129,7 +130,8 @@ async def generate_outline(
     data = {
         "model_name": model_name,
         "notebook_hash": notebook_hash or "", # Send empty string if None
-        "markdown_hash": markdown_hash or ""  # Send empty string if None
+        "markdown_hash": markdown_hash or "", # Send empty string if None
+        "user_guidelines": user_guidelines or "" # Added - send empty string if None
     }
     # Filter out empty values if necessary, though FastAPI handles empty strings
     data = {k: v for k, v in data.items() if v is not None}

@@ -192,7 +192,8 @@ async def generate_outline(
     project_name: str,
     model_name: str = Form(...),
     notebook_hash: Optional[str] = Form(None),
-    markdown_hash: Optional[str] = Form(None)
+    markdown_hash: Optional[str] = Form(None),
+    user_guidelines: Optional[str] = Form(None) # Added
 ) -> JSONResponse:
     """Generate a blog outline for processed content."""
     try:
@@ -211,7 +212,8 @@ async def generate_outline(
         outline_result, notebook_content, markdown_content, was_cached = await outline_agent.generate_outline(
             project_name=project_name,
             notebook_hash=notebook_hash,
-            markdown_hash=markdown_hash
+            markdown_hash=markdown_hash,
+            user_guidelines=user_guidelines # Pass guidelines to agent
         )
 
         # Check if the agent returned an error dictionary
