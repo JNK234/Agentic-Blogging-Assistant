@@ -147,11 +147,18 @@ def format_section_content_as_markdown(content_data: Any) -> str:
     """
     if not content_data:
         return "*No content available for this section.*"
+        
 
     data = None
     if isinstance(content_data, str):
         try:
             # Attempt to parse the string as JSON
+            
+            # Clean the string if it has ```json ```
+            content_data = content_data.strip()
+            if content_data.startswith("```json") and content_data.endswith("```"):
+                content_data = content_data[7:-3].strip() 
+                
             parsed_json = json.loads(content_data)
             if isinstance(parsed_json, dict):
                 data = parsed_json
@@ -493,33 +500,42 @@ class BlogDraftUI:
                             quality_threshold=quality_thresh,
                             base_url=SessionManager.get('api_base_url')
                         ))
-                    # Store the generated section content, ensuring it's a string
+
+                    # Extract data from the result dictionary
                     section_content_raw = result.get("section_content")
                     section_title_raw = result.get("section_title", current_section_info.get('title', 'Untitled'))
+                    was_cached = result.get("was_cached", False) # Get the cache status flag
 
-                    if isinstance(section_content_raw, str):
-                        section_content = section_content_raw
-                    elif section_content_raw is None:
-                        section_content = "Error: No content received from API."
-                        logger.warning(f"generate_section for job {job_id}, section {current_section_index} returned None content. Full result: {result}")
+                    # Log whether the section was cached or generated
+                    if was_cached:
+                        logger.info(f"Section {current_section_index + 1} ('{section_title_raw}') loaded from cache.")
+                        status_msg = f"Section {current_section_index + 1} loaded from cache."
                     else:
-                        # Handle unexpected non-string content
-                        logger.error(f"generate_section for job {job_id}, section {current_section_index} returned non-string content: {type(section_content_raw)}. Value: {section_content_raw}")
-                        section_content = f"Error: Received unexpected content format: {type(section_content_raw)}. Check logs."
+                        logger.info(f"Section {current_section_index + 1} ('{section_title_raw}') generated.")
+                        status_msg = f"Section {current_section_index + 1} generated."
 
+                    # Validate content (no change needed here, format_section_content_as_markdown handles various inputs)
+                    formatted_content = format_section_content_as_markdown(section_content_raw)
+                    if "Error:" in formatted_content and section_content_raw is None:
+                         logger.warning(f"generate_section (cached={was_cached}) for job {job_id}, section {current_section_index} returned None content. Full result: {result}")
+                    elif "Error:" in formatted_content:
+                         logger.error(f"generate_section (cached={was_cached}) for job {job_id}, section {current_section_index} returned unexpected content type: {type(section_content_raw)}. Value: {section_content_raw}")
+
+
+                    # Update session state
                     new_sections = SessionManager.get('generated_sections', {})
-                    # Store both raw and formatted content
                     new_sections[current_section_index] = {
                         "title": section_title_raw,
-                        "raw_content": section_content_raw, # Store original API response (might be dict or string)
-                        "formatted_content": format_section_content_as_markdown(section_content_raw) # Store formatted version
+                        "raw_content": section_content_raw, # Store original API response
+                        "formatted_content": formatted_content # Store formatted version
                     }
                     SessionManager.set('generated_sections', new_sections)
                     SessionManager.set('current_section_index', current_section_index + 1)
-                    SessionManager.set_status(f"Section {current_section_index + 1} generated.")
+                    SessionManager.set_status(status_msg) # Use the dynamic status message
                     st.rerun() # Rerun to update progress and show generated section
+
                 except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
-                    SessionManager.set_error(f"API Error generating section: {str(api_err)}")
+                    SessionManager.set_error(f"API Error generating section {current_section_index + 1}: {str(api_err)}")
                     SessionManager.set_status("Section generation failed.")
                 except Exception as e:
                     logger.exception(f"Unexpected error during section generation: {e}")

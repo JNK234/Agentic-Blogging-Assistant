@@ -6,6 +6,10 @@ from root.backend.parsers import ContentStructure
 from root.backend.agents.base_agent import BaseGraphAgent
 from datetime import datetime
 import logging
+import hashlib # Added for cache key generation
+import json # Added for serializing/deserializing cache data
+from root.backend.services.vector_store_service import VectorStoreService # Added
+from typing import Tuple, Optional # Added for type hinting
 
 # Import necessary nodes at the top level
 from root.backend.agents.blog_draft_generator.nodes import (
@@ -26,7 +30,8 @@ logging.basicConfig(level=logging.INFO)
 class BlogDraftGeneratorAgent(BaseGraphAgent):
     """Agent responsible for generating blog drafts section by section."""
 
-    def __init__(self, model, content_parser):
+    # Updated __init__ to accept vector_store
+    def __init__(self, model, content_parser, vector_store: VectorStoreService):
         super().__init__(
             llm=model,
             tools=[],
@@ -34,6 +39,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             verbose=True
         )
         self.content_parser = content_parser
+        self.vector_store = vector_store # Store the passed instance
         self._initialized = False
         self.current_state = None
 
@@ -141,8 +147,14 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         # Set flag to indicate feedback is provided
         self.current_state.user_feedback_provided = True
 
-        logging.info(f"Added user feedback to section: {self.current_state.current_section.title}")
+        logging.info(f"Added user feedback to section: {self.current_state.current_section.title}") # Corrected indentation
         return True
+
+    def _create_section_cache_key(self, project_name: str, job_id: str, section_index: int) -> str:
+        """Creates a deterministic cache key for a section."""
+        # Use job_id which is unique per outline generation request
+        key_string = f"section_cache:{project_name}:{job_id}:{section_index}"
+        return hashlib.sha256(key_string.encode()).hexdigest()
 
     async def get_generation_status(self):
         """Returns the current status of the draft generation process."""
@@ -162,19 +174,53 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             "errors": self.current_state.errors
         }
 
-    async def generate_section(self, project_name: str, section, outline, notebook_content, markdown_content, current_section_index, max_iterations=3, quality_threshold=0.8): # Added project_name parameter
-        """Generates a single section of the blog draft."""
-        logging.info(f"Generating section: {section['title']} (Project: {project_name})")
+    # Updated method signature to include job_id and return tuple (content, was_cached)
+    async def generate_section(
+        self,
+        project_name: str,
+        job_id: str, # Added job_id
+        section: dict,
+        outline: dict,
+        notebook_content: Optional[ContentStructure],
+        markdown_content: Optional[ContentStructure],
+        current_section_index: int,
+        max_iterations=3,
+        quality_threshold=0.8,
+        use_cache: bool = True # Added cache control
+    ) -> Tuple[Optional[str], bool]: # Return content and cache status
+        """Generates a single section of the blog draft, using persistent cache."""
+        section_title = section.get('title', f'Section {current_section_index + 1}')
+        logging.info(f"Generating section {current_section_index}: {section_title} (Project: {project_name}, Job: {job_id})")
 
+        cache_key = self._create_section_cache_key(project_name, job_id, current_section_index)
+
+        # --- Check Cache ---
+        if use_cache:
+            cached_section_json = self.vector_store.retrieve_section_cache(
+                cache_key=cache_key,
+                project_name=project_name,
+                job_id=job_id,
+                section_index=current_section_index
+            )
+            if cached_section_json:
+                try:
+                    cached_data = json.loads(cached_section_json)
+                    logging.info(f"Cache hit for section {current_section_index} (Job: {job_id})")
+                    # Return cached content and True for was_cached
+                    return cached_data.get("content"), True
+                except json.JSONDecodeError:
+                    logging.warning(f"Failed to parse cached JSON for section {current_section_index}. Regenerating.")
+        # --- End Cache Check ---
+
+        logging.info(f"Cache miss for section {current_section_index}. Proceeding with generation.")
         # Reset the current state to ensure fresh generation
         self.current_state = None
-        logging.info("Reset agent state to ensure fresh generation")
+        # logging.info("Reset agent state to ensure fresh generation") # Can be verbose
 
         # Initialize state for this section
-        # Create a DraftSection object for the current section
         draft_section = DraftSection(
-            title=section['title'],
-            content="",  # Initialize with empty content
+            title=section_title,
+            content="",
             status="draft"
         )
 
@@ -184,7 +230,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         md_content = markdown_content if markdown_content is not None else default_cs
 
         section_state = BlogDraftState(
-            project_name=project_name, # Added project_name initialization
+            project_name=project_name,
             outline=outline,
             notebook_content=nb_content,
             markdown_content=md_content,
@@ -193,94 +239,105 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             max_iterations=max_iterations,
             quality_threshold=quality_threshold,
             current_section_index=current_section_index
+            # job_id is not part of BlogDraftState, but available via project_name/index
         )
 
-        # Instead of using the full graph, we'll execute the nodes directly in sequence
-        # This avoids the recursion limit issue by controlling the flow manually
+        # Execute nodes directly in sequence
         try:
-            logging.info(f"Executing direct section generation for: {section['title']}")
+            logging.info(f"Executing direct section generation for: {section_title}")
 
             # --- HyDE RAG Steps ---
-            # Step 1: Generate Hypothetical Document
-            state = await generate_hypothetical_document(section_state) # Pass the initial state
-
-            # Step 2: Retrieve Context using HyDE
-            state = await retrieve_context_with_hyde(state) # Pass the updated state
+            state = await generate_hypothetical_document(section_state)
+            state = await retrieve_context_with_hyde(state)
             # --- End HyDE RAG Steps ---
 
-            # Step 3: Generate the section content (will use hyde_retrieved_context internally)
             state = await section_generator(state)
-
-            # Step 3: Enhance the content
             state = await content_enhancer(state)
-
-            # Step 4: Extract code examples
             state = await code_example_extractor(state)
-
-            # Step 5: Validate quality and iterate if needed
             state = await quality_validator(state)
 
-            # Controlled iteration loop - manually implement the feedback loop
+            # Controlled iteration loop
             iteration = 1
             while iteration < max_iterations:
-                # Check if quality is good enough to stop
                 if hasattr(state.current_section, 'quality_metrics') and state.current_section.quality_metrics:
                     overall_score = state.current_section.quality_metrics.get('overall_score', 0.0)
                     if overall_score >= quality_threshold:
                         logging.info(f"Quality threshold met ({overall_score} >= {quality_threshold}), stopping iterations")
                         break
-
                 logging.info(f"Quality not yet met, starting iteration {iteration+1}/{max_iterations}")
-
-                # Generate feedback
                 state = await auto_feedback_generator(state)
-
-                # Incorporate feedback
                 state = await feedback_incorporator(state)
-
-                # Validate quality again
                 state = await quality_validator(state)
-
                 iteration += 1
 
-            # Step 6: Finalize the section
             state = await section_finalizer(state)
+            logging.info(f"Section generation completed for: {section_title}")
 
-            logging.info(f"Section generation completed for: {section['title']}")
+            generated_content = state.current_section.content if state.current_section else None
 
-            # Return the section content
-            if state.current_section and state.current_section.content:
-                return state.current_section.content
+            if generated_content:
+                # --- Store in Cache ---
+                if use_cache:
+                    section_data_to_cache = {
+                        "title": section_title,
+                        "content": generated_content
+                    }
+                    section_json = json.dumps(section_data_to_cache)
+                    self.vector_store.store_section_cache(
+                        section_json=section_json,
+                        cache_key=cache_key,
+                        project_name=project_name,
+                        job_id=job_id,
+                        section_index=current_section_index
+                    )
+                # --- End Store in Cache ---
+                return generated_content, False # Return content and False for was_cached
             else:
-                return None
-        except Exception as e:
-            msg = f"Error generating section {section['title']}: {e}"
-            logging.exception(msg)
-            return None
+                logging.error(f"Generation resulted in empty content for section {current_section_index}")
+                return None, False # Return None and False for was_cached
 
-    async def regenerate_section_with_feedback(self, project_name: str, section, outline, notebook_content, markdown_content, feedback, max_iterations=3, quality_threshold=0.8): # Added project_name parameter
-        """Regenerates a section with user feedback."""
-        logging.info(f"Regenerating section with feedback: {section['title']} (Project: {project_name})")
+        except Exception as e:
+            msg = f"Error generating section {section_title}: {e}"
+            logging.exception(msg)
+            return None, False # Return None and False for was_cached
+
+    # Updated method signature to include job_id
+    async def regenerate_section_with_feedback(
+        self,
+        project_name: str,
+        job_id: str, # Added job_id
+        section: dict,
+        outline: dict,
+        notebook_content: Optional[ContentStructure],
+        markdown_content: Optional[ContentStructure],
+        feedback: str,
+        max_iterations=3,
+        quality_threshold=0.8
+    ) -> Optional[str]: # Return only content (cache status not relevant for direct regen call)
+        """Regenerates a section with user feedback, updating the cache."""
+        section_title = section.get('title', 'Unknown Section')
+        logging.info(f"Regenerating section with feedback: {section_title} (Project: {project_name}, Job: {job_id})")
 
         # Find the section index
         section_index = -1
-        for i, s in enumerate(outline['sections']):
-            if s['title'] == section['title']:
+        for i, s in enumerate(outline.get('sections', [])):
+            # Ensure comparison works even if section is not a dict (though it should be)
+            if isinstance(s, dict) and s.get('title') == section_title:
                 section_index = i
                 break
 
         if section_index == -1:
-            logging.error(f"Section '{section['title']}' not found in outline")
+            logging.error(f"Section '{section_title}' not found in outline for job {job_id}")
             return None
 
-        # Reset the current state to ensure fresh generation
+        # Reset the current state to ensure fresh regeneration
         self.current_state = None
-        logging.info("Reset agent state to ensure fresh regeneration")
+        # logging.info("Reset agent state to ensure fresh regeneration")
 
         # Create a DraftSection object for the current section
         draft_section = DraftSection(
-            title=section['title'],
-            content="",  # Initialize with empty content
+            title=section_title,
+            content="",
             status="draft"
         )
 
@@ -300,7 +357,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
 
         # Initialize state
         initial_state = BlogDraftState(
-            project_name=project_name, # Added project_name initialization
+            project_name=project_name,
             outline=outline,
             notebook_content=nb_content,
             markdown_content=md_content,
@@ -312,69 +369,62 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         )
         initial_state.user_feedback_provided = True
 
-        # Execute nodes directly in sequence, similar to generate_section
+        # Execute nodes directly in sequence
         try:
-            logging.info(f"Executing direct section regeneration with feedback for: {section['title']}")
+            logging.info(f"Executing direct section regeneration with feedback for: {section_title}")
 
             # --- HyDE RAG Steps ---
-            # Step 1: Generate Hypothetical Document
-            state = await generate_hypothetical_document(initial_state) # Use initial_state here
-
-            # Step 2: Retrieve Context using HyDE
-            state = await retrieve_context_with_hyde(state) # Pass the updated state
+            state = await generate_hypothetical_document(initial_state)
+            state = await retrieve_context_with_hyde(state)
             # --- End HyDE RAG Steps ---
 
-            # Step 3: Generate the section content (will use hyde_retrieved_context)
             state = await section_generator(state)
-
-            # Step 3: Incorporate the user feedback
-            state = await feedback_incorporator(state)
-
-            # Step 4: Enhance the content
+            state = await feedback_incorporator(state) # Incorporate user feedback
             state = await content_enhancer(state)
-
-            # Step 5: Extract code examples
             state = await code_example_extractor(state)
-
-            # Step 6: Validate quality and iterate if needed
             state = await quality_validator(state)
 
-            # Controlled iteration loop - manually implement the feedback loop
+            # Controlled iteration loop
             iteration = 1
             while iteration < max_iterations:
-                # Check if quality is good enough to stop
                 if hasattr(state.current_section, 'quality_metrics') and state.current_section.quality_metrics:
                     overall_score = state.current_section.quality_metrics.get('overall_score', 0.0)
                     if overall_score >= quality_threshold:
                         logging.info(f"Quality threshold met ({overall_score} >= {quality_threshold}), stopping iterations")
                         break
-
                 logging.info(f"Quality not yet met, starting iteration {iteration+1}/{max_iterations}")
-
-                # Generate feedback (auto feedback, not user feedback)
                 state = await auto_feedback_generator(state)
-
-                # Incorporate feedback
-                state = await feedback_incorporator(state)
-
-                # Validate quality again
+                state = await feedback_incorporator(state) # Incorporate auto-feedback
                 state = await quality_validator(state)
-
                 iteration += 1
 
-            # Step 7: Finalize the section
             state = await section_finalizer(state)
+            logging.info(f"Section regeneration completed for: {section_title}")
 
-            logging.info(f"Section regeneration completed for: {section['title']}")
+            regenerated_content = state.current_section.content if state.current_section else None
 
-            # Return the section content
-            if state.current_section and state.current_section.content:
-                logging.info(f"Successfully regenerated section '{section['title']}' with content length: {len(state.current_section.content)}")
-                return state.current_section.content
+            if regenerated_content:
+                logging.info(f"Successfully regenerated section '{section_title}' with content length: {len(regenerated_content)}")
+                # --- Update Cache ---
+                cache_key = self._create_section_cache_key(project_name, job_id, section_index)
+                section_data_to_cache = {
+                    "title": section_title,
+                    "content": regenerated_content
+                }
+                section_json = json.dumps(section_data_to_cache)
+                self.vector_store.store_section_cache(
+                    section_json=section_json,
+                    cache_key=cache_key,
+                    project_name=project_name,
+                    job_id=job_id,
+                    section_index=section_index
+                )
+                # --- End Update Cache ---
+                return regenerated_content
             else:
-                logging.error(f"Failed to regenerate section content for '{section['title']}'")
+                logging.error(f"Failed to regenerate section content for '{section_title}'")
                 return None
         except Exception as e:
-            msg = f"Error regenerating section with feedback {section['title']}: {e}"
+            msg = f"Error regenerating section with feedback {section_title}: {e}"
             logging.exception(msg)
             return None

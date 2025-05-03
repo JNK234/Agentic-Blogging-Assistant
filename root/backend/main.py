@@ -17,9 +17,10 @@ from root.backend.agents.blog_draft_generator_agent import BlogDraftGeneratorAge
 from root.backend.agents.social_media_agent import SocialMediaAgent
 from root.backend.agents.blog_refinement_agent import BlogRefinementAgent # Updated import path
 from root.backend.agents.outline_generator.state import FinalOutline
-from root.backend.agents.blog_refinement.state import RefinementResult # Added refinement result state
+from root.backend.agents.blog_refinement.state import RefinementResult, TitleOption # Combined import
 from root.backend.utils.serialization import serialize_object
 from root.backend.models.model_factory import ModelFactory
+from root.backend.services.vector_store_service import VectorStoreService # Added
 
 # Configure logging
 logging.basicConfig(
@@ -43,8 +44,8 @@ os.makedirs(CACHE_DIRECTORY, exist_ok=True)
 # Agent cache to avoid recreating agents for each request
 agent_cache = {}
 
-# In-memory cache for job states (outline, content) with a TTL (e.g., 1 hour)
-# Adjust maxsize and ttl as needed
+# In-memory cache for job states (outline, content hashes, model name) with a TTL
+# Sections are now cached persistently in VectorStoreService
 state_cache = TTLCache(maxsize=100, ttl=3600)
 
 @app.post("/upload/{project_name}")
@@ -57,12 +58,12 @@ async def upload_files(
         # Create project directory
         project_dir = Path(UPLOAD_DIRECTORY) / project_name
         project_dir.mkdir(parents=True, exist_ok=True)
-        
+
         uploaded_files = []
         for file in files:
             if not file.filename:
                 continue
-                
+
             file_extension = Path(file.filename).suffix.lower()
             if file_extension not in SUPPORTED_EXTENSIONS:
                 return JSONResponse(
@@ -72,26 +73,26 @@ async def upload_files(
                     },
                     status_code=400
                 )
-            
+
             # Clean filename to prevent path traversal
             safe_filename = os.path.basename(file.filename)
             file_path = project_dir / safe_filename
-            
+
             # Read file content
             content = await file.read()
-            
+
             # Write content to file
             with open(file_path, "wb") as f:
                 f.write(content)
-                
+
             uploaded_files.append(str(file_path))
-            
+
         if not uploaded_files:
             return JSONResponse(
                 content={"error": "No valid files were uploaded"},
                 status_code=400
             )
-            
+
         return JSONResponse(
             content={
                 "message": "Files uploaded successfully",
@@ -109,26 +110,30 @@ async def upload_files(
 async def get_or_create_agents(model_name: str):
     """Get or create agents for the specified model."""
     cache_key = f"agents_{model_name}"
-    
+
     if cache_key in agent_cache:
         return agent_cache[cache_key]
-    
+
     try:
         # Create model instance
         model_factory = ModelFactory()
         model = model_factory.create_model(model_name.lower())
-        
+
         # Create and initialize agents
         content_parser = ContentParsingAgent(model)
         await content_parser.initialize()
-        
-        outline_agent = OutlineGeneratorAgent(model, content_parser)
+
+        # Instantiate VectorStoreService (it might become a singleton later if needed)
+        vector_store = VectorStoreService() # Instantiate VectorStoreService here
+
+        outline_agent = OutlineGeneratorAgent(model, content_parser) # Outline agent still uses content_parser
         await outline_agent.initialize()
-        
-        draft_agent = BlogDraftGeneratorAgent(model, content_parser)
+
+        # Pass vector_store to BlogDraftGeneratorAgent
+        draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store)
         await draft_agent.initialize()
 
-        refinement_agent = BlogRefinementAgent(model) # Added refinement agent
+        refinement_agent = BlogRefinementAgent(model) # Refinement agent might need vector_store later? Check its __init__ if needed.
         await refinement_agent.initialize()
 
         social_agent = SocialMediaAgent(model)
@@ -141,7 +146,8 @@ async def get_or_create_agents(model_name: str):
             "outline_agent": outline_agent,
             "draft_agent": draft_agent,
             "refinement_agent": refinement_agent, # Added refinement agent to cache
-            "social_agent": social_agent
+            "social_agent": social_agent,
+            "vector_store": vector_store # Also cache vector store instance if needed elsewhere
         }
 
         return agent_cache[cache_key]
@@ -159,11 +165,11 @@ async def process_files(
     try:
         logger.info(f"Processing files for project {project_name} with model {model_name}")
         logger.info(f"File paths: {file_paths}")
-        
+
         # Get or create agents
         agents = await get_or_create_agents(model_name)
         content_parser = agents["content_parser"]
-        
+
         result = {}
         for file_path in file_paths:
             if not os.path.exists(file_path):
@@ -172,13 +178,13 @@ async def process_files(
                     content={"error": f"File not found: {file_path}"},
                     status_code=404
                 )
-                
+
             # Process the file
             logger.info(f"Processing file: {file_path}")
             content_hash = await content_parser.process_file_with_graph(file_path, project_name)
             logger.info(f"File processed with hash: {content_hash}")
             result[file_path] = content_hash
-            
+
         return JSONResponse(
             content={
                 "message": "Files processed successfully",
@@ -209,7 +215,7 @@ async def generate_outline(
                 content={"error": "At least one content hash is required"},
                 status_code=400
             )
-        
+
         # Get or create agents
         agents = await get_or_create_agents(model_name)
         outline_agent = agents["outline_agent"]
@@ -245,20 +251,19 @@ async def generate_outline(
 
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
-        
-        # Store the state in the cache
+
+        # Store the state in the cache (still use in-memory cache for job state)
         state_cache[job_id] = {
             "outline": outline_data, # Store parsed data
             "notebook_content": notebook_content,
             "markdown_content": markdown_content,
             "project_name": project_name,
-            "model_name": model_name,
-            "generated_sections": {} # Initialize dict to store generated sections later
+            "model_name": model_name
+            # Remove "generated_sections": {} - no longer needed here
         }
         logger.info(f"Stored initial state for job_id: {job_id}")
 
         # Return the job ID and the outline itself (for immediate display)
-        # Do not return the large content strings anymore
         return JSONResponse(
             content=serialize_object({
                 "job_id": job_id,
@@ -268,14 +273,14 @@ async def generate_outline(
 
     except Exception as e:
         logger.exception(f"Outline generation failed: {str(e)}")
-        
+
         # Provide detailed error information
         error_detail = {
             "error": f"Outline generation failed: {str(e)}",
             "type": str(type(e).__name__),
             "details": str(e)
         }
-        
+
         return JSONResponse(
             content=serialize_object(error_detail),
             status_code=500
@@ -290,6 +295,8 @@ async def generate_draft(
     markdown_content: str = Form(...),
 ) -> JSONResponse:
     """Generate a complete blog draft from an outline."""
+    # This endpoint seems less used now with section-by-section generation,
+    # but keep it functional if needed. It doesn't involve section caching directly.
     try:
         # Parse inputs
         try:
@@ -302,11 +309,11 @@ async def generate_draft(
                 content={"error": f"Invalid JSON format: {str(e)}"},
                 status_code=400
             )
-            
+
         # Get or create agents
         agents = await get_or_create_agents(model_name)
         draft_agent = agents["draft_agent"]
-        
+
         # Generate blog draft
         outline_obj = FinalOutline.model_validate(outline_data)
         draft = await draft_agent.generate_draft(
@@ -315,29 +322,29 @@ async def generate_draft(
             notebook_content=notebook_data,
             markdown_content=markdown_data
         )
-        
+
         if not draft:
             return JSONResponse(
                 content={"error": "Failed to generate blog draft"},
                 status_code=500
             )
-        
+
         return JSONResponse(
             content=serialize_object({
                 "draft": draft
             })
         )
-        
+
     except Exception as e:
         logger.exception(f"Draft generation failed: {str(e)}")
-        
+
         # Provide detailed error information
         error_detail = {
             "error": f"Draft generation failed: {str(e)}",
             "type": str(type(e).__name__),
             "details": str(e)
         }
-        
+
         return JSONResponse(
             content=serialize_object(error_detail),
             status_code=500
@@ -351,9 +358,9 @@ async def generate_section(
     max_iterations: int = Form(3),
     quality_threshold: float = Form(0.8)
 ) -> JSONResponse:
-    """Generate a single section of a blog draft using cached state."""
+    """Generate a single section of a blog draft, using persistent cache via agent."""
     try:
-        # Retrieve state from cache
+        # Retrieve state from cache (still needed for outline, content, model)
         job_state = state_cache.get(job_id)
         if not job_state:
             logger.error(f"Job state not found for job_id: {job_id}")
@@ -364,9 +371,9 @@ async def generate_section(
 
         # Extract data from state
         outline_data = job_state["outline"]
-        notebook_data = job_state["notebook_content"] # Already parsed/loaded content
-        markdown_data = job_state["markdown_content"] # Already parsed/loaded content
-        model_name = job_state["model_name"] # Get model name from state
+        notebook_data = job_state.get("notebook_content") # Use .get for safety
+        markdown_data = job_state.get("markdown_content") # Use .get for safety
+        model_name = job_state["model_name"]
 
         # Validate section index against the retrieved outline
         if section_index < 0 or section_index >= len(outline_data.get("sections", [])):
@@ -374,70 +381,62 @@ async def generate_section(
                 content={"error": f"Invalid section index: {section_index}"},
                 status_code=400
             )
-            
+
         # Get current section from the retrieved outline
         section = outline_data["sections"][section_index]
+        section_title = section.get("title", f"Section {section_index + 1}") # Get title for response
 
         # Get or create agents using model_name from state
         agents = await get_or_create_agents(model_name)
         draft_agent = agents["draft_agent"]
 
-        # Generate section using retrieved data
-        section_content = await draft_agent.generate_section(
+        # Call the agent's generate_section method, which now handles caching internally
+        # It returns a tuple: (content, was_cached)
+        section_content, was_cached = await draft_agent.generate_section(
             project_name=project_name,
+            job_id=job_id, # Pass job_id to agent for cache key
             section=section,
             outline=outline_data,
-            notebook_content=notebook_data,
-            markdown_content=markdown_data,
+            notebook_content=notebook_data, # Pass potentially None content
+            markdown_content=markdown_data, # Pass potentially None content
             current_section_index=section_index,
             max_iterations=max_iterations,
-            quality_threshold=quality_threshold
+            quality_threshold=quality_threshold,
+            use_cache=True # Explicitly enable cache usage in the agent
         )
 
-        if not section_content:
+        # Check if agent returned content
+        if section_content is None:
+            # Agent handles logging errors internally now
             return JSONResponse(
-                content={"error": f"Failed to generate section: {section.get('title', 'Unknown')}"},
+                content={"error": f"Failed to generate or retrieve section: {section_title}"},
                 status_code=500
             )
 
-        # --- Enhancement: Store generated section in state cache ---
-        try:
-            # Ensure the job state still exists before updating
-            if job_id in state_cache:
-                state_cache[job_id]["generated_sections"][section_index] = {
-                    "title": section.get("title", "Unknown"),
-                    "content": section_content
-                }
-                # Re-insert to update TTL (optional, depends on cachetools version/behavior)
-                # state_cache[job_id] = state_cache[job_id]
-                logger.info(f"Stored generated content for section {section_index} in job_id: {job_id}")
-            else:
-                 logger.warning(f"Job state for {job_id} expired before section could be stored.")
-                 # Decide if this should be an error or just a warning
-        except Exception as cache_update_err:
-            # Log error but don't fail the request just because caching failed
-            logger.error(f"Failed to update cache for job {job_id}, section {section_index}: {cache_update_err}")
-        # --- End Enhancement ---
+        # Agent now handles storing in persistent cache if it was generated (was_cached=False)
+        # No need to update state_cache here for section content anymore
 
+        # Return the result from the agent
         return JSONResponse(
             content=serialize_object({
-                "job_id": job_id, # Return job_id for consistency
-                "section_title": section.get("title", "Unknown"),
+                "job_id": job_id,
+                "section_title": section_title,
                 "section_content": section_content,
-                "section_index": section_index
+                "section_index": section_index,
+                "was_cached": was_cached # Pass the flag from the agent
             })
         )
 
     except Exception as e:
         logger.exception(f"Section generation failed: {str(e)}")
-        
+
         # Provide detailed error information
         error_detail = {
             "error": f"Section generation failed: {str(e)}",
             "type": str(type(e).__name__),
             "details": str(e)
         }
-        
+
         return JSONResponse(
             content=serialize_object(error_detail),
             status_code=500
@@ -452,9 +451,9 @@ async def regenerate_section(
     max_iterations: int = Form(3),
     quality_threshold: float = Form(0.8)
 ) -> JSONResponse:
-    """Regenerate a section with user feedback using cached state."""
+    """Regenerate a section with user feedback, updating persistent cache via agent."""
     try:
-        # Retrieve state from cache
+        # Retrieve state from cache (still needed for outline, content, model)
         job_state = state_cache.get(job_id)
         if not job_state:
             logger.error(f"Job state not found for job_id: {job_id}")
@@ -465,9 +464,9 @@ async def regenerate_section(
 
         # Extract data from state
         outline_data = job_state["outline"]
-        notebook_data = job_state["notebook_content"]
-        markdown_data = job_state["markdown_content"]
-        model_name = job_state["model_name"] # Get model name from state
+        notebook_data = job_state.get("notebook_content") # Use .get
+        markdown_data = job_state.get("markdown_content") # Use .get
+        model_name = job_state["model_name"]
 
         # Validate section index against the retrieved outline
         if section_index < 0 or section_index >= len(outline_data.get("sections", [])):
@@ -475,7 +474,7 @@ async def regenerate_section(
                 content={"error": f"Invalid section index: {section_index}"},
                 status_code=400
             )
-            
+
         # Get current section from the retrieved outline
         section = outline_data["sections"][section_index]
 
@@ -484,40 +483,28 @@ async def regenerate_section(
         draft_agent = agents["draft_agent"]
 
         # Regenerate section with feedback using retrieved data
+        # Pass job_id to the agent method
         new_content = await draft_agent.regenerate_section_with_feedback(
             project_name=project_name,
+            job_id=job_id, # Pass job_id
             section=section,
             outline=outline_data,
-            notebook_content=notebook_data,
-            markdown_content=markdown_data,
+            notebook_content=notebook_data, # Pass potentially None
+            markdown_content=markdown_data, # Pass potentially None
             feedback=feedback,
             max_iterations=max_iterations,
             quality_threshold=quality_threshold
         )
 
         if not new_content:
+            # Agent handles logging errors internally
             return JSONResponse(
                 content={"error": f"Failed to regenerate section: {section.get('title', 'Unknown')}"},
                 status_code=500
             )
 
-        # --- Enhancement: Update generated section in state cache ---
-        try:
-            # Ensure the job state still exists before updating
-            if job_id in state_cache:
-                state_cache[job_id]["generated_sections"][section_index] = {
-                    "title": section.get("title", "Unknown"),
-                    "content": new_content # Store the regenerated content
-                }
-                # Re-insert to update TTL (optional)
-                # state_cache[job_id] = state_cache[job_id]
-                logger.info(f"Updated stored content for section {section_index} in job_id: {job_id} after feedback.")
-            else:
-                 logger.warning(f"Job state for {job_id} expired before regenerated section could be stored.")
-        except Exception as cache_update_err:
-             # Log error but don't fail the request just because caching failed
-            logger.error(f"Failed to update cache for job {job_id}, section {section_index} after feedback: {cache_update_err}")
-        # --- End Enhancement ---
+        # Agent now handles updating the persistent cache internally after regeneration
+        # No need to update state_cache here
 
         return JSONResponse(
             content=serialize_object({
@@ -525,23 +512,20 @@ async def regenerate_section(
                 "section_title": section.get("title", "Unknown"),
                 "section_content": new_content,
                 "section_index": section_index,
-                "feedback_addressed": True
+                "feedback_addressed": True # Indicate feedback was processed
             })
         )
 
     except Exception as e:
         logger.exception(f"Section regeneration failed: {str(e)}")
-        
-        # Use our serialization utility to ensure error responses are also serializable
-        
-        
+
         # Provide detailed error information
         error_detail = {
             "error": f"Section regeneration failed: {str(e)}",
             "type": str(type(e).__name__),
             "details": str(e)
         }
-        
+
         return JSONResponse(
             content=serialize_object(error_detail),
             status_code=500
@@ -552,119 +536,134 @@ async def compile_draft(
     project_name: str, # Keep project_name for potential future use/logging
     job_id: str = Form(...) # Use job_id instead of outline/sections
 ) -> JSONResponse:
-    """Compile a final blog draft using cached state."""
+    """Compile a final blog draft using cached section data."""
+    logger.info(f"Starting draft compilation for job_id: {job_id}")
     try:
-        # Retrieve state from cache
+        # Retrieve state from cache (for outline, model, etc.)
         job_state = state_cache.get(job_id)
         if not job_state:
-            logger.error(f"Job state not found for job_id: {job_id}")
+            logger.error(f"Job state (outline info) not found for job_id: {job_id}")
             return JSONResponse(
-                content={"error": f"Job state not found for job_id: {job_id}. Please generate outline and sections first."},
+                content={"error": f"Job state not found for job_id: {job_id}. Please generate outline first."},
                 status_code=404
             )
 
         # Extract data from state
         outline_data = job_state["outline"]
-        generated_sections_dict = job_state.get("generated_sections", {})
-
-        # Prepare sections_data in the correct order
+        model_name = job_state["model_name"] # Needed to get vector_store instance
         num_outline_sections = len(outline_data.get("sections", []))
-        sections_data = []
+        generated_sections_dict = {} # Will be populated from cache
         missing_sections = []
-        for i in range(num_outline_sections):
-            if i in generated_sections_dict:
-                sections_data.append(generated_sections_dict[i])
-            else:
-                missing_sections.append(i)
+        all_sections_retrieved = True
 
-        # Validate all sections were generated and retrieved
-        if missing_sections:
-            logger.error(f"Missing generated content for sections {missing_sections} in job {job_id}")
+        # Attempt to retrieve all sections from VectorStore cache
+        try:
+            agents = await get_or_create_agents(model_name) # Get agents to access vector_store
+            vector_store = agents["vector_store"]
+            # Need access to the agent's cache key logic or replicate it
+            # Assuming BlogDraftGeneratorAgent has a static or accessible method for this
+            # If not, this part needs adjustment based on how the key is generated/accessed
+            # Replicating key logic here for now:
+            def _create_section_cache_key_local(proj, job, index):
+                 key_string = f"section_cache:{proj}:{job}:{index}"
+                 import hashlib
+                 return hashlib.sha256(key_string.encode()).hexdigest()
+
+            for i in range(num_outline_sections):
+                cache_key = _create_section_cache_key_local(project_name, job_id, i) # Replicate key logic
+                cached_section_json = vector_store.retrieve_section_cache(
+                    cache_key=cache_key,
+                    project_name=project_name,
+                    job_id=job_id,
+                    section_index=i
+                )
+                if cached_section_json:
+                    try:
+                        cached_data = json.loads(cached_section_json)
+                        generated_sections_dict[i] = cached_data # Populate dict from persistent cache
+                    except json.JSONDecodeError:
+                        logger.warning(f"Failed to parse cached JSON for section {i} during compilation. Marking as missing.")
+                        missing_sections.append(i)
+                        all_sections_retrieved = False
+                else:
+                    logger.warning(f"Section {i} not found in persistent cache for job {job_id}.")
+                    missing_sections.append(i)
+                    all_sections_retrieved = False
+        except Exception as retrieval_err:
+             logger.error(f"Error retrieving sections from VectorStore during compilation: {retrieval_err}")
+             return JSONResponse(
+                content={"error": "Failed to retrieve section data for compilation."},
+                status_code=500
+            )
+
+        # Validate all sections were retrieved
+        if not all_sections_retrieved:
+            logger.error(f"Missing generated content (in VectorStore) for sections {missing_sections} in job {job_id}")
             return JSONResponse(
-                content={"error": f"Missing content for sections: {', '.join(map(str, missing_sections))}. Please generate all sections first."},
+                content={"error": f"Missing content (in VectorStore) for sections: {', '.join(map(str, missing_sections))}. Please ensure all sections were generated."},
                 status_code=400
             )
 
-        # Original validation (redundant if above check passes, but safe to keep)
-        if len(sections_data) != len(outline_data.get("sections", [])):
-            return JSONResponse(
-                content={"error": "Number of sections does not match outline"},
-                status_code=400
-            )
-            
-        # Compile blog draft
-        # Start with blog title and metadata
+        # Prepare sections_data in the correct order from the populated dict
+        sections_data = [generated_sections_dict[i] for i in range(num_outline_sections)]
+
+
+        # Compile blog draft (logic remains the same)
         blog_parts = [
             f"# {outline_data['title']}\n",
             f"**Difficulty Level**: {outline_data['difficulty_level']}\n",
             "\n## Prerequisites\n"
         ]
-        
-        # Add prerequisites
         if isinstance(outline_data["prerequisites"], dict):
-            # Add required knowledge
             if "required_knowledge" in outline_data["prerequisites"]:
                 blog_parts.append("\n### Required Knowledge\n")
                 for item in outline_data["prerequisites"]["required_knowledge"]:
                     blog_parts.append(f"- {item}\n")
-                    
-            # Add recommended tools
             if "recommended_tools" in outline_data["prerequisites"]:
                 blog_parts.append("\n### Recommended Tools\n")
                 for tool in outline_data["prerequisites"]["recommended_tools"]:
                     blog_parts.append(f"- {tool}\n")
-                    
-            # Add setup instructions
             if "setup_instructions" in outline_data["prerequisites"]:
                 blog_parts.append("\n### Setup Instructions\n")
                 for instruction in outline_data["prerequisites"]["setup_instructions"]:
                     blog_parts.append(f"- {instruction}\n")
         else:
-            # Handle string prerequisites
             blog_parts.append(f"{outline_data['prerequisites']}\n")
-            
-        # Add table of contents using the prepared sections_data
+
         blog_parts.append("\n## Table of Contents\n")
         for i, section_data in enumerate(sections_data):
-            # Use section title from the generated data, fallback to outline if needed
             title = section_data.get("title", outline_data["sections"][i].get("title", f"Section {i+1}"))
             blog_parts.append(f"{i+1}. [{title}](#section-{i+1})\n")
 
         blog_parts.append("\n")
-        
-        # Add each section using the prepared sections_data
+
         for i, section_data in enumerate(sections_data):
-            # Use section title from the generated data, fallback to outline if needed
             title = section_data.get("title", outline_data["sections"][i].get("title", f"Section {i+1}"))
             content = section_data.get("content", "*Error: Content not found*")
-            # Add section anchor and title
             blog_parts.extend([
                 f"<a id='section-{i+1}'></a>\n",
                 f"## {title}\n",
                 f"{content}\n\n"
             ])
 
-        # Add conclusion if available in the outline
         if 'conclusion' in outline_data and outline_data['conclusion']:
             blog_parts.extend([
                 "## Conclusion\n",
                 f"{outline_data['conclusion']}\n\n"
             ])
-        
-        # Combine all parts
-        final_draft = "\n".join(blog_parts)
 
-        # --- Enhancement: Store final draft in cache AND save to file ---
+        final_draft = "\n".join(blog_parts)
+        logger.info(f"Successfully assembled final_draft content for job_id: {job_id}.")
+
+        # Store final draft in state_cache and save to file (existing logic)
         draft_saved_to_file = False
         try:
             if job_id in state_cache:
                 state_cache[job_id]["final_draft"] = final_draft
-                logger.info(f"Stored final draft in cache for job_id: {job_id}")
+                logger.info(f"Stored final draft in state_cache for job_id: {job_id}")
 
-                # Save the compiled draft to the project's upload directory
                 project_dir = Path(UPLOAD_DIRECTORY) / project_name
-                project_dir.mkdir(parents=True, exist_ok=True) # Ensure directory exists
-                # Sanitize project name slightly for filename safety
+                project_dir.mkdir(parents=True, exist_ok=True)
                 safe_project_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in project_name)
                 draft_filename = f"{safe_project_name}_compiled_draft.md"
                 draft_filepath = project_dir / draft_filename
@@ -675,45 +674,26 @@ async def compile_draft(
                     draft_saved_to_file = True
                 except IOError as io_err:
                     logger.error(f"Failed to save compiled draft to file {draft_filepath}: {io_err}")
-                    # Continue even if file saving fails, but log it
 
             else:
                 logger.warning(f"Job state for {job_id} expired before final draft could be stored or saved.")
         except Exception as cache_update_err:
-            logger.error(f"Failed to update cache/save file for job {job_id}: {cache_update_err}")
-        # --- End Enhancement ---
+            logger.error(f"Failed to update state_cache/save file for job {job_id}: {cache_update_err}")
 
-        # Use our serialization utility to ensure proper JSON serialization
         response_content = {
             "job_id": job_id,
             "draft": final_draft,
-            "draft_saved": draft_saved_to_file # Indicate if file save was successful
+            "draft_saved": draft_saved_to_file
         }
         return JSONResponse(content=serialize_object(response_content))
 
-        # --- Optional: Cleanup state after successful compilation ---
-        # Consider delaying cleanup or making it optional if the draft is needed for social posts
-        # try:
-        #     if job_id in state_cache:
-        #         del state_cache[job_id]
-        #         logger.info(f"Cleared state for completed job_id: {job_id}")
-        # except Exception as cache_clear_err:
-        #     logger.error(f"Failed to clear cache for job {job_id} after compilation: {cache_clear_err}")
-        # --- End Optional Cleanup ---
-
     except Exception as e:
         logger.exception(f"Draft compilation failed: {str(e)}")
-        
-        # Use our serialization utility to ensure error responses are also serializable
-        
-        
-        # Provide detailed error information
         error_detail = {
             "error": f"Draft compilation failed: {str(e)}",
             "type": str(type(e).__name__),
             "details": str(e)
         }
-        
         return JSONResponse(
             content=serialize_object(error_detail),
             status_code=500
@@ -844,7 +824,9 @@ async def generate_social_content(
         model_name = job_state.get("model_name")
         # Use one of the generated titles if available, otherwise fallback
         title_options = job_state.get("title_options", [])
+        # Ensure title_options[0] is the correct type before accessing .title
         blog_title = title_options[0].title if title_options and isinstance(title_options[0], TitleOption) else job_state.get("outline", {}).get("title", "Blog Post")
+
 
         if not model_name:
              logger.error(f"Model name not found in cache for job_id: {job_id}")
@@ -907,7 +889,7 @@ async def delete_project(project_name: str) -> JSONResponse:
         if project_dir.exists():
             import shutil
             shutil.rmtree(project_dir)
-            
+
             # --- Enhancement: Clear related job states from cache on project deletion ---
             keys_to_delete = [
                 job_id for job_id, state in state_cache.items()
@@ -921,10 +903,37 @@ async def delete_project(project_name: str) -> JSONResponse:
                     pass # Already gone, ignore
             # --- End Enhancement ---
 
-            # Clear vector store content (existing logic)
-            for agents in agent_cache.values():
-                if "content_parser" in agents:
-                    agents["content_parser"].clear_project_content(project_name)
+            # --- Clear Vector Store Caches ---
+            try:
+                # Get vector store instance (assuming it might be cached or create new)
+                # This assumes get_or_create_agents might have cached it, or we create one
+                # A better approach might be a singleton VectorStoreService instance
+                vector_store = VectorStoreService()
+                vector_store.clear_outline_cache(project_name)
+                vector_store.clear_section_cache(project_name) # Clear section cache too
+                # Also clear content chunks associated with the project
+                # This requires content_parser to have a method like clear_project_content
+                # Assuming content_parser is accessible or re-instantiated if needed
+                # This part depends on how agents/services are managed.
+                # For simplicity, let's assume we can get it from the cache if populated
+                # This might need refinement based on actual agent/service lifecycle mgmt.
+                # Check if agent_cache has been populated for any model
+                parser_cleared = False
+                for agent_set in agent_cache.values():
+                    if "content_parser" in agent_set:
+                         # Need a method on ContentParsingAgent to clear by project
+                         # Assuming such a method exists or can be added:
+                         # await agent_set["content_parser"].clear_project_data(project_name)
+                         logger.warning(f"Vector store content chunk clearing for project {project_name} not fully implemented in delete endpoint.")
+                         parser_cleared = True
+                         break # Assume one parser per model type is enough
+                if not parser_cleared:
+                    logger.warning(f"Could not find ContentParsingAgent in cache to clear chunks for project {project_name}.")
+
+            except Exception as vs_clear_err:
+                 logger.error(f"Error clearing vector store caches for project {project_name}: {vs_clear_err}")
+            # --- End Clear Vector Store Caches ---
+
 
             return JSONResponse(
                 content={"message": f"Project '{project_name}' deleted successfully"}
