@@ -2,6 +2,8 @@
 .env
 *.ipynb
 *.md
+*.sqlite3
+*.bin
 
 # Not ReadMe.md
 ~README.md
