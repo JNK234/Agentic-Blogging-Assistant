@@ -79,40 +79,63 @@ class BlogRefinementAgent(BaseGraphAgent):
 
         logger.info("Starting blog refinement process via graph...")
 
-        # Prepare the initial state for the graph
+        # Prepare the initial state for the graph as a Pydantic object
         initial_state = BlogRefinementState(original_draft=blog_draft)
-        # Convert Pydantic model to dict for LangGraph input
-        initial_state_dict = initial_state.model_dump()
 
         try:
-            # Execute the graph with the initial state
-            # The run_graph method is inherited from BaseGraphAgent
-            final_state_dict = await self.run_graph(initial_state_dict)
+            # Execute the graph with the initial state Pydantic object
+            final_state_result = await self.run_graph(initial_state) # Returns a dict-like object
 
-            # Process the final state
-            if final_state_dict.get('error'):
-                logger.error(f"Blog refinement graph finished with error: {final_state_dict['error']}")
+            # Handle the dict-like result from the graph
+            final_state = None # Initialize final_state
+            if isinstance(final_state_result, dict):
+                logger.info(f"Graph returned dict-like object: {type(final_state_result)}. Attempting validation.")
+                try:
+                    # Use model_validate for Pydantic v2
+                    final_state = BlogRefinementState.model_validate(final_state_result)
+                    logger.info("Successfully validated final graph state dictionary into BlogRefinementState.")
+                except ValidationError as e:
+                    logger.error(f"Pydantic validation failed for final state dictionary: {e}. State Dict: {final_state_result}")
+                    # Explicitly set error state before returning None
+                    # This helps if the error check below relies on final_state being assigned
+                    # Although returning None should prevent further processing anyway.
+                    return None # Stop processing if validation fails
+            else:
+                 # If it's not dict-like, log the error and stop
+                 logger.error(f"Graph execution returned unexpected type: {type(final_state_result)}. Expected dict-like. Result: {final_state_result}")
+                 return None
+
+            # Ensure final_state was successfully created
+            if final_state is None:
+                 logger.error("State validation failed, cannot proceed.")
+                 return None
+
+            # Process the validated Pydantic state object
+            if final_state.error:
+                logger.error(f"Blog refinement graph finished with error: {final_state.error}")
                 return None
 
-            # Validate that all required fields are present in the final state
-            required_fields = ['refined_draft', 'summary', 'title_options']
-            if not all(field in final_state_dict for field in required_fields):
-                missing = [field for field in required_fields if field not in final_state_dict]
-                logger.error(f"Refinement graph completed but missing required fields: {missing}. Final state: {final_state_dict}")
+            # Validate that all required fields are present in the final state object
+            if not final_state.refined_draft or not final_state.summary or not final_state.title_options:
+                missing = []
+                if not final_state.refined_draft: missing.append('refined_draft')
+                if not final_state.summary: missing.append('summary')
+                if not final_state.title_options: missing.append('title_options')
+                logger.error(f"Refinement graph completed but missing required fields: {missing}. Final state: {final_state}")
                 return None
 
-            # Parse title options back into Pydantic models if needed, though they are stored as dicts
-            # For returning RefinementResult, we need them as TitleOption objects
-            title_options_data = final_state_dict.get('title_options', [])
-            parsed_title_options = [TitleOption.model_validate(opt) for opt in title_options_data if isinstance(opt, dict)]
+            # Title options should already be list of dicts from the node,
+            # but we need TitleOption objects for the RefinementResult
+            parsed_title_options = [TitleOption.model_validate(opt) for opt in final_state.title_options if isinstance(opt, dict)]
+
 
             logger.info("Blog refinement process completed successfully via graph.")
 
-            # Construct and return the final result object
+            # Construct and return the final result object using attributes from the state object
             return RefinementResult(
-                refined_draft=final_state_dict['refined_draft'],
-                summary=final_state_dict['summary'],
-                title_options=parsed_title_options # Use the parsed list
+                refined_draft=final_state.refined_draft,
+                summary=final_state.summary,
+                title_options=parsed_title_options
             )
 
         except Exception as e:

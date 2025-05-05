@@ -5,11 +5,15 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 import os
 import json
+import sys
 import logging
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import uuid # For generating unique job IDs
 from cachetools import TTLCache # For simple in-memory state cache
+ 
+current_file_path = Path(".")
+sys.path.append("")
 
 from root.backend.agents.outline_generator_agent import OutlineGeneratorAgent
 from root.backend.agents.content_parsing_agent import ContentParsingAgent
@@ -391,12 +395,13 @@ async def generate_section(
         draft_agent = agents["draft_agent"]
 
         # Call the agent's generate_section method, which now handles caching internally
+        # Pass the full outline dictionary for hashing, remove job_id from direct call (agent uses outline_hash)
         # It returns a tuple: (content, was_cached)
         section_content, was_cached = await draft_agent.generate_section(
             project_name=project_name,
-            job_id=job_id, # Pass job_id to agent for cache key
-            section=section,
-            outline=outline_data,
+            # job_id=job_id, # No longer passed directly for caching logic
+            section=section, # The specific section dict
+            outline=outline_data, # The full outline dict for hashing
             notebook_content=notebook_data, # Pass potentially None content
             markdown_content=markdown_data, # Pass potentially None content
             current_section_index=section_index,
@@ -483,12 +488,12 @@ async def regenerate_section(
         draft_agent = agents["draft_agent"]
 
         # Regenerate section with feedback using retrieved data
-        # Pass job_id to the agent method
+        # Pass the full outline dictionary for hashing, remove job_id from direct call
         new_content = await draft_agent.regenerate_section_with_feedback(
             project_name=project_name,
-            job_id=job_id, # Pass job_id
-            section=section,
-            outline=outline_data,
+            # job_id=job_id, # No longer passed directly for caching logic
+            section=section, # The specific section dict
+            outline=outline_data, # The full outline dict for hashing
             notebook_content=notebook_data, # Pass potentially None
             markdown_content=markdown_data, # Pass potentially None
             feedback=feedback,
@@ -556,25 +561,22 @@ async def compile_draft(
         missing_sections = []
         all_sections_retrieved = True
 
-        # Attempt to retrieve all sections from VectorStore cache
+        # Attempt to retrieve all sections from VectorStore cache using outline_hash
         try:
-            agents = await get_or_create_agents(model_name) # Get agents to access vector_store
+            agents = await get_or_create_agents(model_name) # Get agents to access vector_store and hashing logic
             vector_store = agents["vector_store"]
-            # Need access to the agent's cache key logic or replicate it
-            # Assuming BlogDraftGeneratorAgent has a static or accessible method for this
-            # If not, this part needs adjustment based on how the key is generated/accessed
-            # Replicating key logic here for now:
-            def _create_section_cache_key_local(proj, job, index):
-                 key_string = f"section_cache:{proj}:{job}:{index}"
-                 import hashlib
-                 return hashlib.sha256(key_string.encode()).hexdigest()
+            draft_agent = agents["draft_agent"] # Need agent instance for hashing method
+
+            # Generate the outline hash needed for retrieval
+            outline_hash = draft_agent._hash_outline_for_cache(outline_data)
 
             for i in range(num_outline_sections):
-                cache_key = _create_section_cache_key_local(project_name, job_id, i) # Replicate key logic
+                # Use the agent's method to create the consistent cache key
+                cache_key = draft_agent._create_section_cache_key(project_name, outline_hash, i)
                 cached_section_json = vector_store.retrieve_section_cache(
                     cache_key=cache_key,
                     project_name=project_name,
-                    job_id=job_id,
+                    outline_hash=outline_hash, # Use outline_hash for retrieval
                     section_index=i
                 )
                 if cached_section_json:
@@ -586,11 +588,11 @@ async def compile_draft(
                         missing_sections.append(i)
                         all_sections_retrieved = False
                 else:
-                    logger.warning(f"Section {i} not found in persistent cache for job {job_id}.")
+                    logger.warning(f"Section {i} not found in persistent cache for outline {outline_hash}.")
                     missing_sections.append(i)
                     all_sections_retrieved = False
         except Exception as retrieval_err:
-             logger.error(f"Error retrieving sections from VectorStore during compilation: {retrieval_err}")
+             logger.exception(f"Error retrieving sections from VectorStore during compilation: {retrieval_err}") # Use logger.exception
              return JSONResponse(
                 content={"error": "Failed to retrieve section data for compilation."},
                 status_code=500
@@ -598,7 +600,7 @@ async def compile_draft(
 
         # Validate all sections were retrieved
         if not all_sections_retrieved:
-            logger.error(f"Missing generated content (in VectorStore) for sections {missing_sections} in job {job_id}")
+            logger.error(f"Missing generated content (in VectorStore) for sections {missing_sections} for outline {outline_hash}")
             return JSONResponse(
                 content={"error": f"Missing content (in VectorStore) for sections: {', '.join(map(str, missing_sections))}. Please ensure all sections were generated."},
                 status_code=400

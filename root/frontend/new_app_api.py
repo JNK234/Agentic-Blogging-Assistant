@@ -19,7 +19,6 @@ import api_client
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BloggingAssistantAPIFrontend")
 
-# Apply nest_asyncio patch if needed (often required in Streamlit/Jupyter)
 try:
     import nest_asyncio
     nest_asyncio.apply()
@@ -181,10 +180,10 @@ def format_section_content_as_markdown(content_data: Any) -> str:
         # Use a copy or access keys directly to avoid modifying the original 'data'
         local_data = data.copy() # Work on a copy
 
-        # Use H3 for sub-section title if present
-        title = local_data.get("title")
-        if title:
-             markdown_parts.append(f"### {title}")
+        # # Use H3 for sub-section title if present
+        # title = local_data.get("title")
+        # if title:
+        #      markdown_parts.append(f"### {title}")
 
         # Main content block
         content = local_data.get("content")
@@ -545,36 +544,44 @@ class BlogDraftUI:
             # --- Draft Compilation ---
             st.subheader("All Sections Generated!")
             if st.button("Compile Final Draft", key="compile_draft_btn"):
-                SessionManager.set_status("Compiling final draft from formatted sections...")
+                SessionManager.set_status("Compiling final draft from sections...")
                 SessionManager.clear_error()
                 try:
-                    # --- Frontend Draft Compilation ---
-                    blog_title = SessionManager.get('generated_outline', {}).get('title', 'My Blog Post')
-                    sections_data = SessionManager.get('generated_sections', {})
-                    sorted_indices = sorted(sections_data.keys())
-
-                    draft_parts = [f"# {blog_title}\n"] # Start with H1 title
-
-                    for index in sorted_indices:
-                        section = sections_data.get(index, {})
-                        section_title = section.get('title', f'Section {index + 1}')
-                        formatted_content = section.get('formatted_content', '')
-
-                        draft_parts.append(f"## {section_title}\n") # Add H2 for section title
-                        draft_parts.append(formatted_content)
-
-                    final_draft_content = "\n\n".join(draft_parts)
-                    SessionManager.set('final_draft', final_draft_content)
-                    SessionManager.set_status("Draft compiled successfully in frontend.")
-                    logger.info(f"Draft compiled in frontend for job ID: {job_id}")
-                    # No API call needed here anymore
-                    # --- End Frontend Draft Compilation ---
+                    with st.spinner("Calling API to compile draft..."):
+                        result = asyncio.run(api_client.compile_draft(
+                            project_name=project_name,
+                            job_id=job_id,
+                            base_url=SessionManager.get('api_base_url')
+                        ))
+                    SessionManager.set('final_draft', result.get('draft'))
+                    SessionManager.set_status("Draft compiled successfully.")
+                    logger.info(f"Draft compiled for job ID: {job_id}")
+                except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
+                    SessionManager.set_error(f"API Error compiling draft: {str(api_err)}")
+                    SessionManager.set_status("Draft compilation failed.")
                 except Exception as e:
-                    logger.exception(f"Unexpected error during frontend draft compilation: {e}")
-                    SessionManager.set_error(f"An unexpected error occurred during compilation: {str(e)}")
+                    logger.exception(f"Unexpected error during draft compilation: {e}")
+                    SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
                     SessionManager.set_status("Draft compilation failed.")
 
         st.markdown("---")
+
+        # --- Display Final Draft ---
+        final_draft = SessionManager.get('final_draft')
+        if final_draft:
+            st.subheader("Final Blog Draft")
+            st.download_button(
+                label="Download Draft (.md)",
+                data=final_draft,
+                file_name=f"{project_name}_draft.md",
+                mime="text/markdown",
+                key="dl_compiled_blog_tab" # Static unique key
+            )
+            with st.expander("Preview Draft", expanded=True):
+                st.markdown(final_draft)
+            with st.expander("Markdown Source", expanded=False):
+                st.text_area("Markdown", final_draft, height=400)
+            st.info("Proceed to the 'Refine & Finalize' tab to add introduction, conclusion, summary, and titles.") # Updated instruction
 
         # --- Display Generated Sections & Feedback ---
         if generated_sections:
@@ -638,21 +645,7 @@ class BlogDraftUI:
                             SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
                             SessionManager.set_status("Section regeneration failed.")
 
-        # --- Display Final Draft ---
-        final_draft = SessionManager.get('final_draft')
-        if final_draft:
-            st.subheader("Final Blog Draft")
-            st.download_button(
-                label="Download Draft (.md)",
-                data=final_draft,
-                file_name=f"{project_name}_draft.md",
-                mime="text/markdown"
-            )
-            with st.expander("Preview Draft", expanded=True):
-                st.markdown(final_draft)
-            with st.expander("Markdown Source", expanded=False):
-                st.text_area("Markdown", final_draft, height=400)
-            st.info("Proceed to the 'Refine & Finalize' tab to add introduction, conclusion, summary, and titles.") # Updated instruction
+        # Removed redundant display block for final_draft here to fix duplicate ID error
 
 
 class RefinementUI:
@@ -668,18 +661,15 @@ class RefinementUI:
         project_name = SessionManager.get('project_name')
         final_draft = SessionManager.get('final_draft')
 
-        st.subheader("Compiled Draft Preview")
-        st.download_button(
-            label="Download Compiled Draft (.md)",
-            data=final_draft,
-            file_name=f"{project_name}_compiled_draft.md",
-            mime="text/markdown",
-            key="download_compiled_draft_refine_tab"
-        )
-        with st.expander("View Compiled Draft", expanded=False):
-            st.markdown(final_draft)
+        # Removed the download button and expander for the compiled draft preview
+        # in the Refine tab to avoid potential duplicate ID errors.
+        # The user can download the compiled draft from the Blog Draft tab.
+        # st.subheader("Compiled Draft Preview")
+        # st.download_button(...)
+        # with st.expander(...):
+        #     st.markdown(final_draft)
 
-        st.markdown("---")
+        st.markdown("---") # Keep the separator
         st.subheader("Generate Introduction, Conclusion, Summary & Titles")
 
         if st.button("Refine Blog", key="refine_blog_btn"):
@@ -722,7 +712,7 @@ class RefinementUI:
                 data=refined_draft,
                 file_name=f"{project_name}_refined_draft.md",
                 mime="text/markdown",
-                key="download_refined_draft"
+                key="dl_refined_refine_tab" # Static unique key
             )
             with st.expander("Preview Refined Draft", expanded=True):
                 st.markdown(refined_draft)

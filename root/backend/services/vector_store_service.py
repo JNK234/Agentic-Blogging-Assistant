@@ -262,21 +262,21 @@ class VectorStoreService:
 
     # --- Section Cache Methods ---
 
-    def store_section_cache(self, section_json: str, cache_key: str, project_name: str, job_id: str, section_index: int):
+    def store_section_cache(self, section_json: str, cache_key: str, project_name: str, outline_hash: str, section_index: int):
         """Store a generated section with metadata for caching.
 
         Args:
             section_json: The JSON string representation of the section (e.g., {"title": "...", "content": "..."})
-            cache_key: A deterministic key (e.g., hash of project, job, index)
+            cache_key: A deterministic key (e.g., hash of project, outline_hash, index)
             project_name: The project name
-            job_id: The job ID the section belongs to
-            section_index: The index of the section within the job
+            outline_hash: Hash representing the specific outline content.
+            section_index: The index of the section within the outline.
         """
         try:
             metadata = {
                 "content_type": "section_cache",
                 "project_name": project_name,
-                "job_id": job_id,
+                "outline_hash": outline_hash, # Use outline_hash instead of job_id
                 "section_index": section_index,
                 "cache_key": cache_key, # Store the key itself for potential lookup/debugging
                 "timestamp": datetime.now().isoformat()
@@ -288,19 +288,19 @@ class VectorStoreService:
                 metadatas=[metadata],
                 ids=[f"section_{cache_key}"] # Unique ID based on the cache key
             )
-            logging.info(f"Cached section {section_index} for job {job_id} with key {cache_key}")
+            logging.info(f"Cached section {section_index} for outline {outline_hash} with key {cache_key}")
             return True
         except Exception as e:
-            logging.error(f"Error caching section {section_index} for job {job_id}: {e}")
+            logging.error(f"Error caching section {section_index} for outline {outline_hash}: {e}")
             return False
 
-    def retrieve_section_cache(self, cache_key: str, project_name: str, job_id: str, section_index: int) -> Optional[str]:
+    def retrieve_section_cache(self, cache_key: str, project_name: str, outline_hash: str, section_index: int) -> Optional[str]:
         """Retrieve a cached section based on its identifiers.
 
         Args:
             cache_key: The cache key to look up
             project_name: The project name
-            job_id: The job ID
+            outline_hash: Hash representing the specific outline content.
             section_index: The section index
 
         Returns:
@@ -312,7 +312,7 @@ class VectorStoreService:
                 "$and": [
                     {"content_type": "section_cache"},
                     {"project_name": project_name},
-                    {"job_id": job_id},
+                    {"outline_hash": outline_hash}, # Use outline_hash instead of job_id
                     {"section_index": section_index},
                     {"cache_key": cache_key} # Match the specific key
                 ]
@@ -324,28 +324,28 @@ class VectorStoreService:
             )
 
             if results and results["documents"] and len(results["documents"]) > 0:
-                logging.info(f"Found cached section {section_index} for job {job_id} with key {cache_key}")
+                logging.info(f"Found cached section {section_index} for outline {outline_hash} with key {cache_key}")
                 return results["documents"][0]
             else:
-                logging.info(f"No cached section found for job {job_id}, section {section_index} with key {cache_key}")
+                logging.info(f"No cached section found for outline {outline_hash}, section {section_index} with key {cache_key}")
                 return None
         except Exception as e:
-            logging.error(f"Error retrieving cached section {section_index} for job {job_id}: {e}")
+            logging.error(f"Error retrieving cached section {section_index} for outline {outline_hash}: {e}")
             return None
 
-    def clear_section_cache(self, project_name: Optional[str] = None, job_id: Optional[str] = None):
-        """Clear cached sections, optionally filtered by project and/or job ID.
+    def clear_section_cache(self, project_name: Optional[str] = None, outline_hash: Optional[str] = None):
+        """Clear cached sections, optionally filtered by project and/or outline hash.
 
         Args:
             project_name: Optional project name to clear caches for
-            job_id: Optional job ID to clear caches for
+            outline_hash: Optional outline hash to clear caches for
         """
         try:
             filters = [{"content_type": "section_cache"}]
             if project_name:
                 filters.append({"project_name": project_name})
-            if job_id:
-                filters.append({"job_id": job_id})
+            if outline_hash:
+                filters.append({"outline_hash": outline_hash}) # Use outline_hash instead of job_id
 
             if len(filters) == 1: # Only content_type filter
                  where = filters[0]
