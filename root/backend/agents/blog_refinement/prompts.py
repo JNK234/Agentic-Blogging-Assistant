@@ -14,15 +14,15 @@ The full draft of the blog post is provided below.
 ```
 
 **Task:**
-Write a brief and engaging introduction paragraph (typically 3-5 sentences) for this blog post.
+Write a professional, engaging introduction paragraph (typically 3-5 sentences) suitable for direct publication.
 The introduction should:
 1.  Hook the reader and clearly state the blog post's main topic or purpose.
 2.  Briefly mention the key areas or concepts that will be covered.
-3.  Set the context and tone for the rest of the article.
+3.  Set a professional and informative tone for the rest of the article.
 4.  Avoid summarizing the entire content; focus on enticing the reader to continue.
 
 **Output:**
-Provide only the introduction paragraph text.
+Provide *only* the raw text for the introduction paragraph. Do NOT include any markdown formatting (like ```markdown), section headers, or extraneous text.
 """
 
 # --- Conclusion Generation ---
@@ -36,7 +36,7 @@ The full draft of the blog post is provided below.
 ```
 
 **Task:**
-Write a brief conclusion paragraph (typically 3-5 sentences) for this blog post.
+Write a professional, concise conclusion paragraph (typically 3-5 sentences) suitable for direct publication.
 The conclusion should:
 1.  Briefly summarize the main takeaways or key points discussed in the blog post.
 2.  Reiterate the significance or implications of the topic.
@@ -44,7 +44,7 @@ The conclusion should:
 4.  Provide a sense of closure.
 
 **Output:**
-Provide only the conclusion paragraph text.
+Provide *only* the raw text for the conclusion paragraph. Do NOT include any markdown formatting (like ```markdown), section headers, or extraneous text.
 """
 
 # --- Summary Generation ---
@@ -58,11 +58,11 @@ The full draft of the blog post is provided below.
 ```
 
 **Task:**
-Write a concise summary (target 2-4 sentences) of the entire blog post.
-The summary should accurately capture the main topic, key concepts covered, and the overall message or outcome of the post. This summary might be used for meta descriptions or previews.
+Write a concise summary (target 2-4 sentences) of the entire blog post, suitable for direct use (e.g., meta descriptions, social media previews).
+The summary should accurately capture the main topic, key concepts covered, and the overall message or outcome of the post.
 
 **Output:**
-Provide only the summary text.
+Provide *only* the raw text for the summary. Do NOT include any markdown formatting (like ```markdown), headers, or extraneous text.
 """
 
 # --- Title/Subtitle Generation ---

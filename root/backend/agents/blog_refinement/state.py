@@ -21,6 +21,8 @@ class BlogRefinementState(BaseModel):
     """Represents the state managed by the BlogRefinementAgent's graph (if using LangGraph)."""
     original_draft: str
     refined_draft: Optional[str] = None
+    introduction: Optional[str] = None # Added missing field
+    conclusion: Optional[str] = None # Added missing field
     summary: Optional[str] = None
     title_options: Optional[List[TitleOption]] = None
     error: Optional[str] = None

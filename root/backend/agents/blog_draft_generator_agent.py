@@ -150,10 +150,26 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         logging.info(f"Added user feedback to section: {self.current_state.current_section.title}") # Corrected indentation
         return True
 
-    def _create_section_cache_key(self, project_name: str, job_id: str, section_index: int) -> str:
-        """Creates a deterministic cache key for a section."""
-        # Use job_id which is unique per outline generation request
-        key_string = f"section_cache:{project_name}:{job_id}:{section_index}"
+    # Method to hash the relevant parts of the outline
+    def _hash_outline_for_cache(self, outline: dict) -> str:
+        """Creates a hash based on the outline structure for caching purposes."""
+        # Select relevant fields that define the outline structure
+        # Using title and section titles/subsections seems reasonable
+        relevant_data = {
+            "title": outline.get("title"),
+            "sections": [
+                {"title": s.get("title"), "subsections": s.get("subsections")}
+                for s in outline.get("sections", [])
+            ]
+        }
+        # Serialize deterministically and hash
+        outline_string = json.dumps(relevant_data, sort_keys=True)
+        return hashlib.sha256(outline_string.encode()).hexdigest()
+
+    # Updated cache key generation to use outline_hash
+    def _create_section_cache_key(self, project_name: str, outline_hash: str, section_index: int) -> str:
+        """Creates a deterministic cache key for a section based on outline hash."""
+        key_string = f"section_cache:{project_name}:{outline_hash}:{section_index}"
         return hashlib.sha256(key_string.encode()).hexdigest()
 
     async def get_generation_status(self):
@@ -175,12 +191,13 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         }
 
     # Updated method signature to include job_id and return tuple (content, was_cached)
+    # Updated method signature to remove job_id (not needed for cache key) and pass full outline
     async def generate_section(
         self,
         project_name: str,
-        job_id: str, # Added job_id
+        # job_id: str, # No longer needed directly for cache key
         section: dict,
-        outline: dict,
+        outline: dict, # Pass the full outline dict
         notebook_content: Optional[ContentStructure],
         markdown_content: Optional[ContentStructure],
         current_section_index: int,
@@ -190,29 +207,30 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
     ) -> Tuple[Optional[str], bool]: # Return content and cache status
         """Generates a single section of the blog draft, using persistent cache."""
         section_title = section.get('title', f'Section {current_section_index + 1}')
-        logging.info(f"Generating section {current_section_index}: {section_title} (Project: {project_name}, Job: {job_id})")
+        logging.info(f"Generating section {current_section_index}: {section_title} (Project: {project_name})") # Removed Job ID from log
 
-        cache_key = self._create_section_cache_key(project_name, job_id, current_section_index)
+        outline_hash = self._hash_outline_for_cache(outline) # Generate hash from outline
+        cache_key = self._create_section_cache_key(project_name, outline_hash, current_section_index) # Use new key
 
         # --- Check Cache ---
         if use_cache:
             cached_section_json = self.vector_store.retrieve_section_cache(
                 cache_key=cache_key,
                 project_name=project_name,
-                job_id=job_id,
+                outline_hash=outline_hash, # Pass outline_hash instead of job_id
                 section_index=current_section_index
             )
             if cached_section_json:
                 try:
                     cached_data = json.loads(cached_section_json)
-                    logging.info(f"Cache hit for section {current_section_index} (Job: {job_id})")
+                    logging.info(f"Cache hit for section {current_section_index} (Outline Hash: {outline_hash})")
                     # Return cached content and True for was_cached
                     return cached_data.get("content"), True
                 except json.JSONDecodeError:
                     logging.warning(f"Failed to parse cached JSON for section {current_section_index}. Regenerating.")
         # --- End Cache Check ---
 
-        logging.info(f"Cache miss for section {current_section_index}. Proceeding with generation.")
+        logging.info(f"Cache miss for section {current_section_index} (Outline Hash: {outline_hash}). Proceeding with generation.")
         # Reset the current state to ensure fresh generation
         self.current_state = None
         # logging.info("Reset agent state to ensure fresh generation") # Can be verbose
@@ -287,7 +305,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                         section_json=section_json,
                         cache_key=cache_key,
                         project_name=project_name,
-                        job_id=job_id,
+                        outline_hash=outline_hash, # Pass outline_hash instead of job_id
                         section_index=current_section_index
                     )
                 # --- End Store in Cache ---
@@ -301,11 +319,11 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             logging.exception(msg)
             return None, False # Return None and False for was_cached
 
-    # Updated method signature to include job_id
+    # Updated method signature to remove job_id (not needed for cache key)
     async def regenerate_section_with_feedback(
         self,
         project_name: str,
-        job_id: str, # Added job_id
+        # job_id: str, # No longer needed directly for cache key
         section: dict,
         outline: dict,
         notebook_content: Optional[ContentStructure],
@@ -316,7 +334,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
     ) -> Optional[str]: # Return only content (cache status not relevant for direct regen call)
         """Regenerates a section with user feedback, updating the cache."""
         section_title = section.get('title', 'Unknown Section')
-        logging.info(f"Regenerating section with feedback: {section_title} (Project: {project_name}, Job: {job_id})")
+        logging.info(f"Regenerating section with feedback: {section_title} (Project: {project_name})") # Removed Job ID from log
 
         # Find the section index
         section_index = -1
@@ -327,7 +345,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                 break
 
         if section_index == -1:
-            logging.error(f"Section '{section_title}' not found in outline for job {job_id}")
+            logging.error(f"Section '{section_title}' not found in outline") # Removed Job ID from log
             return None
 
         # Reset the current state to ensure fresh regeneration
@@ -406,7 +424,8 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             if regenerated_content:
                 logging.info(f"Successfully regenerated section '{section_title}' with content length: {len(regenerated_content)}")
                 # --- Update Cache ---
-                cache_key = self._create_section_cache_key(project_name, job_id, section_index)
+                outline_hash = self._hash_outline_for_cache(outline) # Generate hash from outline
+                cache_key = self._create_section_cache_key(project_name, outline_hash, section_index) # Use new key
                 section_data_to_cache = {
                     "title": section_title,
                     "content": regenerated_content
@@ -416,7 +435,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                     section_json=section_json,
                     cache_key=cache_key,
                     project_name=project_name,
-                    job_id=job_id,
+                    outline_hash=outline_hash, # Pass outline_hash instead of job_id
                     section_index=section_index
                 )
                 # --- End Update Cache ---

@@ -46,13 +46,60 @@ async def create_refinement_graph(model: BaseModel) -> StateGraph:
     # This node doesn't need the model, so no binding is necessary
     graph.add_node("assemble_draft", assemble_refined_draft_node)
 
-    # Define edges for the sequential flow
+    # --- Define Conditional Logic ---
+    def should_continue(state: BlogRefinementState) -> str:
+        """Determines whether to continue to the next step or end due to error."""
+        if state.error:
+            logger.error(f"Error detected in state, ending graph execution: {state.error}")
+            return "end_due_to_error"
+        else:
+            return "continue"
+
+    # --- Define Edges with Conditionals ---
     graph.set_entry_point("generate_introduction")
-    graph.add_edge("generate_introduction", "generate_conclusion")
-    graph.add_edge("generate_conclusion", "generate_summary")
-    graph.add_edge("generate_summary", "generate_titles")
-    graph.add_edge("generate_titles", "assemble_draft")
-    graph.add_edge("assemble_draft", END) # End the graph after assembly
+
+    # After Introduction
+    graph.add_conditional_edges(
+        "generate_introduction",
+        should_continue,
+        {
+            "continue": "generate_conclusion",
+            "end_due_to_error": END,
+        },
+    )
+
+    # After Conclusion
+    graph.add_conditional_edges(
+        "generate_conclusion",
+        should_continue,
+        {
+            "continue": "generate_summary",
+            "end_due_to_error": END,
+        },
+    )
+
+    # After Summary
+    graph.add_conditional_edges(
+        "generate_summary",
+        should_continue,
+        {
+            "continue": "generate_titles",
+            "end_due_to_error": END,
+        },
+    )
+
+    # After Titles
+    graph.add_conditional_edges(
+        "generate_titles",
+        should_continue,
+        {
+            "continue": "assemble_draft",
+            "end_due_to_error": END,
+        },
+    )
+
+    # After Assembly (always ends)
+    graph.add_edge("assemble_draft", END)
 
     # Compile the graph into a runnable application
     app = graph.compile()
