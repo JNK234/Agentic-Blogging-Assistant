@@ -13,7 +13,8 @@ from root.backend.agents.blog_refinement.prompts import (
     GENERATE_INTRODUCTION_PROMPT,
     GENERATE_CONCLUSION_PROMPT,
     GENERATE_SUMMARY_PROMPT,
-    GENERATE_TITLES_PROMPT
+    GENERATE_TITLES_PROMPT,
+    SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT # Import the new prompt
 )
 
 logger = logging.getLogger(__name__)
@@ -23,13 +24,12 @@ logger = logging.getLogger(__name__)
 async def generate_introduction_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
     """Node to generate the blog introduction."""
     logger.info("Node: generate_introduction_node")
-    # LangGraph passes state as a dict, access keys directly
-    current_state = state
-    if current_state.get('error'): return {"error": current_state['error']}
+    # Access Pydantic model fields directly
+    if state.error: return {"error": state.error}
 
     try:
-        prompt = GENERATE_INTRODUCTION_PROMPT.format(blog_draft=current_state['original_draft'])
-        response = await model.generate(prompt)
+        prompt = GENERATE_INTRODUCTION_PROMPT.format(blog_draft=state.original_draft)
+        response = await model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Introduction generated successfully.")
             return {"introduction": response.strip()}
@@ -43,12 +43,12 @@ async def generate_introduction_node(state: BlogRefinementState, model: BaseMode
 async def generate_conclusion_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
     """Node to generate the blog conclusion."""
     logger.info("Node: generate_conclusion_node")
-    current_state = state
-    if current_state.get('error'): return {"error": current_state['error']}
+    # Access Pydantic model fields directly
+    if state.error: return {"error": state.error}
 
     try:
-        prompt = GENERATE_CONCLUSION_PROMPT.format(blog_draft=current_state['original_draft'])
-        response = await model.generate(prompt)
+        prompt = GENERATE_CONCLUSION_PROMPT.format(blog_draft=state.original_draft)
+        response = await model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Conclusion generated successfully.")
             return {"conclusion": response.strip()}
@@ -62,12 +62,12 @@ async def generate_conclusion_node(state: BlogRefinementState, model: BaseModel)
 async def generate_summary_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
     """Node to generate the blog summary."""
     logger.info("Node: generate_summary_node")
-    current_state = state
-    if current_state.get('error'): return {"error": current_state['error']}
+    # Access Pydantic model fields directly
+    if state.error: return {"error": state.error}
 
     try:
-        prompt = GENERATE_SUMMARY_PROMPT.format(blog_draft=current_state['original_draft'])
-        response = await model.generate(prompt)
+        prompt = GENERATE_SUMMARY_PROMPT.format(blog_draft=state.original_draft)
+        response = await model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Summary generated successfully.")
             return {"summary": response.strip()}
@@ -81,12 +81,12 @@ async def generate_summary_node(state: BlogRefinementState, model: BaseModel) ->
 async def generate_titles_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
     """Node to generate title and subtitle options."""
     logger.info("Node: generate_titles_node")
-    current_state = state
-    if current_state.get('error'): return {"error": current_state['error']}
+    # Access Pydantic model fields directly
+    if state.error: return {"error": state.error}
 
     try:
-        prompt = GENERATE_TITLES_PROMPT.format(blog_draft=current_state['original_draft'])
-        response = await model.generate(prompt)
+        prompt = GENERATE_TITLES_PROMPT.format(blog_draft=state.original_draft)
+        response = await model.ainvoke(prompt)
 
         # Clean and parse JSON
         cleaned_response = response.strip()
@@ -117,22 +117,65 @@ async def generate_titles_node(state: BlogRefinementState, model: BaseModel) -> 
         logger.exception("Error in generate_titles_node")
         return {"error": f"Title generation failed: {str(e)}"}
 
+
+async def suggest_clarity_flow_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+    """Node to suggest clarity and flow improvements."""
+    logger.info("Node: suggest_clarity_flow_node")
+    # Access Pydantic model fields directly
+    if state.error: return {"error": state.error}
+
+    try:
+        # Use direct attribute access for refined_draft as well
+        if not state.refined_draft:
+            logger.error("Refined draft not found in state for clarity/flow suggestions.")
+            return {"error": "Refined draft is missing, cannot generate clarity/flow suggestions."}
+
+        prompt = SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT.format(blog_draft=state.refined_draft)
+        response = await model.ainvoke(prompt)
+        if isinstance(response, str) and response.strip():
+            logger.info("Clarity/flow suggestions generated successfully.")
+            # Store the suggestions as a single string (bulleted list)
+            return {"clarity_flow_suggestions": response.strip()}
+        else:
+            logger.warning(f"Clarity/flow suggestion generation returned empty/invalid response: {response}")
+            # Decide if this is an error or just means no suggestions
+            # For now, let's assume empty means no suggestions needed, not an error.
+            return {"clarity_flow_suggestions": "No specific clarity or flow suggestions identified."}
+    except Exception as e:
+        logger.exception("Error in suggest_clarity_flow_node")
+        return {"error": f"Clarity/flow suggestion generation failed: {str(e)}"}
+
+
 def assemble_refined_draft_node(state: BlogRefinementState) -> Dict[str, Any]:
     """Node to assemble the final refined draft."""
     logger.info("Node: assemble_refined_draft_node")
-    current_state = state
+    current_state = state.model_dump() if isinstance(state, BaseModel) else state
     if current_state.get('error'):
-        logger.error(f"Skipping assembly due to previous error: {current_state['error']}")
-        # Ensure the error is propagated if not already set explicitly in the state dict key
-        return {"error": current_state['error']}
+        logger.error(f"Skipping assembly due to previous error: {current_state.get('error')}")
+        return {"error": current_state.get('error')}
 
     # Check if all required components are present in the state dictionary
     introduction = current_state.get('introduction')
     conclusion = current_state.get('conclusion')
     original_draft = current_state.get('original_draft')
 
+    # Enhanced logging for prerequisite check
+    logger.info(f"Assemble_refined_draft_node - Prerequisite check:")
+    logger.info(f"  Introduction present: {bool(introduction)}")
+    logger.info(f"  Conclusion present: {bool(conclusion)}")
+    logger.info(f"  Original_draft present: {bool(original_draft)}")
+
     if not introduction or not conclusion or not original_draft:
-        missing = [k for k, v in {'introduction': introduction, 'conclusion': conclusion, 'original_draft': original_draft}.items() if not v]
+        missing = []
+        if not introduction: 
+            missing.append("introduction")
+            logger.warning("Assemble_refined_draft_node: Introduction is missing.")
+        if not conclusion: 
+            missing.append("conclusion")
+            logger.warning("Assemble_refined_draft_node: Conclusion is missing.")
+        if not original_draft: 
+            missing.append("original_draft")
+            logger.warning("Assemble_refined_draft_node: Original_draft is missing.")
         error_msg = f"Cannot assemble draft, missing components: {', '.join(missing)}."
         logger.error(error_msg)
         return {"error": error_msg}

@@ -17,6 +17,7 @@ from root.backend.agents.blog_refinement.nodes import (
     generate_conclusion_node,
     generate_summary_node,
     generate_titles_node,
+    suggest_clarity_flow_node, # Import the new node function
     assemble_refined_draft_node
 )
 
@@ -43,6 +44,7 @@ async def create_refinement_graph(model: BaseModel) -> StateGraph:
     graph.add_node("generate_conclusion", partial(generate_conclusion_node, model=model))
     graph.add_node("generate_summary", partial(generate_summary_node, model=model))
     graph.add_node("generate_titles", partial(generate_titles_node, model=model))
+    graph.add_node("suggest_clarity_flow", partial(suggest_clarity_flow_node, model=model)) # Add the new node
     # This node doesn't need the model, so no binding is necessary
     graph.add_node("assemble_draft", assemble_refined_draft_node)
 
@@ -51,8 +53,9 @@ async def create_refinement_graph(model: BaseModel) -> StateGraph:
     graph.add_edge("generate_introduction", "generate_conclusion")
     graph.add_edge("generate_conclusion", "generate_summary")
     graph.add_edge("generate_summary", "generate_titles")
-    graph.add_edge("generate_titles", "assemble_draft")
-    graph.add_edge("assemble_draft", END) # End the graph after assembly
+    graph.add_edge("generate_titles", "assemble_draft") # Titles goes to assemble
+    graph.add_edge("assemble_draft", "suggest_clarity_flow") # Assemble goes to clarity/flow
+    graph.add_edge("suggest_clarity_flow", END) # Clarity/flow is the last step before END
 
     # Compile the graph into a runnable application
     app = graph.compile()

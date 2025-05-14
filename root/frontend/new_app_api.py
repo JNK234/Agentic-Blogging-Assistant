@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx # For catching specific exceptions
 from pathlib import Path
 import json # Added for parsing section content
+import re # Added for regex operations
 
 # Import the API client functions
 import api_client
@@ -145,6 +146,13 @@ def format_section_content_as_markdown(content_data: Any) -> str:
     Returns:
         A formatted Markdown string suitable for st.markdown.
     """
+    logger.info(f"format_section_content_as_markdown received content_data of type: {type(content_data)}")
+    if isinstance(content_data, str):
+        logger.info(f"content_data (string preview): {content_data[:200]}...")
+    elif isinstance(content_data, dict):
+        logger.info(f"content_data (dict keys): {list(content_data.keys())}")
+
+
     if not content_data:
         return "*No content available for this section.*"
         
@@ -161,73 +169,112 @@ def format_section_content_as_markdown(content_data: Any) -> str:
                 
             parsed_json = json.loads(content_data)
             if isinstance(parsed_json, dict):
-                data = parsed_json
+                data = parsed_json # Successfully parsed into a dictionary
             else:
-                 # If it parses but isn't a dict, treat as plain text
-                 return content_data
+                 # Parsed into something other than a dictionary (e.g., a list if the JSON was just `[]`)
+                 logger.warning(f"format_section_content_as_markdown: Parsed JSON but it's not a dictionary. Type: {type(parsed_json)}. Original: {content_data[:200]}...")
+                 return f"*Error: Section content was valid JSON but not the expected dictionary structure. Content: {content_data[:200]}...*"
         except json.JSONDecodeError:
-            # If it's not valid JSON, assume it's already Markdown or plain text
-            return content_data
+            # Failed to parse as JSON. Assume it's already Markdown or plain text.
+            # This is where the raw JSON string might be returned if it's not caught as a dict later.
+            # Let's keep 'content_data' as is for now, and the 'if data:' check below will handle it.
+            # If it's not a dict, it will fall through to the final 'return str(content_data)'
+            pass # Keep content_data as the original string
+
     elif isinstance(content_data, dict):
-        data = content_data
+        data = content_data # Input was already a dictionary
     else:
-        # Handle unexpected types by converting to string
-        logger.warning(f"Unexpected content type received: {type(content_data)}. Displaying as string.")
+        # Handle unexpected non-string, non-dict types by converting to string
+        logger.warning(f"Unexpected content type received: {type(content_data)}. Displaying as string: {str(content_data)[:200]}...")
         return str(content_data)
 
-    # If we successfully got a dictionary, format it without modifying the original
-    if data:
-        markdown_parts = []
-        # Use a copy or access keys directly to avoid modifying the original 'data'
-        local_data = data.copy() # Work on a copy
-
-        # Use H3 for sub-section title if present
-        title = local_data.get("title")
-        if title:
-             markdown_parts.append(f"### {title}")
-
-        # Main content block
-        content = local_data.get("content")
-        if content:
-            markdown_parts.append(str(content))
-
-        # Format code examples, avoiding double-fencing
-        examples = local_data.get("code_examples")
-        if examples:
-            markdown_parts.append("\n**Code Examples:**\n") # Add header regardless of type
-            if isinstance(examples, list) and examples:
-                for i, example in enumerate(examples):
-                    lang = ""
-                    code = ""
-                    if isinstance(example, dict):
-                        lang = example.get("language", "")
-                        code = example.get("code", "")
-                    else:
-                        code = str(example) # Assume the list item is the code string
-
-                    code_str = str(code).strip()
-                    # Check if it already looks like a fenced block
+    # At this point, 'data' is either a dictionary (parsed or passed in) or None (if input was a string that failed to parse to dict)
+    if isinstance(data, dict):
+        main_markdown_content = data.get("content")
+        if isinstance(main_markdown_content, str):
+            # If 'content' field exists and is a string, this is the primary Markdown.
+            # Strip potential outer markdown code fences from the content itself.
+            processed_main_content = main_markdown_content.strip()
+            if processed_main_content.startswith("```markdown") and processed_main_content.endswith("```"):
+                processed_main_content = processed_main_content[11:-3].strip()
+            elif processed_main_content.startswith("```") and processed_main_content.endswith("```"):
+                # Handle generic triple backticks as well
+                # Find the first newline to remove the language specifier if present
+                first_newline = processed_main_content.find('\n')
+                if first_newline != -1:
+                    processed_main_content = processed_main_content[first_newline+1:-3].strip()
+                else: # Should not happen with valid fenced blocks but as a fallback
+                    processed_main_content = processed_main_content[3:-3].strip()
+            
+            current_section_markdown_parts = [processed_main_content]
+            
+            examples = data.get("code_examples")
+            if examples:
+                current_section_markdown_parts.append("\n\n**Code Examples:**") # Add a clear separator
+                if isinstance(examples, list):
+                    for example in examples:
+                        lang = example.get("language", "") if isinstance(example, dict) else ""
+                        code = example.get("code", str(example)) if isinstance(example, dict) else str(example)
+                        desc = example.get("description", "") if isinstance(example, dict) else ""
+                        
+                        if desc:
+                             current_section_markdown_parts.append(f"\n_{desc}_")
+                        
+                        code_str = str(code).strip()
+                        if code_str.startswith("```") and code_str.endswith("```"):
+                            current_section_markdown_parts.append(f"\n{code_str}")
+                        else:
+                            current_section_markdown_parts.append(f"\n```{lang}\n{code_str}\n```")
+                elif isinstance(examples, str): # Single code example string
+                    code_str = examples.strip()
                     if code_str.startswith("```") and code_str.endswith("```"):
-                        markdown_parts.append(code_str) # Use as-is
+                        current_section_markdown_parts.append(f"\n{code_str}")
                     else:
-                        markdown_parts.append(f"``` {lang}\n{code_str}\n```") # Add fences
+                        current_section_markdown_parts.append(f"\n```python\n{code_str}\n```")
+            
+            return "\n".join(current_section_markdown_parts).strip() # Join with single newline, then strip
+        else:
+            # If 'content' field is missing/not a string, but 'data' is a dict,
+            # this indicates the LLM did not follow instructions to put Markdown in 'content'.
+            # Log the problematic structure and return it as JSON for debugging.
+            logger.warning(f"format_section_content_as_markdown: Parsed input as dict, but 'content' field is missing or not a string. Data: {json.dumps(data, indent=2)}")
+            # For display, try to return something sensible, or just the JSON dump.
+            # Returning the raw 'content_data' (original string if it was a string) might be safer than data dump.
+            # However, if 'data' was passed in as a dict directly, content_data might not be the original string.
+            # If 'content' key is missing or its value is not a string
+            error_msg_template = "*Error: Section data was a dictionary but the 'content' key was missing or not a string. Raw data for section:*\n```json\n{}\n```"
+            logger.error(f"format_section_content_as_markdown: 'content' key missing or not a string in parsed data. Data: {json.dumps(data, indent=2)}")
+            return error_msg_template.format(json.dumps(data, indent=2))
 
-            elif isinstance(examples, str): # Handle single code example string
-                 code_str = examples.strip()
-                 if code_str.startswith("```") and code_str.endswith("```"):
-                     markdown_parts.append(code_str) # Use as-is
-                 else:
-                     # Assume python if language not specified for single string example
-                     markdown_parts.append(f"``` python\n{code_str}\n```")
-
-        # Note: We no longer need to handle 'remaining keys' as we are not deleting.
-        # If other keys need specific formatting, add logic here.
-
-        return "\n\n".join(filter(None, markdown_parts)) # Join non-empty parts
-    else:
-        # This case handles non-dict data or data that became None/empty after parsing attempts
-        # but handles edge cases where data becomes None/empty after processing
-        return str(content_data)
+    # Fallback: If 'data' is None (meaning content_data was a string but failed json.loads)
+    # or if content_data was not a string or dict initially.
+    # We assume the original content_data might be plain Markdown or an error string itself.
+    # Attempt to strip common Markdown fences if it's a string.
+    if isinstance(content_data, str):
+        logger.warning(f"format_section_content_as_markdown: Content data was not a processable dictionary with a 'content' key. Treating as direct Markdown/text: {content_data[:200]}...")
+        processed_content_data = content_data.strip()
+        if processed_content_data.startswith("```markdown") and processed_content_data.endswith("```"):
+            return processed_content_data[11:-3].strip()
+        # Handle generic ```language ``` (e.g. ```python ... ```) by stripping the fence
+        # This regex looks for ``` followed by optional language, then newline, then content, then ```
+        match = re.match(r"^```[\w]*\n(.*?)\n```$", processed_content_data, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        # Handle simple ``` ``` without language specifier on the first line
+        if processed_content_data.startswith("```") and processed_content_data.endswith("```"):
+             # Check if it's a multi-line code block (```\ncode\n```) vs inline (```code```)
+            if '\n' in processed_content_data:
+                # Attempt to remove first and last lines if they are just backticks
+                lines = processed_content_data.splitlines()
+                if lines[0].strip() == "```" and lines[-1].strip() == "```":
+                    return "\n".join(lines[1:-1]).strip()
+            # For simple inline or single-line blocks, just remove the backticks
+            return processed_content_data[3:-3].strip()
+        return processed_content_data # Return the original string, possibly stripped of outer fences
+    
+    # If content_data was not a string initially (e.g. int, float, list not parsed to dict)
+    logger.warning(f"format_section_content_as_markdown: Original content_data was not a string or dict. Type: {type(content_data)}. Returning as string.")
+    return str(content_data)
 
 
 # --- UI Components ---
@@ -567,12 +614,30 @@ class BlogDraftUI:
                     SessionManager.set('final_draft', final_draft_content)
                     SessionManager.set_status("Draft compiled successfully in frontend.")
                     logger.info(f"Draft compiled in frontend for job ID: {job_id}")
-                    # No API call needed here anymore
-                    # --- End Frontend Draft Compilation ---
+                    st.rerun() # Rerun to update UI and show compiled draft
                 except Exception as e:
                     logger.exception(f"Unexpected error during frontend draft compilation: {e}")
                     SessionManager.set_error(f"An unexpected error occurred during compilation: {str(e)}")
                     SessionManager.set_status("Draft compilation failed.")
+            
+            # Display the final draft here if it exists in session state, after the compile button
+            final_draft_content_for_display_in_blog_draft_tab = SessionManager.get('final_draft')
+            project_name_for_download_in_blog_draft_tab = SessionManager.get('project_name', "untitled_project")
+            if final_draft_content_for_display_in_blog_draft_tab:
+                st.subheader("Compiled Blog Draft Preview")
+                st.download_button(
+                    label="Download Compiled Draft (.md)",
+                    data=final_draft_content_for_display_in_blog_draft_tab,
+                    file_name=f"{project_name_for_download_in_blog_draft_tab}_compiled_draft.md",
+                    mime="text/markdown",
+                    key="download_compiled_draft_blog_draft_tab_primary"
+                )
+                with st.expander("View Compiled Draft", expanded=True):
+                    st.markdown(final_draft_content_for_display_in_blog_draft_tab)
+                with st.expander("Markdown Source", expanded=False):
+                    st.text_area("Markdown Source (Compiled)", final_draft_content_for_display_in_blog_draft_tab, height=400, key="md_source_blog_draft_tab_primary")
+                st.info("Proceed to the 'Refine & Finalize' tab to add introduction, conclusion, summary, and titles.")
+
 
         st.markdown("---")
 
@@ -654,6 +719,8 @@ class BlogDraftUI:
                 st.text_area("Markdown", final_draft, height=400)
             st.info("Proceed to the 'Refine & Finalize' tab to add introduction, conclusion, summary, and titles.") # Updated instruction
 
+        # Removed the old display block for final_draft from the end of this method.
+        # It's now handled within the 'else' block (all sections generated).
 
 class RefinementUI:
     """Handles the Refine & Finalize Tab."""
@@ -666,34 +733,33 @@ class RefinementUI:
 
         job_id = SessionManager.get('job_id')
         project_name = SessionManager.get('project_name')
-        final_draft = SessionManager.get('final_draft')
+        # final_draft = SessionManager.get('final_draft') # This is the unrefined draft
 
-        st.subheader("Compiled Draft Preview")
-        st.download_button(
-            label="Download Compiled Draft (.md)",
-            data=final_draft,
-            file_name=f"{project_name}_compiled_draft.md",
-            mime="text/markdown",
-            key="download_compiled_draft_refine_tab"
-        )
-        with st.expander("View Compiled Draft", expanded=False):
-            st.markdown(final_draft)
+        # Removed the preview of the unrefined 'final_draft' from this tab.
+        # This tab should focus on the 'refined_draft' which is its output.
+        # The 'final_draft' (unrefined) is displayed on the 'Blog Draft' tab.
 
-        st.markdown("---")
-        st.subheader("Generate Introduction, Conclusion, Summary & Titles")
+        st.subheader("Generate Introduction, Conclusion, Summary, Titles & Suggestions") # Updated subheader
 
         if st.button("Refine Blog", key="refine_blog_btn"):
             SessionManager.set_status("Refining blog draft...")
             SessionManager.clear_error()
             try:
                 with st.spinner("Calling API to refine blog..."):
-                    # Assuming api_client has a refine_blog function
+                    # Get the compiled draft from session state
+                    compiled_draft_content = SessionManager.get('final_draft')
+                    if not compiled_draft_content:
+                        raise ValueError("Compiled draft content is missing from session state.")
+
+                    # Call the API client function, passing the compiled draft
                     result = asyncio.run(api_client.refine_blog(
                         project_name=project_name,
                         job_id=job_id,
+                        compiled_draft=compiled_draft_content, # Pass the draft content
                         base_url=SessionManager.get('api_base_url')
                     ))
-                SessionManager.set('refined_draft', result.get('refined_draft'))
+                # Store the results from the API response
+                SessionManager.set('refined_draft', result.get('refined_draft')) # This should be the final text
                 SessionManager.set('summary', result.get('summary'))
                 SessionManager.set('title_options', result.get('title_options')) # Expecting a list of dicts
                 SessionManager.set_status("Blog refined successfully.")

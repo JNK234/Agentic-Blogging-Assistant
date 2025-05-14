@@ -89,16 +89,29 @@ class BlogRefinementAgent(BaseGraphAgent):
             # The run_graph method is inherited from BaseGraphAgent
             final_state_dict = await self.run_graph(initial_state_dict)
 
+            # --- Enhanced Logging ---
+            logger.info(f"Blog refinement graph execution completed. Final state dictionary: {final_state_dict}")
+            # --- End Enhanced Logging ---
+
             # Process the final state
-            if final_state_dict.get('error'):
-                logger.error(f"Blog refinement graph finished with error: {final_state_dict['error']}")
+            current_error = final_state_dict.get('error')
+            if current_error:
+                logger.error(f"Blog refinement graph finished with an error explicitly set in state: {current_error}")
                 return None
 
-            # Validate that all required fields are present in the final state
-            required_fields = ['refined_draft', 'summary', 'title_options']
-            if not all(field in final_state_dict for field in required_fields):
-                missing = [field for field in required_fields if field not in final_state_dict]
-                logger.error(f"Refinement graph completed but missing required fields: {missing}. Final state: {final_state_dict}")
+            # Validate that all required fields for RefinementResult are present
+            required_fields_for_result = ['refined_draft', 'summary', 'title_options']
+            missing_for_result = [field for field in required_fields_for_result if field not in final_state_dict or final_state_dict.get(field) is None]
+
+            if missing_for_result:
+                logger.error(
+                    f"Refinement graph completed but missing required fields for RefinementResult: {missing_for_result}. "
+                    f"Current state of these fields: "
+                    f"refined_draft: {final_state_dict.get('refined_draft') is not None}, "
+                    f"summary: {final_state_dict.get('summary') is not None}, "
+                    f"title_options: {final_state_dict.get('title_options') is not None}. "
+                    f"Full final state: {final_state_dict}"
+                )
                 return None
 
             # Parse title options back into Pydantic models if needed, though they are stored as dicts

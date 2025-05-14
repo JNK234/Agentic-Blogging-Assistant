@@ -126,7 +126,7 @@ async def get_or_create_agents(model_name: str):
         # Instantiate VectorStoreService (it might become a singleton later if needed)
         vector_store = VectorStoreService() # Instantiate VectorStoreService here
 
-        outline_agent = OutlineGeneratorAgent(model, content_parser) # Outline agent still uses content_parser
+        outline_agent = OutlineGeneratorAgent(model, content_parser, vector_store) # Pass vector_store
         await outline_agent.initialize()
 
         # Pass vector_store to BlogDraftGeneratorAgent
@@ -394,9 +394,9 @@ async def generate_section(
         # It returns a tuple: (content, was_cached)
         section_content, was_cached = await draft_agent.generate_section(
             project_name=project_name,
-            job_id=job_id, # Pass job_id to agent for cache key
+            # job_id is not directly used by agent.generate_section for cache key anymore
             section=section,
-            outline=outline_data,
+            outline=outline_data, # Agent will hash this for cache key
             notebook_content=notebook_data, # Pass potentially None content
             markdown_content=markdown_data, # Pass potentially None content
             current_section_index=section_index,
@@ -483,12 +483,11 @@ async def regenerate_section(
         draft_agent = agents["draft_agent"]
 
         # Regenerate section with feedback using retrieved data
-        # Pass job_id to the agent method
+        # job_id is not directly used by agent.regenerate_section_with_feedback for cache key
         new_content = await draft_agent.regenerate_section_with_feedback(
             project_name=project_name,
-            job_id=job_id, # Pass job_id
             section=section,
-            outline=outline_data,
+            outline=outline_data, # Agent will hash this
             notebook_content=notebook_data, # Pass potentially None
             markdown_content=markdown_data, # Pass potentially None
             feedback=feedback,
@@ -563,18 +562,20 @@ async def compile_draft(
             # Need access to the agent's cache key logic or replicate it
             # Assuming BlogDraftGeneratorAgent has a static or accessible method for this
             # If not, this part needs adjustment based on how the key is generated/accessed
-            # Replicating key logic here for now:
-            def _create_section_cache_key_local(proj, job, index):
-                 key_string = f"section_cache:{proj}:{job}:{index}"
-                 import hashlib
-                 return hashlib.sha256(key_string.encode()).hexdigest()
+            
+            # Get the draft_agent to use its hashing and key generation methods
+            agents = await get_or_create_agents(model_name)
+            draft_agent = agents["draft_agent"]
+            vector_store = agents["vector_store"] # Get the shared vector_store
+
+            outline_hash = draft_agent._hash_outline_for_cache(outline_data)
 
             for i in range(num_outline_sections):
-                cache_key = _create_section_cache_key_local(project_name, job_id, i) # Replicate key logic
+                cache_key = draft_agent._create_section_cache_key(project_name, outline_hash, i)
                 cached_section_json = vector_store.retrieve_section_cache(
                     cache_key=cache_key,
                     project_name=project_name,
-                    job_id=job_id,
+                    outline_hash=outline_hash, # Use outline_hash for retrieval
                     section_index=i
                 )
                 if cached_section_json:
@@ -703,26 +704,27 @@ async def compile_draft(
 @app.post("/refine_blog/{project_name}")
 async def refine_blog(
     project_name: str, # Keep project_name for potential future use/logging
-    job_id: str = Form(...) # Use job_id to retrieve compiled draft and model
+    job_id: str = Form(...), # Still needed to get model_name from job_state
+    compiled_draft: str = Form(...) # Add compiled_draft directly to the request
 ) -> JSONResponse:
     """Refine a compiled blog draft using the BlogRefinementAgent."""
     try:
-        # Retrieve state from cache
+        # Retrieve state from cache (still needed for model_name)
         job_state = state_cache.get(job_id)
         if not job_state:
             logger.error(f"Job state not found for job_id: {job_id}")
             return JSONResponse(
-                content={"error": f"Job state not found for job_id: {job_id}. Please compile draft first."},
+                content={"error": f"Job state not found for job_id: {job_id}. Outline/model info missing."},
                 status_code=404
             )
 
-        # Check if final (compiled) draft exists in the state
-        compiled_draft = job_state.get("final_draft")
-        if not compiled_draft:
-            logger.error(f"Compiled draft not found in cache for job_id: {job_id}")
+        # The 'compiled_draft' parameter from the Form(...) is used directly.
+        # No need to check job_state.get("final_draft") anymore.
+        if not compiled_draft: # This check is for the Form parameter itself.
+            logger.error(f"Compiled draft not provided in the request for job_id: {job_id}")
             return JSONResponse(
-                content={"error": f"Compiled draft not found for job_id: {job_id}. Please compile the draft first."},
-                status_code=400 # Bad request, draft needs compilation
+                content={"error": "Compiled draft must be provided in the request."},
+                status_code=400 
             )
 
         # Extract model name from state

@@ -90,12 +90,14 @@ Write a comprehensive and engaging blog section that:
    - Maintain the original explanations and examples where possible
    - Preserve the logical flow of the original content
    - Use the original section headers as a guide
+   - **Crucially, all generated content for this section's body must be based *solely* on the information present in the 'RELEVANT CONTENT', 'ORIGINAL DOCUMENT STRUCTURE', and 'STRUCTURAL INSIGHTS' provided. Do NOT invent or infer information beyond these sources.**
+   - If specific details from the learning goals cannot be substantiated from the provided context, briefly state that the information is not covered in the source material rather than hallucinating.
 
 3. Technical Depth:
-   - Use appropriate technical terminology and jargon
-   - Explain advanced concepts with precision
-   - Include relevant technical specifications
-   - Reference industry standards where applicable
+   - Use appropriate technical terminology and jargon *as found in the provided content*.
+   - Explain advanced concepts with precision, *grounding explanations in the provided sources*.
+   - Include relevant technical specifications *if available in the sources*.
+   - Reference industry standards where applicable, *if mentioned in the sources*.
 
 4. Code Examples:
    - Provide well-commented code snippets
@@ -117,17 +119,22 @@ Write a comprehensive and engaging blog section that:
    - Reference relevant documentation
 
 Format Guidelines:
-- Use markdown formatting
-- Include code blocks with language specification
-- Use tables for comparing approaches
-- Add bullet points for key concepts
-- Include technical notes and warnings
-- Reference external documentation where relevant
+- The primary output for the section's body should be placed directly into the "content" field of the `DraftSection` JSON object.
+- This "content" field MUST be a string containing well-formed Markdown.
+- Within this Markdown string in the "content" field:
+    - Use Markdown formatting (headings, lists, bold, italics, etc.).
+    - Include code blocks with language specification (e.g., ```python ... ```).
+    - Use tables for comparing approaches.
+    - Add bullet points for key concepts.
+    - Include technical notes and warnings.
+    - Reference external documentation where relevant.
+- Ensure LaTeX formulas are correctly embedded in the Markdown (e.g., $E=mc^2$ or $$ \sum x_i $$).
+- **Adherence to Source**: The generated Markdown in the "content" field must strictly adhere to the provided 'RELEVANT CONTENT' and structural information. Avoid introducing external knowledge or hallucinated details.
 
-Ensure the content is:
-- Technically accurate
+Ensure the "content" field's Markdown is:
+- Technically accurate *based on the provided sources*.
 - Well-structured
-- Practical and implementable
+- Practical and implementable *as suggested by the sources*.
 - Suitable for professional developers
 - Consistent with the original document's organization
     """,
@@ -177,6 +184,7 @@ Enhance the existing content by:
 8. Ensuring all learning goals are thoroughly addressed
 
 IMPORTANT:
+- Do not provide a starting line like "Okay, here's the enhanced blog section.... etc" just provide the main content 
 - Maintain the original structure and flow
 - Prioritize using content from the original document
 - Keep the technical accuracy high
