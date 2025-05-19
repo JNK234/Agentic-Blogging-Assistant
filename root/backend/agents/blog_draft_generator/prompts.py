@@ -80,10 +80,10 @@ Write a comprehensive and engaging blog section that:
    - Adhere to the `max_subpoints` constraint from `current_section_data`.
    - Follow the original document structure where applicable.
    - Maintain the hierarchical relationships between topics.
-   - Start with a clear technical introduction *specific to this section's topic*, building upon the previous context if available.
-   - Break down complex concepts into digestible parts
-   - Build concepts progressively
-   - Conclude by reinforcing the section's key learning goals or summarizing the main technical points covered *in this section*. Avoid generic summaries.
+   - Ensure the section begins by directly addressing its topic, flowing naturally from the previous section or transition. Avoid standalone introductions if a transition is already provided.
+   - Break down complex concepts into digestible parts.
+   - Build concepts progressively.
+   - Ensure the section ends by covering its intended scope. Avoid adding separate summary paragraphs for this section, as overall summarization is handled at the blog compilation stage and transitions will bridge to the next section.
 
 2. Content Preservation:
    - Prioritize using content from the original document

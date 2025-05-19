@@ -105,128 +105,202 @@ def display_readable_outline(outline_data: Optional[Dict[str, Any]]):
 
     # Display Title
     title = outline_data.get("title", "Blog Outline")
-    st.subheader(title)
+    st.subheader(f"Outline: {title}")
 
-    # Display Sections and Subsections
+    # Display Difficulty Level
+    difficulty = outline_data.get("difficulty_level")
+    if difficulty:
+        st.markdown(f"**Difficulty Level:** {difficulty}")
+
+    # Display Prerequisites
+    prerequisites = outline_data.get("prerequisites")
+    if isinstance(prerequisites, dict):
+        st.markdown("**Prerequisites:**")
+        if prerequisites.get("required_knowledge"):
+            st.markdown("- **Required Knowledge:**")
+            for item in prerequisites["required_knowledge"]:
+                st.markdown(f"  - {item}")
+        if prerequisites.get("recommended_tools"):
+            st.markdown("- **Recommended Tools:**")
+            for item in prerequisites["recommended_tools"]:
+                st.markdown(f"  - {item}")
+        if prerequisites.get("setup_instructions"):
+            st.markdown("- **Setup Instructions:**")
+            for item in prerequisites["setup_instructions"]:
+                st.markdown(f"  - {item}")
+    
+    st.markdown("---")
+
+    # Display Introduction (collapsible)
+    introduction = outline_data.get("introduction")
+    if introduction:
+        with st.expander("View Introduction"):
+            st.markdown(introduction)
+
+    # Display Sections and Subsections with more details
+    st.markdown("### Sections")
     sections = outline_data.get("sections")
     if isinstance(sections, list) and sections:
-        for i, section in enumerate(sections):
-            if isinstance(section, dict):
-                section_title = section.get("title", f"Section {i+1}")
+        for i, section_details in enumerate(sections):
+            if isinstance(section_details, dict):
+                section_title = section_details.get("title", f"Section {i+1}")
                 st.markdown(f"**{i+1}. {section_title}**")
 
-                subsections = section.get("subsections")
-                if isinstance(subsections, list) and subsections:
-                    for sub_i, subsection in enumerate(subsections):
-                        # Ensure subsection is treated as a string
-                        st.markdown(f"    - {str(subsection)}")
+                # Display section-specific details
+                learning_goals = section_details.get("learning_goals")
+                if learning_goals and isinstance(learning_goals, list):
+                    st.markdown("    - **Learning Goals:**")
+                    for goal in learning_goals:
+                        st.markdown(f"        - {goal}")
+                
+                estimated_time = section_details.get("estimated_time")
+                if estimated_time:
+                    st.markdown(f"    - **Estimated Time:** {estimated_time}")
+
+                include_code = section_details.get("include_code")
+                st.markdown(f"    - **Include Code Examples:** {'Yes' if include_code else 'No'}")
+
+                if include_code:
+                    max_code_examples = section_details.get("max_code_examples")
+                    if max_code_examples is not None:
+                         st.markdown(f"    - **Max Code Examples:** {max_code_examples}")
+                
+                max_subpoints = section_details.get("max_subpoints")
+                if max_subpoints is not None:
+                    st.markdown(f"    - **Max Subpoints/Subsections:** {max_subpoints}")
+
+                subsections = section_details.get("subsections")
+                if subsections and isinstance(subsections, list):
+                    st.markdown("    - **Subsections:**")
+                    for sub_i, subsection_title in enumerate(subsections):
+                        st.markdown(f"        - {str(subsection_title)}")
+                st.markdown("") # Add a little space after each section
             else:
                 # Handle case where section is just a string (less likely based on structure)
-                 st.markdown(f"**{i+1}. {str(section)}**")
-
+                 st.markdown(f"**{i+1}. {str(section_details)}**")
     else:
         st.markdown("*No sections defined in the outline.*")
+
+    st.markdown("---")
+    # Display Conclusion (collapsible)
+    conclusion = outline_data.get("conclusion")
+    if conclusion:
+        with st.expander("View Conclusion"):
+            st.markdown(conclusion)
 
 
 def format_section_content_as_markdown(content_data: Any) -> str:
     """
-    Formats potentially structured section content into a consistent Markdown string.
-
-    Tries to parse the input as JSON if it's a string. If it's a dictionary
-    (either parsed or directly passed), it formats known keys like 'title',
-    'content', and 'code_examples' into Markdown. Other keys are displayed generically.
-    If parsing fails or the input isn't structured, it's treated as plain text/Markdown.
-
-    Args:
-        content_data: The raw content received for a section. Can be a string
-                      (potentially JSON), a dictionary, or None.
-
-    Returns:
-        A formatted Markdown string suitable for st.markdown.
+    Formats section content into a consistent, well-structured Markdown string.
+    Handles various input formats and ensures consistent output.
     """
     if not content_data:
         return "*No content available for this section.*"
-        
 
-    data = None
-    if isinstance(content_data, str):
-        try:
-            # Attempt to parse the string as JSON
+    # Initialize markdown parts
+    markdown_parts = []
+    
+    try:
+        # Handle string input that might be JSON
+        if isinstance(content_data, str):
+            try:
+                # Clean JSON string if needed
+                content_data = content_data.strip()
+                if content_data.startswith("```json") and content_data.endswith("```"):
+                    content_data = content_data[7:-3].strip()
+                data = json.loads(content_data)
+            except json.JSONDecodeError:
+                # If not JSON, treat as plain markdown
+                return content_data
+        elif isinstance(content_data, dict):
+            data = content_data
+        else:
+            # Convert other types to string
+            return str(content_data)
+
+        # Process dictionary content
+        if isinstance(data, dict):
+            # Add title if present
+            title = data.get("title")
+            if title:
+                markdown_parts.append(f"### {title}\n")
+
+            # Add main content
+            content = data.get("content")
+            if content:
+                # Ensure content is properly formatted
+                if isinstance(content, str):
+                    # Clean up any existing markdown formatting
+                    content = content.strip()
+                    # Add proper spacing between paragraphs
+                    content = "\n\n".join(p.strip() for p in content.split("\n\n"))
+                    markdown_parts.append(content)
+                else:
+                    markdown_parts.append(str(content))
+
+            # Format code examples
+            examples = data.get("code_examples")
+            if examples:
+                markdown_parts.append("\n**Code Examples:**\n")
+                if isinstance(examples, list):
+                    for example in examples:
+                        if isinstance(example, dict):
+                            lang = example.get("language", "python")
+                            code = example.get("code", "").strip()
+                            if code:
+                                markdown_parts.append(f"```{lang}\n{code}\n```\n")
+                        elif isinstance(example, str):
+                            code = example.strip()
+                            if code:
+                                markdown_parts.append(f"```python\n{code}\n```\n")
+                elif isinstance(examples, str):
+                    code = examples.strip()
+                    if code:
+                        markdown_parts.append(f"```python\n{code}\n```\n")
+
+            # Format key concepts
+            key_concepts = data.get("key_concepts")
+            if key_concepts and isinstance(key_concepts, list):
+                markdown_parts.append("\n**Key Concepts:**\n")
+                for concept in key_concepts:
+                    markdown_parts.append(f"- {concept}\n")
+
+            # Format technical terms
+            technical_terms = data.get("technical_terms")
+            if technical_terms and isinstance(technical_terms, list):
+                markdown_parts.append("\n**Technical Terms:**\n")
+                for term in technical_terms:
+                    markdown_parts.append(f"- {term}\n")
             
-            # Clean the string if it has ```json ```
-            content_data = content_data.strip()
-            if content_data.startswith("```json") and content_data.endswith("```"):
-                content_data = content_data[7:-3].strip() 
-                
-            parsed_json = json.loads(content_data)
-            if isinstance(parsed_json, dict):
-                data = parsed_json
-            else:
-                 # If it parses but isn't a dict, treat as plain text
-                 return content_data
-        except json.JSONDecodeError:
-            # If it's not valid JSON, assume it's already Markdown or plain text
-            return content_data
-    elif isinstance(content_data, dict):
-        data = content_data
-    else:
-        # Handle unexpected types by converting to string
-        logger.warning(f"Unexpected content type received: {type(content_data)}. Displaying as string.")
-        return str(content_data)
+            # Format quality metrics
+            quality_metrics = data.get("quality_metrics")
+            if quality_metrics and isinstance(quality_metrics, dict):
+                markdown_parts.append("\n**Quality Metrics:**\n")
+                for metric, score in quality_metrics.items():
+                    markdown_parts.append(f"- {metric.replace('_', ' ').title()}: {score}\n")
 
-    # If we successfully got a dictionary, format it without modifying the original
-    if data:
-        markdown_parts = []
-        # Use a copy or access keys directly to avoid modifying the original 'data'
-        local_data = data.copy() # Work on a copy
+            # Add any remaining fields as key-value pairs, excluding already processed ones
+            processed_keys = {"title", "content", "code_examples", "key_concepts", "technical_terms", "quality_metrics", "feedback", "versions", "current_version", "status"}
+            remaining_keys = set(data.keys()) - processed_keys
+            if remaining_keys:
+                markdown_parts.append("\n**Other Information:**\n")
+                for key in sorted(list(remaining_keys)): # Sort for consistent order
+                    value = data[key]
+                    if value: # Only display if value is not None or empty
+                        # Pretty print for complex objects like lists/dicts
+                        if isinstance(value, (dict, list)):
+                            # json is imported at the top of the file
+                            value_str = json.dumps(value, indent=2)
+                            markdown_parts.append(f"**{key.replace('_', ' ').title()}:**\n```json\n{value_str}\n```\n")
+                        else:
+                            markdown_parts.append(f"**{key.replace('_', ' ').title()}:** {value}\n")
+        
+        # Join all parts, ensuring there's no excessive spacing from empty parts
+        return "\n".join(part for part in markdown_parts if part.strip())
 
-        # # Use H3 for sub-section title if present
-        # title = local_data.get("title")
-        # if title:
-        #      markdown_parts.append(f"### {title}")
-
-        # Main content block
-        content = local_data.get("content")
-        if content:
-            markdown_parts.append(str(content))
-
-        # Format code examples, avoiding double-fencing
-        examples = local_data.get("code_examples")
-        if examples:
-            markdown_parts.append("\n**Code Examples:**\n") # Add header regardless of type
-            if isinstance(examples, list) and examples:
-                for i, example in enumerate(examples):
-                    lang = ""
-                    code = ""
-                    if isinstance(example, dict):
-                        lang = example.get("language", "")
-                        code = example.get("code", "")
-                    else:
-                        code = str(example) # Assume the list item is the code string
-
-                    code_str = str(code).strip()
-                    # Check if it already looks like a fenced block
-                    if code_str.startswith("```") and code_str.endswith("```"):
-                        markdown_parts.append(code_str) # Use as-is
-                    else:
-                        markdown_parts.append(f"``` {lang}\n{code_str}\n```") # Add fences
-
-            elif isinstance(examples, str): # Handle single code example string
-                 code_str = examples.strip()
-                 if code_str.startswith("```") and code_str.endswith("```"):
-                     markdown_parts.append(code_str) # Use as-is
-                 else:
-                     # Assume python if language not specified for single string example
-                     markdown_parts.append(f"``` python\n{code_str}\n```")
-
-        # Note: We no longer need to handle 'remaining keys' as we are not deleting.
-        # If other keys need specific formatting, add logic here.
-
-        return "\n\n".join(filter(None, markdown_parts)) # Join non-empty parts
-    else:
-        # This case handles non-dict data or data that became None/empty after parsing attempts
-        # but handles edge cases where data becomes None/empty after processing
-        return str(content_data)
+    except Exception as e:
+        logger.error(f"Error formatting section content: {str(e)}")
+        return f"*Error formatting content: {str(e)}*"
 
 
 # --- UI Components ---
@@ -592,6 +666,28 @@ class BlogDraftUI:
                 with st.expander(f"Section {index + 1}: {section_data.get('title', 'Untitled')}", expanded=True): # Expand by default now
                     # Display the pre-formatted content stored in the state
                     st.markdown(section_data.get('formatted_content', '*Error: Formatted content not found.*'))
+
+                    # Display Raw Section Data (not nested in an expander)
+                    st.markdown("---") # Visual separator
+                    st.markdown("**Raw Section Data:**")
+                    raw_content_display = section_data.get('raw_content')
+                    if isinstance(raw_content_display, (dict, list)):
+                        st.json(raw_content_display)
+                    elif isinstance(raw_content_display, str):
+                        # If it's a string, try to parse as JSON for pretty printing, else show as text
+                        try:
+                            # Attempt to load and re-dump for consistent formatting if it's a JSON string
+                            st.json(json.loads(raw_content_display))
+                        except json.JSONDecodeError:
+                            # If not valid JSON, display as a text area for potentially long strings
+                            st.text_area("Raw Text Data", raw_content_display, height=150, key=f"raw_text_{index}")
+                    elif raw_content_display is None:
+                        st.caption("*Raw content is not available (None).*")
+                    else:
+                        # For any other type, display as string in a text area
+                        st.text_area("Raw Data", str(raw_content_display), height=100, key=f"raw_other_{index}")
+                    st.markdown("---") # Visual separator
+                    
                     # Feedback Form
                     with st.form(key=f"feedback_form_{index}"):
                         feedback_text = st.text_area("Provide feedback to regenerate this section:", key=f"feedback_text_{index}")
@@ -661,15 +757,7 @@ class RefinementUI:
         project_name = SessionManager.get('project_name')
         final_draft = SessionManager.get('final_draft')
 
-        # Removed the download button and expander for the compiled draft preview
-        # in the Refine tab to avoid potential duplicate ID errors.
-        # The user can download the compiled draft from the Blog Draft tab.
-        # st.subheader("Compiled Draft Preview")
-        # st.download_button(...)
-        # with st.expander(...):
-        #     st.markdown(final_draft)
-
-        st.markdown("---") # Keep the separator
+        st.markdown("---")
         st.subheader("Generate Introduction, Conclusion, Summary & Titles")
 
         if st.button("Refine Blog", key="refine_blog_btn"):
