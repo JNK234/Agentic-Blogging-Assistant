@@ -11,6 +11,10 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx # For catching specific exceptions
 from pathlib import Path
 import json # Added for parsing section content
+import re # Added for regex operations
+from datetime import datetime
+import zipfile
+import io
 
 # Import the API client functions
 import api_client
@@ -191,116 +195,271 @@ def display_readable_outline(outline_data: Optional[Dict[str, Any]]):
 
 def format_section_content_as_markdown(content_data: Any) -> str:
     """
-    Formats section content into a consistent, well-structured Markdown string.
-    Handles various input formats and ensures consistent output.
+    Formats potentially structured section content into a consistent Markdown string.
+
+    Tries to parse the input as JSON if it's a string. If it's a dictionary
+    (either parsed or directly passed), it formats known keys like 'title',
+    'content', and 'code_examples' into Markdown. Other keys are displayed generically.
+    If parsing fails or the input isn't structured, it's treated as plain text/Markdown.
+
+    Args:
+        content_data: The raw content received for a section. Can be a string
+                      (potentially JSON), a dictionary, or None.
+
+    Returns:
+        A formatted Markdown string suitable for st.markdown.
     """
+    logger.info(f"format_section_content_as_markdown received content_data of type: {type(content_data)}")
+    if isinstance(content_data, str):
+        logger.info(f"content_data (string preview): {content_data[:200]}...")
+    elif isinstance(content_data, dict):
+        logger.info(f"content_data (dict keys): {list(content_data.keys())}")
+
+
     if not content_data:
         return "*No content available for this section.*"
+        
 
-    # Initialize markdown parts
-    markdown_parts = []
-    
-    try:
-        # Handle string input that might be JSON
-        if isinstance(content_data, str):
-            try:
-                # Clean JSON string if needed
-                content_data = content_data.strip()
-                if content_data.startswith("```json") and content_data.endswith("```"):
-                    content_data = content_data[7:-3].strip()
-                data = json.loads(content_data)
-            except json.JSONDecodeError:
-                # If not JSON, treat as plain markdown
-                return content_data
-        elif isinstance(content_data, dict):
-            data = content_data
-        else:
-            # Convert other types to string
-            return str(content_data)
+    data = None
+    if isinstance(content_data, str):
+        try:
+            # Attempt to parse the string as JSON
+            
+            # Clean the string if it has ```json ```
+            content_data = content_data.strip()
+            if content_data.startswith("```json") and content_data.endswith("```"):
+                content_data = content_data[7:-3].strip() 
+                
+            parsed_json = json.loads(content_data)
+            if isinstance(parsed_json, dict):
+                data = parsed_json # Successfully parsed into a dictionary
+            else:
+                 # Parsed into something other than a dictionary (e.g., a list if the JSON was just `[]`)
+                 logger.warning(f"format_section_content_as_markdown: Parsed JSON but it's not a dictionary. Type: {type(parsed_json)}. Original: {content_data[:200]}...")
+                 return f"*Error: Section content was valid JSON but not the expected dictionary structure. Content: {content_data[:200]}...*"
+        except json.JSONDecodeError:
+            # Failed to parse as JSON. Assume it's already Markdown or plain text.
+            # This is where the raw JSON string might be returned if it's not caught as a dict later.
+            # Let's keep 'content_data' as is for now, and the 'if data:' check below will handle it.
+            # If it's not a dict, it will fall through to the final 'return str(content_data)'
+            pass # Keep content_data as the original string
 
-        # Process dictionary content
-        if isinstance(data, dict):
-            # Add title if present
-            title = data.get("title")
-            if title:
-                markdown_parts.append(f"### {title}\n")
+    elif isinstance(content_data, dict):
+        data = content_data # Input was already a dictionary
+    else:
+        # Handle unexpected non-string, non-dict types by converting to string
+        logger.warning(f"Unexpected content type received: {type(content_data)}. Displaying as string: {str(content_data)[:200]}...")
+        return str(content_data)
 
-            # Add main content
-            content = data.get("content")
-            if content:
-                # Ensure content is properly formatted
-                if isinstance(content, str):
-                    # Clean up any existing markdown formatting
-                    content = content.strip()
-                    # Add proper spacing between paragraphs
-                    content = "\n\n".join(p.strip() for p in content.split("\n\n"))
-                    markdown_parts.append(content)
-                else:
-                    markdown_parts.append(str(content))
-
-            # Format code examples
+    # At this point, 'data' is either a dictionary (parsed or passed in) or None (if input was a string that failed to parse to dict)
+    if isinstance(data, dict):
+        main_markdown_content = data.get("content")
+        if isinstance(main_markdown_content, str):
+            # If 'content' field exists and is a string, this is the primary Markdown.
+            # Strip potential outer markdown code fences from the content itself.
+            processed_main_content = main_markdown_content.strip()
+            if processed_main_content.startswith("```markdown") and processed_main_content.endswith("```"):
+                processed_main_content = processed_main_content[11:-3].strip()
+            elif processed_main_content.startswith("```") and processed_main_content.endswith("```"):
+                # Handle generic triple backticks as well
+                # Find the first newline to remove the language specifier if present
+                first_newline = processed_main_content.find('\n')
+                if first_newline != -1:
+                    processed_main_content = processed_main_content[first_newline+1:-3].strip()
+                else: # Should not happen with valid fenced blocks but as a fallback
+                    processed_main_content = processed_main_content[3:-3].strip()
+            
+            current_section_markdown_parts = [processed_main_content]
+            
             examples = data.get("code_examples")
             if examples:
-                markdown_parts.append("\n**Code Examples:**\n")
+                current_section_markdown_parts.append("\n\n**Code Examples:**") # Add a clear separator
                 if isinstance(examples, list):
                     for example in examples:
-                        if isinstance(example, dict):
-                            lang = example.get("language", "python")
-                            code = example.get("code", "").strip()
-                            if code:
-                                markdown_parts.append(f"```{lang}\n{code}\n```\n")
-                        elif isinstance(example, str):
-                            code = example.strip()
-                            if code:
-                                markdown_parts.append(f"```python\n{code}\n```\n")
-                elif isinstance(examples, str):
-                    code = examples.strip()
-                    if code:
-                        markdown_parts.append(f"```python\n{code}\n```\n")
-
-            # Format key concepts
-            key_concepts = data.get("key_concepts")
-            if key_concepts and isinstance(key_concepts, list):
-                markdown_parts.append("\n**Key Concepts:**\n")
-                for concept in key_concepts:
-                    markdown_parts.append(f"- {concept}\n")
-
-            # Format technical terms
-            technical_terms = data.get("technical_terms")
-            if technical_terms and isinstance(technical_terms, list):
-                markdown_parts.append("\n**Technical Terms:**\n")
-                for term in technical_terms:
-                    markdown_parts.append(f"- {term}\n")
-            
-            # Format quality metrics
-            quality_metrics = data.get("quality_metrics")
-            if quality_metrics and isinstance(quality_metrics, dict):
-                markdown_parts.append("\n**Quality Metrics:**\n")
-                for metric, score in quality_metrics.items():
-                    markdown_parts.append(f"- {metric.replace('_', ' ').title()}: {score}\n")
-
-            # Add any remaining fields as key-value pairs, excluding already processed ones
-            processed_keys = {"title", "content", "code_examples", "key_concepts", "technical_terms", "quality_metrics", "feedback", "versions", "current_version", "status"}
-            remaining_keys = set(data.keys()) - processed_keys
-            if remaining_keys:
-                markdown_parts.append("\n**Other Information:**\n")
-                for key in sorted(list(remaining_keys)): # Sort for consistent order
-                    value = data[key]
-                    if value: # Only display if value is not None or empty
-                        # Pretty print for complex objects like lists/dicts
-                        if isinstance(value, (dict, list)):
-                            # json is imported at the top of the file
-                            value_str = json.dumps(value, indent=2)
-                            markdown_parts.append(f"**{key.replace('_', ' ').title()}:**\n```json\n{value_str}\n```\n")
+                        lang = example.get("language", "") if isinstance(example, dict) else ""
+                        code = example.get("code", str(example)) if isinstance(example, dict) else str(example)
+                        desc = example.get("description", "") if isinstance(example, dict) else ""
+                        
+                        if desc:
+                             current_section_markdown_parts.append(f"\n_{desc}_")
+                        
+                        code_str = str(code).strip()
+                        if code_str.startswith("```") and code_str.endswith("```"):
+                            current_section_markdown_parts.append(f"\n{code_str}")
                         else:
-                            markdown_parts.append(f"**{key.replace('_', ' ').title()}:** {value}\n")
-        
-        # Join all parts, ensuring there's no excessive spacing from empty parts
-        return "\n".join(part for part in markdown_parts if part.strip())
+                            current_section_markdown_parts.append(f"\n```{lang}\n{code_str}\n```")
+                elif isinstance(examples, str): # Single code example string
+                    code_str = examples.strip()
+                    if code_str.startswith("```") and code_str.endswith("```"):
+                        current_section_markdown_parts.append(f"\n{code_str}")
+                    else:
+                        current_section_markdown_parts.append(f"\n```python\n{code_str}\n```")
+            
+            return "\n".join(current_section_markdown_parts).strip() # Join with single newline, then strip
+        else:
+            # If 'content' field is missing/not a string, but 'data' is a dict,
+            # this indicates the LLM did not follow instructions to put Markdown in 'content'.
+            # Log the problematic structure and return it as JSON for debugging.
+            logger.warning(f"format_section_content_as_markdown: Parsed input as dict, but 'content' field is missing or not a string. Data: {json.dumps(data, indent=2)}")
+            # For display, try to return something sensible, or just the JSON dump.
+            # Returning the raw 'content_data' (original string if it was a string) might be safer than data dump.
+            # However, if 'data' was passed in as a dict directly, content_data might not be the original string.
+            # If 'content' key is missing or its value is not a string
+            error_msg_template = "*Error: Section data was a dictionary but the 'content' key was missing or not a string. Raw data for section:*\n```json\n{}\n```"
+            logger.error(f"format_section_content_as_markdown: 'content' key missing or not a string in parsed data. Data: {json.dumps(data, indent=2)}")
+            return error_msg_template.format(json.dumps(data, indent=2))
 
-    except Exception as e:
-        logger.error(f"Error formatting section content: {str(e)}")
-        return f"*Error formatting content: {str(e)}*"
+    # Fallback: If 'data' is None (meaning content_data was a string but failed json.loads)
+    # or if content_data was not a string or dict initially.
+    # We assume the original content_data might be plain Markdown or an error string itself.
+    # Attempt to strip common Markdown fences if it's a string.
+    if isinstance(content_data, str):
+        logger.warning(f"format_section_content_as_markdown: Content data was not a processable dictionary with a 'content' key. Treating as direct Markdown/text: {content_data[:200]}...")
+        processed_content_data = content_data.strip()
+        if processed_content_data.startswith("```markdown") and processed_content_data.endswith("```"):
+            return processed_content_data[11:-3].strip()
+        # Handle generic ```language ``` (e.g. ```python ... ```) by stripping the fence
+        # This regex looks for ``` followed by optional language, then newline, then content, then ```
+        match = re.match(r"^```[\w]*\n(.*?)\n```$", processed_content_data, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        # Handle simple ``` ``` without language specifier on the first line
+        if processed_content_data.startswith("```") and processed_content_data.endswith("```"):
+             # Check if it's a multi-line code block (```\ncode\n```) vs inline (```code```)
+            if '\n' in processed_content_data:
+                # Attempt to remove first and last lines if they are just backticks
+                lines = processed_content_data.splitlines()
+                if lines[0].strip() == "```" and lines[-1].strip() == "```":
+                    return "\n".join(lines[1:-1]).strip()
+            # For simple inline or single-line blocks, just remove the backticks
+            return processed_content_data[3:-3].strip()
+        return processed_content_data # Return the original string, possibly stripped of outer fences
+    
+    # If content_data was not a string initially (e.g. int, float, list not parsed to dict)
+    logger.warning(f"format_section_content_as_markdown: Original content_data was not a string or dict. Type: {type(content_data)}. Returning as string.")
+    return str(content_data)
+
+
+def create_complete_blog_package() -> Dict[str, str]:
+    """
+    Creates a complete package of all generated content for download.
+    Returns a dictionary with filename -> content mappings.
+    """
+    package = {}
+    project_name = SessionManager.get('project_name', 'blog_project')
+    
+    # Clean project name for filenames
+    safe_project_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in project_name)
+    
+    # 1. Raw/Original Blog Draft
+    final_draft = SessionManager.get('final_draft')
+    if final_draft:
+        package[f"{safe_project_name}_original_draft.md"] = final_draft
+    
+    # 2. Refined Blog Draft
+    refined_draft = SessionManager.get('refined_draft')
+    if refined_draft:
+        package[f"{safe_project_name}_refined_blog.md"] = refined_draft
+    
+    # 3. Blog Summary
+    summary = SessionManager.get('summary')
+    if summary:
+        package[f"{safe_project_name}_summary.md"] = f"# Blog Summary\n\n{summary}"
+    
+    # 4. Title and Subtitle Options
+    title_options = SessionManager.get('title_options')
+    if title_options:
+        titles_content = "# Title and Subtitle Options\n\n"
+        for i, option in enumerate(title_options, 1):
+            if isinstance(option, dict):
+                title = option.get('title', 'N/A')
+                subtitle = option.get('subtitle', 'N/A')
+                titles_content += f"## Option {i}\n"
+                titles_content += f"**Title:** {title}\n\n"
+                titles_content += f"**Subtitle:** {subtitle}\n\n"
+                titles_content += "---\n\n"
+        package[f"{safe_project_name}_title_options.md"] = titles_content
+    
+    # 5. Social Media Content
+    social_content = SessionManager.get('social_content')
+    if social_content:
+        # Individual social platform files
+        if social_content.get('linkedin_post'):
+            package[f"{safe_project_name}_linkedin_post.md"] = f"# LinkedIn Post\n\n{social_content['linkedin_post']}"
+        
+        if social_content.get('x_post'):
+            package[f"{safe_project_name}_twitter_post.md"] = f"# X (Twitter) Post\n\n{social_content['x_post']}"
+        
+        if social_content.get('newsletter_content'):
+            package[f"{safe_project_name}_newsletter.md"] = f"# Newsletter Content\n\n{social_content['newsletter_content']}"
+        
+        if social_content.get('content_breakdown'):
+            package[f"{safe_project_name}_content_analysis.md"] = f"# Content Breakdown\n\n{social_content['content_breakdown']}"
+        
+        # Combined social media file
+        combined_social = "# Social Media Content Package\n\n"
+        
+        if social_content.get('content_breakdown'):
+            combined_social += "## Content Analysis\n\n"
+            combined_social += social_content['content_breakdown'] + "\n\n"
+            combined_social += "---\n\n"
+        
+        if social_content.get('linkedin_post'):
+            combined_social += "## LinkedIn Post\n\n"
+            combined_social += social_content['linkedin_post'] + "\n\n"
+            combined_social += "---\n\n"
+        
+        if social_content.get('x_post'):
+            combined_social += "## X (Twitter) Post\n\n"
+            combined_social += social_content['x_post'] + "\n\n"
+            combined_social += "---\n\n"
+        
+        if social_content.get('newsletter_content'):
+            combined_social += "## Newsletter Content\n\n"
+            combined_social += social_content['newsletter_content'] + "\n\n"
+        
+        package[f"{safe_project_name}_all_social_content.md"] = combined_social
+    
+    # 6. Complete Project Summary
+    outline = SessionManager.get('generated_outline')
+    master_content = f"# {project_name} - Complete Blog Project\n\n"
+    master_content += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    
+    if outline:
+        master_content += f"**Blog Title:** {outline.get('title', 'N/A')}\n"
+        master_content += f"**Difficulty Level:** {outline.get('difficulty_level', 'N/A')}\n\n"
+    
+    master_content += "## Project Contents\n\n"
+    master_content += "This package contains the following files:\n\n"
+    
+    for filename in package.keys():
+        master_content += f"- `{filename}`\n"
+    
+    master_content += "\n## Workflow Summary\n\n"
+    master_content += "1. **Original Draft**: Raw blog content compiled from generated sections\n"
+    master_content += "2. **Refined Blog**: Enhanced version with improved introduction and conclusion\n"
+    master_content += "3. **Summary**: AI-generated summary of the blog content\n"
+    master_content += "4. **Title Options**: Multiple title and subtitle suggestions\n"
+    master_content += "5. **Social Content**: Ready-to-use social media posts for promotion\n\n"
+    
+    package[f"{safe_project_name}_README.md"] = master_content
+    
+    return package
+
+
+def create_zip_download(package: Dict[str, str]) -> bytes:
+    """
+    Creates a ZIP file from the package dictionary.
+    Returns the ZIP file as bytes for download.
+    """
+    zip_buffer = io.BytesIO()
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for filename, content in package.items():
+            zip_file.writestr(filename, content)
+    
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue()
 
 
 # --- UI Components ---
@@ -621,22 +780,49 @@ class BlogDraftUI:
                 SessionManager.set_status("Compiling final draft from sections...")
                 SessionManager.clear_error()
                 try:
-                    with st.spinner("Calling API to compile draft..."):
-                        result = asyncio.run(api_client.compile_draft(
-                            project_name=project_name,
-                            job_id=job_id,
-                            base_url=SessionManager.get('api_base_url')
-                        ))
-                    SessionManager.set('final_draft', result.get('draft'))
-                    SessionManager.set_status("Draft compiled successfully.")
-                    logger.info(f"Draft compiled for job ID: {job_id}")
-                except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
-                    SessionManager.set_error(f"API Error compiling draft: {str(api_err)}")
-                    SessionManager.set_status("Draft compilation failed.")
+                    # --- Frontend Draft Compilation ---
+                    blog_title = SessionManager.get('generated_outline', {}).get('title', 'My Blog Post')
+                    sections_data = SessionManager.get('generated_sections', {})
+                    sorted_indices = sorted(sections_data.keys())
+
+                    draft_parts = [f"# {blog_title}\n"] # Start with H1 title
+
+                    for index in sorted_indices:
+                        section = sections_data.get(index, {})
+                        section_title = section.get('title', f'Section {index + 1}')
+                        formatted_content = section.get('formatted_content', '')
+
+                        draft_parts.append(f"## {section_title}\n") # Add H2 for section title
+                        draft_parts.append(formatted_content)
+
+                    final_draft_content = "\n\n".join(draft_parts)
+                    SessionManager.set('final_draft', final_draft_content)
+                    SessionManager.set_status("Draft compiled successfully in frontend.")
+                    logger.info(f"Draft compiled in frontend for job ID: {job_id}")
+                    st.rerun() # Rerun to update UI and show compiled draft
                 except Exception as e:
                     logger.exception(f"Unexpected error during draft compilation: {e}")
                     SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
                     SessionManager.set_status("Draft compilation failed.")
+            
+            # Display the final draft here if it exists in session state, after the compile button
+            final_draft_content_for_display_in_blog_draft_tab = SessionManager.get('final_draft')
+            project_name_for_download_in_blog_draft_tab = SessionManager.get('project_name', "untitled_project")
+            if final_draft_content_for_display_in_blog_draft_tab:
+                st.subheader("Compiled Blog Draft Preview")
+                st.download_button(
+                    label="Download Compiled Draft (.md)",
+                    data=final_draft_content_for_display_in_blog_draft_tab,
+                    file_name=f"{project_name_for_download_in_blog_draft_tab}_compiled_draft.md",
+                    mime="text/markdown",
+                    key="download_compiled_draft_blog_draft_tab_primary"
+                )
+                with st.expander("View Compiled Draft", expanded=True):
+                    st.markdown(final_draft_content_for_display_in_blog_draft_tab)
+                with st.expander("Markdown Source", expanded=False):
+                    st.text_area("Markdown Source (Compiled)", final_draft_content_for_display_in_blog_draft_tab, height=400, key="md_source_blog_draft_tab_primary")
+                st.info("Proceed to the 'Refine & Finalize' tab to add introduction, conclusion, summary, and titles.")
+
 
         st.markdown("---")
 
@@ -741,8 +927,8 @@ class BlogDraftUI:
                             SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
                             SessionManager.set_status("Section regeneration failed.")
 
-        # Removed redundant display block for final_draft here to fix duplicate ID error
-
+        # Removed the old display block for final_draft from the end of this method.
+        # It's now handled within the 'else' block (all sections generated).
 
 class RefinementUI:
     """Handles the Refine & Finalize Tab."""
@@ -755,23 +941,33 @@ class RefinementUI:
 
         job_id = SessionManager.get('job_id')
         project_name = SessionManager.get('project_name')
-        final_draft = SessionManager.get('final_draft')
+        # final_draft = SessionManager.get('final_draft') # This is the unrefined draft
 
-        st.markdown("---")
-        st.subheader("Generate Introduction, Conclusion, Summary & Titles")
+        # Removed the preview of the unrefined 'final_draft' from this tab.
+        # This tab should focus on the 'refined_draft' which is its output.
+        # The 'final_draft' (unrefined) is displayed on the 'Blog Draft' tab.
+
+        st.subheader("Generate Introduction, Conclusion, Summary, Titles & Suggestions") # Updated subheader
 
         if st.button("Refine Blog", key="refine_blog_btn"):
             SessionManager.set_status("Refining blog draft...")
             SessionManager.clear_error()
             try:
                 with st.spinner("Calling API to refine blog..."):
-                    # Assuming api_client has a refine_blog function
+                    # Get the compiled draft from session state
+                    compiled_draft_content = SessionManager.get('final_draft')
+                    if not compiled_draft_content:
+                        raise ValueError("Compiled draft content is missing from session state.")
+
+                    # Call the API client function, passing the compiled draft
                     result = asyncio.run(api_client.refine_blog(
                         project_name=project_name,
                         job_id=job_id,
+                        compiled_draft=compiled_draft_content, # Pass the draft content
                         base_url=SessionManager.get('api_base_url')
                     ))
-                SessionManager.set('refined_draft', result.get('refined_draft'))
+                # Store the results from the API response
+                SessionManager.set('refined_draft', result.get('refined_draft')) # This should be the final text
                 SessionManager.set('summary', result.get('summary'))
                 SessionManager.set('title_options', result.get('title_options')) # Expecting a list of dicts
                 SessionManager.set_status("Blog refined successfully.")
@@ -795,13 +991,34 @@ class RefinementUI:
         if refined_draft:
             st.markdown("---")
             st.subheader("Refined Blog Draft")
-            st.download_button(
-                label="Download Refined Draft (.md)",
-                data=refined_draft,
-                file_name=f"{project_name}_refined_draft.md",
-                mime="text/markdown",
-                key="dl_refined_refine_tab" # Static unique key
-            )
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.download_button(
+                    label="Download Refined Draft (.md)",
+                    data=refined_draft,
+                    file_name=f"{project_name}_refined_draft.md",
+                    mime="text/markdown",
+                    key="dl_refined_refine_tab" # Static unique key
+                )
+            
+            with col2:
+                # Complete package download (without social content yet)
+                package = create_complete_blog_package()
+                if package:
+                    zip_data = create_zip_download(package)
+                    
+                    file_count = len(package)
+                    safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in project_name)
+                    
+                    st.download_button(
+                        label=f"📦 Blog Package ({file_count} files)",
+                        data=zip_data,
+                        file_name=f"{safe_name}_blog_package.zip",
+                        mime="application/zip",
+                        key="dl_package_refine_tab",
+                        help="Downloads complete blog package: drafts, summary, and title options"
+                    )
             with st.expander("Preview Refined Draft", expanded=True):
                 st.markdown(refined_draft)
 
@@ -872,6 +1089,76 @@ class SocialPostsUI:
 
             with st.expander("Newsletter Content", expanded=True):
                 st.markdown(social_content.get('newsletter_content', 'Not available.'))
+            
+            # Download section for social content and complete package
+            st.subheader("Download Options")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Individual Downloads:**")
+                
+                # Individual social media downloads
+                if social_content.get('linkedin_post'):
+                    st.download_button(
+                        label="📱 LinkedIn Post (.md)",
+                        data=f"# LinkedIn Post\n\n{social_content['linkedin_post']}",
+                        file_name=f"{SessionManager.get('project_name', 'blog')}_linkedin.md",
+                        mime="text/markdown",
+                        key="dl_linkedin_individual"
+                    )
+                
+                if social_content.get('x_post'):
+                    st.download_button(
+                        label="🐦 Twitter/X Post (.md)",
+                        data=f"# X (Twitter) Post\n\n{social_content['x_post']}",
+                        file_name=f"{SessionManager.get('project_name', 'blog')}_twitter.md",
+                        mime="text/markdown",
+                        key="dl_twitter_individual"
+                    )
+                
+                if social_content.get('newsletter_content'):
+                    st.download_button(
+                        label="📧 Newsletter (.md)",
+                        data=f"# Newsletter Content\n\n{social_content['newsletter_content']}",
+                        file_name=f"{SessionManager.get('project_name', 'blog')}_newsletter.md",
+                        mime="text/markdown",
+                        key="dl_newsletter_individual"
+                    )
+            
+            with col2:
+                st.markdown("**Complete Package:**")
+                
+                # Check if we have enough content for a complete package
+                has_refined_blog = SessionManager.get('refined_draft') is not None
+                has_final_blog = SessionManager.get('final_draft') is not None
+                
+                if has_refined_blog or has_final_blog:
+                    # Complete blog package download
+                    package = create_complete_blog_package()
+                    if package:
+                        zip_data = create_zip_download(package)
+                        
+                        file_count = len(package)
+                        project_name = SessionManager.get('project_name', 'blog_project')
+                        safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in project_name)
+                        
+                        st.download_button(
+                            label=f"📦 Complete Package ({file_count} files)",
+                            data=zip_data,
+                            file_name=f"{safe_name}_complete_blog_package.zip",
+                            mime="application/zip",
+                            key="dl_complete_package",
+                            help="Downloads all blog content: original draft, refined version, summary, titles, and social media posts"
+                        )
+                        
+                        with st.expander("📋 Package Contents", expanded=False):
+                            st.markdown("This package includes:")
+                            for filename in sorted(package.keys()):
+                                st.markdown(f"• `{filename}`")
+                
+                else:
+                    st.info("Complete the blog refinement process to unlock the full package download.")
         else:
             st.info("Click 'Generate Social Content' after compiling the draft.")
 

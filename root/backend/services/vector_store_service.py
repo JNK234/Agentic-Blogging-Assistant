@@ -269,14 +269,14 @@ class VectorStoreService:
             section_json: The JSON string representation of the section (e.g., {"title": "...", "content": "..."})
             cache_key: A deterministic key (e.g., hash of project, outline_hash, index)
             project_name: The project name
-            outline_hash: Hash representing the specific outline content.
-            section_index: The index of the section within the outline.
+            outline_hash: The hash of the outline the section belongs to
+            section_index: The index of the section within the outline
         """
         try:
             metadata = {
                 "content_type": "section_cache",
                 "project_name": project_name,
-                "outline_hash": outline_hash, # Use outline_hash instead of job_id
+                "outline_hash": outline_hash, # Store outline_hash instead of job_id
                 "section_index": section_index,
                 "cache_key": cache_key, # Store the key itself for potential lookup/debugging
                 "timestamp": datetime.now().isoformat()
@@ -300,7 +300,7 @@ class VectorStoreService:
         Args:
             cache_key: The cache key to look up
             project_name: The project name
-            outline_hash: Hash representing the specific outline content.
+            outline_hash: The hash of the outline
             section_index: The section index
 
         Returns:
@@ -312,7 +312,7 @@ class VectorStoreService:
                 "$and": [
                     {"content_type": "section_cache"},
                     {"project_name": project_name},
-                    {"outline_hash": outline_hash}, # Use outline_hash instead of job_id
+                    {"outline_hash": outline_hash}, # Filter by outline_hash
                     {"section_index": section_index},
                     {"cache_key": cache_key} # Match the specific key
                 ]
@@ -333,19 +333,19 @@ class VectorStoreService:
             logging.error(f"Error retrieving cached section {section_index} for outline {outline_hash}: {e}")
             return None
 
-    def clear_section_cache(self, project_name: Optional[str] = None, outline_hash: Optional[str] = None):
-        """Clear cached sections, optionally filtered by project and/or outline hash.
+    def clear_section_cache(self, project_name: Optional[str] = None, outline_hash: Optional[str] = None): # Changed job_id to outline_hash
+        """Clear cached sections, optionally filtered by project and/or outline_hash.
 
         Args:
             project_name: Optional project name to clear caches for
-            outline_hash: Optional outline hash to clear caches for
+            outline_hash: Optional outline_hash to clear caches for
         """
         try:
             filters = [{"content_type": "section_cache"}]
             if project_name:
                 filters.append({"project_name": project_name})
-            if outline_hash:
-                filters.append({"outline_hash": outline_hash}) # Use outline_hash instead of job_id
+            if outline_hash: # Changed from job_id
+                filters.append({"outline_hash": outline_hash})
 
             if len(filters) == 1: # Only content_type filter
                  where = filters[0]
@@ -356,7 +356,7 @@ class VectorStoreService:
 
             log_msg = "Cleared section cache"
             if project_name: log_msg += f" for project {project_name}"
-            if job_id: log_msg += f" for job {job_id}"
+            if outline_hash: log_msg += f" for outline_hash {outline_hash}" # Changed from job_id
             logging.info(log_msg)
 
         except Exception as e:

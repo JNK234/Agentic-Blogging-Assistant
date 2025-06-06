@@ -41,6 +41,24 @@ async def _handle_response(response: httpx.Response) -> Dict[str, Any]:
 
 # --- API Client Functions ---
 
+async def get_job_status(
+    job_id: str,
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    Get the status of a job for debugging.
+    """
+    api_url = _get_api_url(f"/job_status/{job_id}", base_url)
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            logger.info(f"Getting job status for {job_id}")
+            response = await client.get(api_url)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during job status check: {e}")
+            raise ConnectionError(f"Failed to connect to API for job status: {e}")
+
 async def upload_files(
     project_name: str,
     files_to_upload: List[Tuple[str, bytes, str]], # List of (filename, content_bytes, content_type)
@@ -258,6 +276,7 @@ async def compile_draft(
 async def refine_blog(
     project_name: str,
     job_id: str,
+    compiled_draft: str,  # Added compiled_draft parameter
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -265,14 +284,18 @@ async def refine_blog(
 
     Args:
         project_name: The name of the project.
-        job_id: The ID of the job containing the compiled draft.
+        job_id: The ID of the job.
+        compiled_draft: The full compiled blog draft content as a string.
         base_url: The base URL of the API.
 
     Returns:
         The JSON response containing the refined draft, summary, and title options.
     """
     api_url = _get_api_url(f"/refine_blog/{project_name}", base_url)
-    data = {"job_id": job_id}
+    data = {
+        "job_id": job_id,
+        "compiled_draft": compiled_draft  # Include compiled_draft in the payload
+    }
 
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
         try:
