@@ -20,10 +20,11 @@ class RefinementResult(BaseModel):
 class BlogRefinementState(BaseModel):
     """Represents the state managed by the BlogRefinementAgent's graph (if using LangGraph)."""
     original_draft: str
-    refined_draft: Optional[str] = None
-    introduction: Optional[str] = None # Added missing field
-    conclusion: Optional[str] = None # Added missing field
+    introduction: Optional[str] = None # Added
+    conclusion: Optional[str] = None # Added
     summary: Optional[str] = None
     title_options: Optional[List[TitleOption]] = None
+    refined_draft: Optional[str] = None # Added to resolve AttributeError
+    clarity_flow_suggestions: Optional[str] = Field(default=None, description="Suggestions for improving clarity and flow of the blog draft.")
     error: Optional[str] = None
     # Add any other intermediate states if needed for a graph-based approach

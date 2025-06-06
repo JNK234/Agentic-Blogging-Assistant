@@ -150,7 +150,7 @@ Output MUST be valid JSON matching the format instructions precisely.
 6.  **User Provided Guidelines:**
     {user_guidelines}
 
-**Task:** Create a structured outline (`OutlineStructure`) with sections (`OutlineSection`).
+**Task:** Create a structured outline (`OutlineStructure`) with sections (`OutlineSection`). **It is CRUCIAL that you strictly adhere to the "User Provided Guidelines" below when creating the outline.**
 
 **Guidelines for Outline Creation:**
 
@@ -175,6 +175,7 @@ Output MUST be valid JSON matching the format instructions precisely.
 6.  **De-duplication:** Review the overall outline. Ensure sections and subsections cover distinct topics. Avoid proposing redundant content or repetitive code examples suggested by the `technical_concepts` or `section_structure`.
 7.  **Focus:** Structure only the technical core content derived from the source and analysis. Do NOT create generic 'Introduction' or 'Conclusion' sections for the overall blog post here; focus on the technical flow.
 8.  **Output Format:** The entire output MUST be a single, valid JSON object conforming exactly to the `OutlineStructure` schema provided in `format_instructions`. No extra text, explanations, or markdown formatting outside the JSON structure.
+9.  **User Guidelines Adherence:** Remember to prioritize and strictly follow the "User Provided Guidelines" mentioned above throughout the outline creation process.
 
 Generate the `OutlineStructure` JSON object now.
     """,
@@ -210,7 +211,7 @@ Outline Structure:
 {outline_structure}
 
 Guidelines:
-- Output must be valid JSON according to format_instructions
+- Output must be a compiled markdown format, it should not contain symbols like #, $,^,&,*,etc, the formulas, the output should be compiled like an official blog post
 - Include all sections and content from the outline structure
 - Maintain the hierarchical organization
 - Preserve all learning goals and time estimates

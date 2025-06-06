@@ -493,18 +493,36 @@ async def section_generator(state: BlogDraftState) -> BlogDraftState:
     prompt = PROMPT_CONFIGS["section_generation"]["prompt"].format(**input_variables)
     
     try:
-        response = await state.model.ainvoke(prompt)
+        llm_output_str = await state.model.ainvoke(prompt)
+        llm_output_str = llm_output_str if isinstance(llm_output_str, str) else llm_output_str.content
         
-        # Handle potential string response vs. object response
-        section_content = response if isinstance(response, str) else response.content
+        logging.info(f"\n\nRaw LLM output for section {section_title}:\n{llm_output_str}\n\n")
+
+        actual_markdown_content = ""
+        parsed_title = section_title # Default to outline title
         
-        # Log the response content
-        logging.info(f"\n\nSection generation response for {section_title}:\n{section_content}\n\n")
+        try:
+            # The prompt instructs the LLM to return a DraftSection JSON.
+            # PROMPT_CONFIGS["section_generation"]["parser"] is PydanticOutputParser(pydantic_object=DraftSection)
+            parsed_draft_section_object = PROMPT_CONFIGS["section_generation"]["parser"].parse(llm_output_str)
+            actual_markdown_content = parsed_draft_section_object.content
+            # Optionally, update title if LLM refines it, though prompt doesn't explicitly ask for this.
+            # parsed_title = parsed_draft_section_object.title 
+            logging.info(f"Successfully parsed DraftSection. Extracted content length: {len(actual_markdown_content)}")
+        except Exception as e:
+            logging.error(f"Failed to parse DraftSection from LLM output for section '{section_title}': {e}. LLM output was: {llm_output_str}")
+            # Fallback: Try to extract content if LLM just returned markdown, or use error message.
+            # This might happen if the LLM doesn't perfectly follow the JSON instruction.
+            if "{" not in llm_output_str and "}" not in llm_output_str: # Heuristic: if no JSON structure, assume it's direct markdown
+                actual_markdown_content = llm_output_str
+                logging.warning("LLM output did not seem to be JSON, using raw output as content.")
+            else:
+                actual_markdown_content = f"Error: Could not parse section content from LLM. Raw output: {llm_output_str}"
         
         # Create a new draft section
         draft_section = DraftSection(
-            title=section_title,
-            content=section_content,
+            title=parsed_title, # Use title from outline or potentially parsed one
+            content=actual_markdown_content, # Assign the extracted Markdown string
             feedback=[],
             versions=[],
             current_version=1,
@@ -616,23 +634,51 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
     prompt = PROMPT_CONFIGS["content_enhancement"]["prompt"].format(**input_variables)
     
     try:
-        response = await state.model.ainvoke(prompt)
+        llm_response_str = await state.model.ainvoke(prompt)
+        llm_response_str = llm_response_str if isinstance(llm_response_str, str) else llm_response_str.content
         
-        response = response if isinstance(response, str) else response.content
-        
-        # Log the response content
-        logging.info(f"\n\nContent enhancement response for {section_title}:\n{response}\n\n")
-        
+        logging.info(f"\n\nRaw LLM content enhancement response for {section_title}:\n{llm_response_str}\n\n")
+
+        processed_content = llm_response_str # Default to the full response
+
+        # Attempt to find and parse a JSON block if the LLM unexpectedly returns one
+        # (though this node's prompt asks for direct Markdown)
+        json_match = re.search(r'\{.*\}', llm_response_str, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            try:
+                # Try to parse it as if it's a DraftSection or similar structure
+                parsed_json = json.loads(json_str)
+                if isinstance(parsed_json, dict) and "content" in parsed_json and isinstance(parsed_json["content"], str):
+                    processed_content = parsed_json["content"]
+                    logging.info(f"Extracted 'content' field from unexpected JSON in content_enhancer response.")
+                else:
+                    logging.warning("Found JSON in content_enhancer response, but it did not match expected structure (e.g., missing 'content' field). Using full response minus preamble if any.")
+                    if llm_response_str.strip().startswith("{"):
+                        processed_content = json_str
+                    else:
+                         lines = llm_response_str.splitlines()
+                         json_start_line = -1
+                         for i, line in enumerate(lines):
+                             if line.strip().startswith("{"):
+                                 json_start_line = i
+                                 break
+                         if json_start_line != -1:
+                             logging.info("Stripping preamble before JSON object in content_enhancer.")
+                             processed_content = "\n".join(lines[json_start_line:])
+            except json.JSONDecodeError:
+                logging.warning(f"Could not parse JSON found in content_enhancer response. Using full response. JSON part: {json_str}")
+
         # Store the original content as a version
         state.current_section.versions.append(SectionVersion(
-            content=state.current_section.content,
+            content=state.current_section.content, # Old content
             version_number=state.current_section.current_version,
             timestamp=datetime.now().isoformat(),
             changes="Initial enhancement"
         ))
         
         # Update the section content
-        state.current_section.content = response
+        state.current_section.content = processed_content # Use the processed content
         state.current_section.current_version += 1
         
     except Exception as e:
@@ -1011,23 +1057,57 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     prompt = PROMPT_CONFIGS["feedback_incorporation"]["prompt"].format(**input_variables)
     
     try:
-        response = await state.model.ainvoke(prompt)
+        llm_response_str = await state.model.ainvoke(prompt)
+        llm_response_str = llm_response_str if isinstance(llm_response_str, str) else llm_response_str.content
         
-        response = response if isinstance(response, str) else response.content
+        logging.info(f"\n\nRaw LLM feedback incorporation response for {section_title}:\n{llm_response_str}\n\n")
         
-        # Log the response content
-        logging.info(f"\n\nFeedback incorporation response for {section_title}:\n{response}\n\n")
+        processed_content = llm_response_str # Default to the full response
+
+        # Attempt to find and parse a JSON block if the LLM unexpectedly returns one
+        # (though this node's prompt asks for direct Markdown)
+        json_match = re.search(r'\{.*\}', llm_response_str, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            try:
+                # Try to parse it as if it's a DraftSection or similar structure
+                # We don't have a specific parser for this node, so we'll try a generic parse
+                parsed_json = json.loads(json_str)
+                if isinstance(parsed_json, dict) and "content" in parsed_json and isinstance(parsed_json["content"], str):
+                    processed_content = parsed_json["content"]
+                    logging.info(f"Extracted 'content' field from unexpected JSON in feedback_incorporator response.")
+                else:
+                    logging.warning("Found JSON in feedback_incorporator response, but it did not match expected structure (e.g., missing 'content' field). Using full response minus preamble if any.")
+                    # Try to strip preamble if JSON was found but not usable
+                    if llm_response_str.strip().startswith("{"): # If it starts with JSON
+                        processed_content = json_str # Use the extracted JSON part
+                    else: # It has preamble before JSON
+                         # Heuristic: if there's text before the JSON, try to remove it.
+                         # This is a bit risky and might need refinement.
+                         lines = llm_response_str.splitlines()
+                         json_start_line = -1
+                         for i, line in enumerate(lines):
+                             if line.strip().startswith("{"):
+                                 json_start_line = i
+                                 break
+                         if json_start_line != -1: # Preamble detected
+                             logging.info("Stripping preamble before JSON object in feedback_incorporator.")
+                             processed_content = "\n".join(lines[json_start_line:])
+                         # else: use llm_response_str as is (already default for processed_content)
+
+            except json.JSONDecodeError:
+                logging.warning(f"Could not parse JSON found in feedback_incorporator response. Using full response. JSON part: {json_str}")
         
         # Store the original content as a version
         state.current_section.versions.append(SectionVersion(
-            content=state.current_section.content,
+            content=state.current_section.content, # Old content
             version_number=state.current_section.current_version,
             timestamp=datetime.now().isoformat(),
             changes=f"Feedback incorporation: {feedback[:50]}..."
         ))
         
         # Update the section content and version
-        state.current_section.content = response
+        state.current_section.content = processed_content # Use the processed content
         state.current_section.current_version += 1
         
         # Mark feedback as addressed

@@ -26,7 +26,7 @@ from ..parsers import ContentStructure
 logging.basicConfig(level=logging.INFO)
 
 class OutlineGeneratorAgent(BaseGraphAgent):
-    def __init__(self, model, content_parser):
+    def __init__(self, model, content_parser, vector_store: VectorStoreService): # Added vector_store parameter
         super().__init__(
             llm=model,
             tools=[],  # Add any needed tools
@@ -35,7 +35,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         )
         self.prompt_manager = PromptManager()
         self.content_parser = content_parser  # Use the passed content parser
-        self.vector_store = VectorStoreService()  # For caching outlines
+        self.vector_store = vector_store  # Use the passed vector_store instance
         self._initialized = False
         
     async def initialize(self):
@@ -105,22 +105,26 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             content_type=metadata.get("content_type", "unknown")
         )
 
-    def _create_cache_key(self, project_name: str, notebook_hash: Optional[str], markdown_hash: Optional[str]) -> str:
-        """Create a deterministic cache key from input parameters.
+    def _create_cache_key(self, project_name: str, notebook_hash: Optional[str], markdown_hash: Optional[str], user_guidelines: Optional[str]) -> str:
+        """Create a deterministic cache key from input parameters, including user guidelines.
         
         Args:
             project_name: Name of the project
             notebook_hash: Hash of notebook content (or None)
             markdown_hash: Hash of markdown content (or None)
+            user_guidelines: Optional user-provided guidelines for generation
             
         Returns:
             A unique cache key string
         """
         # Create a string with all parameters
+        guidelines_hash_part = hashlib.sha256((user_guidelines or "").encode()).hexdigest() if user_guidelines else "no_guidelines"
+        
         key_parts = [
             f"project:{project_name}",
             f"notebook:{notebook_hash or 'none'}",
-            f"markdown:{markdown_hash or 'none'}"
+            f"markdown:{markdown_hash or 'none'}",
+            f"guidelines_hash:{guidelines_hash_part}"
         ]
         
         # Join and hash to create a deterministic key
@@ -234,12 +238,12 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             return {"error": error_msg, "details": "Content processing failed"}, None, None, False
 
         # Check cache if enabled
-        if use_cache:
-            cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash)
+        if use_cache: # This 'use_cache' is from the generate_outline signature, distinct from the 'regenerate' flag logic
+            cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash, user_guidelines)
             cached_outline_json, cache_found = self._check_outline_cache(cache_key, project_name)
 
             if cache_found:
-                logging.info(f"Using cached outline for project: {project_name}")
+                logging.info(f"Using cached outline for project: {project_name} with key: {cache_key}")
                 try:
                     # Attempt to parse cached JSON
                     cached_outline_data = json.loads(cached_outline_json)
@@ -284,8 +288,8 @@ class OutlineGeneratorAgent(BaseGraphAgent):
                 outline_data = serialize_object(final_outline_obj) # Use existing serialization
 
                 # Cache the result if caching is enabled
-                if use_cache and ( notebook_hash or markdown_hash ):
-                    cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash)
+                if use_cache and ( notebook_hash or markdown_hash ): # Ensure there's content to associate the cache with
+                    cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash, user_guidelines)
                     source_hashes = [h for h in [notebook_hash, markdown_hash] if h]
                     # Convert the dict back to JSON string for storage
                     outline_json_str = to_json(outline_data)
