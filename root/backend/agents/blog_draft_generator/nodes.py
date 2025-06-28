@@ -1234,11 +1234,20 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
         # Get the last 200 characters of the current section
         current_section_ending = current_section.content[-200:] if len(state.current_section.content) > 200 else current_section.content
         
+        # Initialize persona service
+        persona_service = PersonaService()
+        persona_instructions = persona_service.get_persona_prompt("neuraforge")
+        
         # Prepare input variables for the prompt
         input_variables = {
+            "persona_instructions": persona_instructions,
             "current_section_title": current_section.title,
             "current_section_ending": current_section_ending,
-            "next_section_title": next_section_title
+            "next_section_title": next_section_title,
+            "blog_title": getattr(state.outline, 'title', 'Untitled Blog'),
+            "current_section_index": state.current_section_index,
+            "next_section_index": state.current_section_index + 1,
+            "total_sections": len(state.outline.sections)
         }
         
         # Format prompt and get LLM response
@@ -1316,8 +1325,13 @@ async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
         for key, value in state.transitions.items()
     ])
     
+    # Initialize persona service
+    persona_service = PersonaService()
+    persona_instructions = persona_service.get_persona_prompt("neuraforge")
+    
     # Prepare input variables for the prompt
     input_variables = {
+        "persona_instructions": persona_instructions,
         "blog_title": blog_title,
         "difficulty_level": difficulty_level,
         "prerequisites": prerequisites,

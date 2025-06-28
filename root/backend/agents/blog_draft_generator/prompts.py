@@ -361,7 +361,9 @@ FORMAT:
 
 # Section Transition Prompt
 SECTION_TRANSITION_PROMPT = PromptTemplate(
-    template="""You are an expert technical writer. Create a smooth transition between these blog sections:
+    template="""{persona_instructions}
+
+Create a smooth transition between these blog sections:
 
 CURRENT SECTION:
 Title: {current_section_title}
@@ -370,6 +372,10 @@ Ending: {current_section_ending}
 NEXT SECTION:
 Title: {next_section_title}
 
+BLOG CONTEXT:
+Blog Title: {blog_title}
+Current Position: Section {current_section_index} to {next_section_index} of {total_sections}
+
 TASK:
 Write a brief transition paragraph (2-3 sentences) that:
 1. Summarizes the key points from the current section
@@ -377,15 +383,22 @@ Write a brief transition paragraph (2-3 sentences) that:
 3. Maintains the technical and educational tone
     """,
     input_variables=[
+        "persona_instructions",
         "current_section_title",
         "current_section_ending",
         "next_section_title",
+        "blog_title",
+        "current_section_index",
+        "next_section_index",
+        "total_sections",
     ],
 )
 
 # Final Blog Compilation Prompt
 BLOG_COMPILATION_PROMPT = PromptTemplate(
-    template="""You are an expert technical editor. Compile the following blog sections into a cohesive final blog post:
+    template="""{persona_instructions}
+
+Compile the following blog sections into a cohesive final blog post:
 
 BLOG TITLE: {blog_title}
 DIFFICULTY LEVEL: {difficulty_level}
@@ -399,6 +412,13 @@ SECTIONS:
 
 TRANSITIONS:
 {transitions}
+
+COMPILATION GUIDELINES:
+- Ensure consistent voice and style throughout per persona instructions
+- Verify smooth narrative flow between all sections
+- Check that section titles create natural progression
+- Maintain technical depth consistency
+- Ensure overall blog feels cohesive, not like assembled individual posts
 
 TASK:
 Compile a complete blog post that:
@@ -425,6 +445,7 @@ FORMAT:
 - Include appropriate metadata
     """,
     input_variables=[
+        "persona_instructions",
         "blog_title",
         "difficulty_level",
         "prerequisites",
