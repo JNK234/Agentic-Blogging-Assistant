@@ -6,7 +6,8 @@ import re
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity # Added for semantic similarity
 from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback
-from root.backend.utils.blog_context import extract_blog_narrative_context
+from root.backend.utils.blog_context import extract_blog_narrative_context, calculate_content_length, calculate_section_length_targets, get_length_priority
+from root.backend.services.persona_service import PersonaService
 from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS
 from root.backend.agents.blog_draft_generator.utils import (
     extract_code_blocks,
@@ -508,13 +509,41 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
                         if context.get('children'):
                             structural_insights += f"  - Related subtopics: {', '.join(context.get('children')[:3])}\n"
 
+    # Initialize persona service and get persona instructions
+    persona_service = PersonaService()
+    persona_instructions = persona_service.get_persona_prompt("neuraforge")
+    
+    # Extract blog narrative context
+    blog_narrative_context = extract_blog_narrative_context(state)
+    
+    # Calculate length constraints
+    current_blog_length = sum(calculate_content_length(section.content) for section in state.sections)
+    
+    # Calculate section length targets if not already done
+    if not state.section_length_targets:
+        state.section_length_targets = calculate_section_length_targets(state.outline, state.target_total_length)
+    
+    target_section_length = state.section_length_targets.get(section_title, 500)  # Default to 500 words
+    remaining_length_budget = max(state.target_total_length - current_blog_length, 0)
+    length_priority = get_length_priority(current_blog_length, target_section_length, remaining_length_budget)
+    
+    # Update state with current calculations
+    state.current_total_length = current_blog_length
+    state.remaining_length_budget = remaining_length_budget
+    
     # Prepare input variables for the prompt, using formatted_hyde_context
     input_variables = {
+        "persona_instructions": persona_instructions,
         "format_instructions": PROMPT_CONFIGS["section_generation"]["parser"].get_format_instructions() if PROMPT_CONFIGS["section_generation"]["parser"] else "",
         "section_title": section_title,
         "learning_goals": ", ".join(learning_goals),
         "formatted_content": formatted_hyde_context, # Use HyDE context here
         "previous_context": previous_context,
+        "blog_narrative_context": blog_narrative_context,
+        "target_section_length": target_section_length,
+        "current_blog_length": current_blog_length,
+        "remaining_length_budget": remaining_length_budget,
+        "length_priority": length_priority,
         # Keep original_structure and structural_insights for now, though their relevance might decrease
         "original_structure": original_structure,
         "structural_insights": structural_insights,

@@ -67,6 +67,22 @@ RELEVANT CONTENT:
 PREVIOUS SECTION CONTEXT:
 {previous_context}
 
+BLOG NARRATIVE CONTEXT:
+{blog_narrative_context}
+
+SECTION CONTINUITY GUIDELINES:
+- This section should flow naturally from the previous content
+- Avoid standalone introductions - build upon established context
+- Consider upcoming sections when concluding this section
+- Maintain consistent technical depth and explanation style throughout the blog
+- Ensure section titles feel like natural progressions, not independent blog titles
+
+LENGTH CONSTRAINTS:
+Target Length for This Section: {target_section_length} words (estimated)
+Current Blog Length: {current_blog_length} words
+Remaining Length Budget: {remaining_length_budget} words
+Length Priority: {length_priority} (expand/maintain/compress - adjust content depth accordingly)
+
 TASK:
 Write a comprehensive and engaging blog section that adheres strictly to the provided constraints:
 
@@ -149,6 +165,11 @@ Ensure the "content" field's Markdown is:
         "structural_insights",
         "formatted_content",
         "previous_context",
+        "blog_narrative_context",
+        "target_section_length",
+        "current_blog_length",
+        "remaining_length_budget",
+        "length_priority",
         "current_section_data", # Added
     ],
 )
