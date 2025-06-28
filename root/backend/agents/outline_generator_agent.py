@@ -20,13 +20,14 @@ from root.backend.agents.outline_generator.state import OutlineState, FinalOutli
 from root.backend.agents.content_parsing_agent import ContentParsingAgent
 from root.backend.agents.base_agent import BaseGraphAgent
 from root.backend.services.vector_store_service import VectorStoreService
+from root.backend.services.persona_service import PersonaService
 from root.backend.utils.serialization import serialize_object, to_json
 from ..parsers import ContentStructure
 
 logging.basicConfig(level=logging.INFO)
 
 class OutlineGeneratorAgent(BaseGraphAgent):
-    def __init__(self, model, content_parser, vector_store: VectorStoreService): # Added vector_store parameter
+    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None): # Added persona_service parameter
         super().__init__(
             llm=model,
             tools=[],  # Add any needed tools
@@ -36,6 +37,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         self.prompt_manager = PromptManager()
         self.content_parser = content_parser  # Use the passed content parser
         self.vector_store = vector_store  # Use the passed vector_store instance
+        self.persona_service = persona_service or PersonaService() # Initialize persona service
         self._initialized = False
         
     async def initialize(self):

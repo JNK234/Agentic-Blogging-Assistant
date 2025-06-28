@@ -26,6 +26,7 @@ from root.backend.agents.blog_refinement.state import RefinementResult, TitleOpt
 from root.backend.utils.serialization import serialize_object
 from root.backend.models.model_factory import ModelFactory
 from root.backend.services.vector_store_service import VectorStoreService # Added
+from root.backend.services.persona_service import PersonaService # Added
 
 # Configure logging
 logging.basicConfig(
@@ -130,12 +131,15 @@ async def get_or_create_agents(model_name: str):
 
         # Instantiate VectorStoreService (it might become a singleton later if needed)
         vector_store = VectorStoreService() # Instantiate VectorStoreService here
+        
+        # Instantiate PersonaService for consistent writer voice
+        persona_service = PersonaService()
 
-        outline_agent = OutlineGeneratorAgent(model, content_parser, vector_store) # Pass vector_store
+        outline_agent = OutlineGeneratorAgent(model, content_parser, vector_store, persona_service) # Pass persona_service
         await outline_agent.initialize()
 
-        # Pass vector_store to BlogDraftGeneratorAgent
-        draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store)
+        # Pass vector_store and persona_service to BlogDraftGeneratorAgent
+        draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store, persona_service)
         await draft_agent.initialize()
 
         refinement_agent = BlogRefinementAgent(model) # Refinement agent might need vector_store later? Check its __init__ if needed.

@@ -9,6 +9,7 @@ import logging
 import hashlib # Added for cache key generation
 import json # Added for serializing/deserializing cache data
 from root.backend.services.vector_store_service import VectorStoreService # Added
+from root.backend.services.persona_service import PersonaService # Added for persona integration
 from typing import Tuple, Optional, Dict, Any # Added Dict, Any for type hinting
 
 # Import necessary nodes at the top level
@@ -30,8 +31,8 @@ logging.basicConfig(level=logging.INFO)
 class BlogDraftGeneratorAgent(BaseGraphAgent):
     """Agent responsible for generating blog drafts section by section."""
 
-    # Updated __init__ to accept vector_store
-    def __init__(self, model, content_parser, vector_store: VectorStoreService):
+    # Updated __init__ to accept vector_store and persona_service
+    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None):
         super().__init__(
             llm=model,
             tools=[],
@@ -40,6 +41,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         )
         self.content_parser = content_parser
         self.vector_store = vector_store # Store the passed instance
+        self.persona_service = persona_service or PersonaService() # Initialize persona service
         self._initialized = False
         self.current_state = None
 
