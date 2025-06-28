@@ -5,6 +5,7 @@ from typing import Dict, List, Any
 from root.backend.utils.file_parser import ParsedContent
 from root.backend.agents.outline_generator.state import OutlineState
 from root.backend.agents.outline_generator.prompts import PROMPT_CONFIGS
+from root.backend.services.persona_service import PersonaService
 
 logging.basicConfig(level=logging.INFO)
 
@@ -174,8 +175,13 @@ async def final_generator(state: OutlineState) -> OutlineState:
     """Generates the final outline in markdown format."""
     logging.info("Executing node: final_generator")
     try:
+        # Initialize persona service
+        persona_service = PersonaService()
+        persona_instructions = persona_service.get_persona_prompt("neuraforge")
+        
         # Prepare input variables
         input_variables = {
+            "persona_instructions": persona_instructions,
             "format_instructions": PROMPT_CONFIGS["final_generation"]["parser"].get_format_instructions(),
             "title": state.outline_structure.title if state.outline_structure else "",
             "difficulty_level": state.difficulty_level.level if state.difficulty_level else "",

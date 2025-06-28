@@ -192,11 +192,13 @@ Generate the `OutlineStructure` JSON object now.
 
 # Final Generation Prompt
 FINAL_GENERATION_PROMPT = PromptTemplate(
-    template="""You are a technical content analyzer. Output must be valid JSON matching the format instructions.
+    template="""{persona_instructions}
+
+Output must be valid JSON matching the format instructions.
 
 {format_instructions}
 
-Create a comprehensive outline using:
+Create a comprehensive outline that supports the target writing voice using:
 
 Title:
 {title}
@@ -211,14 +213,16 @@ Outline Structure:
 {outline_structure}
 
 Guidelines:
+- Structure the outline to support the persona instructions and target writing voice
 - Output must be a compiled markdown format, it should not contain symbols like #, $,^,&,*,etc, the formulas, the output should be compiled like an official blog post
 - Include all sections and content from the outline structure
-- Maintain the hierarchical organization
+- Maintain the hierarchical organization that supports clear explanations and examples
 - Preserve all learning goals and time estimates
 - Keep the JSON structure clean and properly formatted
 - Provide only the content in required format and nothing else. Do not return any other text or schemas or explanations.
     """,
     input_variables=[
+        "persona_instructions",
         "format_instructions",
         "title",
         "difficulty_level",
