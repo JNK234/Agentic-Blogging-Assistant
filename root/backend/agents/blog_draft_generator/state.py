@@ -90,3 +90,9 @@ class BlogDraftState(BaseModel):
     
     # Feedback Incorporation
     user_feedback_provided: bool = Field(default_factory=bool)
+    
+    # Length Management
+    target_total_length: int = Field(default=3000, description="Target total blog length in words")
+    section_length_targets: Dict[str, int] = Field(default_factory=dict, description="Target length for each section")
+    current_total_length: int = Field(default=0, description="Current total blog length in words")
+    remaining_length_budget: int = Field(default=3000, description="Remaining length budget for upcoming sections")
