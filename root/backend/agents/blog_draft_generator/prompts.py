@@ -44,7 +44,9 @@ Your output MUST be a valid JSON object that includes:
 
 # Section Generation Prompt
 SECTION_GENERATION_PROMPT = PromptTemplate(
-    template="""You are an expert technical blog writer. Generate a comprehensive blog section based on the following information:
+    template="""{persona_instructions}
+
+Generate a comprehensive blog section based on the following information:
 
 {format_instructions}
 
@@ -139,6 +141,7 @@ Ensure the "content" field's Markdown is:
 - Consistent with the original document's organization
     """,
     input_variables=[
+        "persona_instructions",
         "format_instructions",
         "section_title",
         "learning_goals",

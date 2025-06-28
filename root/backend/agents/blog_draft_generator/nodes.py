@@ -6,6 +6,7 @@ import re
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity # Added for semantic similarity
 from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback
+from root.backend.utils.blog_context import extract_blog_narrative_context
 from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS
 from root.backend.agents.blog_draft_generator.utils import (
     extract_code_blocks,
@@ -451,14 +452,45 @@ async def section_generator(state: BlogDraftState) -> BlogDraftState:
             indent = "  " * (level - 1)
             original_structure += f"{indent}{'#' * level} {text}\n"
 
-    # Get previous section content for context if available
+    # Get enhanced previous section content for context if available
     previous_context = ""
     if state.current_section_index > 0 and state.sections:
         prev_section = state.sections[-1]
+        
+        # Get previous section ending (last paragraph or 200 chars)
+        prev_ending = ""
+        if prev_section.content:
+            # Try to get last paragraph
+            paragraphs = prev_section.content.split('\n\n')
+            if len(paragraphs) > 1:
+                prev_ending = paragraphs[-1]
+            else:
+                # Fallback to last 200 characters
+                prev_ending = prev_section.content[-200:] if len(prev_section.content) > 200 else prev_section.content
+        
+        # Get upcoming sections preview
+        upcoming_sections = []
+        if hasattr(state.outline, 'sections') and state.outline.sections:
+            start_idx = state.current_section_index
+            end_idx = min(start_idx + 2, len(state.outline.sections))
+            upcoming_sections = [
+                state.outline.sections[i].title 
+                for i in range(start_idx, end_idx)
+            ]
+        
+        # Build enhanced context
         previous_context = f"""
-        Previous Section: {prev_section.title}
-        Content Summary: {prev_section.content[:300]}...
+BLOG PROGRESSION CONTEXT:
+Blog Title: {getattr(state.outline, 'title', 'Untitled Blog')}
+Completed Sections: {[s.title for s in state.sections]}
+Previous Section: {prev_section.title}
+Key Concepts Covered: {', '.join(getattr(prev_section, 'key_concepts', [])) if hasattr(prev_section, 'key_concepts') and prev_section.key_concepts else 'N/A'}
+Previous Section Ending: {prev_ending}
+Upcoming Sections: {upcoming_sections}
+Current Position: Section {state.current_section_index + 1} of {len(getattr(state.outline, 'sections', []))}
         """
+    else:
+        previous_context = "BLOG PROGRESSION CONTEXT:\nThis is the first section of the blog."
     
     # Extract structural context from content references
     structural_insights = ""
