@@ -4,6 +4,7 @@ from root.backend.agents.blog_draft_generator.nodes import (
     section_generator,
     content_enhancer,
     code_example_extractor,
+    image_placeholder_generator,
     quality_validator,
     auto_feedback_generator,
     feedback_incorporator,
@@ -51,6 +52,7 @@ async def create_draft_graph() -> StateGraph:
     builder.add_node("generator", section_generator)
     builder.add_node("enhancer", content_enhancer)
     builder.add_node("code_extractor", code_example_extractor)
+    builder.add_node("image_placeholder", image_placeholder_generator)
     builder.add_node("validator", quality_validator)
     builder.add_node("auto_feedback", auto_feedback_generator)
     builder.add_node("feedback_inc", feedback_incorporator)
@@ -85,7 +87,8 @@ async def create_draft_graph() -> StateGraph:
     builder.add_edge("semantic_mapper", "generator")
     builder.add_edge("generator", "enhancer")
     builder.add_edge("enhancer", "code_extractor")
-    builder.add_edge("code_extractor", "validator")
+    builder.add_edge("code_extractor", "image_placeholder")
+    builder.add_edge("image_placeholder", "validator")
     builder.add_edge("auto_feedback", "feedback_inc")
     builder.add_edge("feedback_inc", "validator")  # Loop back for iteration
     builder.add_edge("finalizer", "transition_gen")
