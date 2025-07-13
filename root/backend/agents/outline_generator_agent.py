@@ -107,14 +107,19 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             content_type=metadata.get("content_type", "unknown")
         )
 
-    def _create_cache_key(self, project_name: str, notebook_hash: Optional[str], markdown_hash: Optional[str], user_guidelines: Optional[str]) -> str:
-        """Create a deterministic cache key from input parameters, including user guidelines.
+    def _create_cache_key(self, project_name: str, notebook_hash: Optional[str], markdown_hash: Optional[str], 
+                         user_guidelines: Optional[str], length_preference: Optional[str], 
+                         custom_length: Optional[int], writing_style: Optional[str]) -> str:
+        """Create a deterministic cache key from input parameters, including user guidelines and length preferences.
         
         Args:
             project_name: Name of the project
             notebook_hash: Hash of notebook content (or None)
             markdown_hash: Hash of markdown content (or None)
             user_guidelines: Optional user-provided guidelines for generation
+            length_preference: Optional length preference
+            custom_length: Optional custom length
+            writing_style: Optional writing style
             
         Returns:
             A unique cache key string
@@ -126,12 +131,65 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             f"project:{project_name}",
             f"notebook:{notebook_hash or 'none'}",
             f"markdown:{markdown_hash or 'none'}",
-            f"guidelines_hash:{guidelines_hash_part}"
+            f"guidelines_hash:{guidelines_hash_part}",
+            f"length_pref:{length_preference or 'auto'}",
+            f"custom_len:{custom_length or 0}",
+            f"style:{writing_style or 'balanced'}"
         ]
         
         # Join and hash to create a deterministic key
         key_string = "|".join(key_parts)
         return hashlib.sha256(key_string.encode()).hexdigest()
+    
+    def _calculate_intelligent_length(self, content_analysis, length_preference: Optional[str], 
+                                    custom_length: Optional[int], writing_style: Optional[str]) -> int:
+        """Calculate intelligent blog length based on content analysis and user preferences.
+        
+        Args:
+            content_analysis: ContentAnalysis object with AI-generated length suggestions
+            length_preference: User's preferred length category
+            custom_length: Custom length if specified
+            writing_style: User's writing style preference
+            
+        Returns:
+            Calculated target blog length in words
+        """
+        # Start with AI-suggested length from content analysis
+        base_length = getattr(content_analysis, 'suggested_blog_length', 1500)
+        
+        # Override with custom length if specified
+        if length_preference == "Custom" and custom_length:
+            return custom_length
+        
+        # Apply user length preference if specified
+        if length_preference and length_preference != "Auto-detect (Recommended)":
+            if length_preference == "Short (800-1200)":
+                base_length = min(base_length, 1200)
+                base_length = max(base_length, 800)
+            elif length_preference == "Medium (1200-2000)":
+                base_length = min(base_length, 2000)
+                base_length = max(base_length, 1200)
+            elif length_preference == "Long (2000-3000)":
+                base_length = min(base_length, 3000)
+                base_length = max(base_length, 2000)
+            elif length_preference == "Very Long (3000+)":
+                base_length = max(base_length, 3000)
+        
+        # Adjust based on writing style
+        if writing_style == "Concise & Focused":
+            base_length = int(base_length * 0.8)  # 20% shorter
+        elif writing_style == "Comprehensive & Detailed":
+            base_length = int(base_length * 1.2)  # 20% longer
+        # "Balanced" style uses base length as-is
+        
+        # Ensure reasonable bounds
+        base_length = max(base_length, 500)   # Minimum 500 words
+        base_length = min(base_length, 5000)  # Maximum 5000 words
+        
+        logging.info(f"Calculated intelligent blog length: {base_length} words "
+                    f"(preference: {length_preference}, style: {writing_style})")
+        
+        return base_length
     
     def _check_outline_cache(self, cache_key: str, project_name: str) -> Tuple[Optional[str], bool]:
         """Check if an outline exists in cache for the given parameters.
@@ -154,6 +212,9 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         notebook_hash: Optional[str] = None,
         markdown_hash: Optional[str] = None,
         user_guidelines: Optional[str] = None, # Added
+        length_preference: Optional[str] = None, # Added
+        custom_length: Optional[int] = None, # Added
+        writing_style: Optional[str] = None, # Added
         model=None,  # For backward compatibility
         use_cache: bool = True  # Whether to use cached outlines
     ) -> Tuple[Optional[Dict[str, Any]], Optional[ContentStructure], Optional[ContentStructure], bool]: # Return type changed
@@ -167,6 +228,9 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             notebook_hash: Optional content hash for notebook (if already processed)
             markdown_hash: Optional content hash for markdown (if already processed)
             user_guidelines: Optional user-provided guidelines for generation
+            length_preference: Optional user's preferred blog length category
+            custom_length: Optional custom target word count 
+            writing_style: Optional user's preferred writing style
             model: Optional model override (for backward compatibility)
             use_cache: Whether to use cached outlines (default: True)
 
@@ -241,7 +305,8 @@ class OutlineGeneratorAgent(BaseGraphAgent):
 
         # Check cache if enabled
         if use_cache: # This 'use_cache' is from the generate_outline signature, distinct from the 'regenerate' flag logic
-            cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash, user_guidelines)
+            cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash, user_guidelines, 
+                                             length_preference, custom_length, writing_style)
             cached_outline_json, cache_found = self._check_outline_cache(cache_key, project_name)
 
             if cache_found:
@@ -266,7 +331,10 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             "prerequisites": None,
             "outline_structure": None,
             "final_outline": None,
-            "user_guidelines": user_guidelines # Added
+            "user_guidelines": user_guidelines, # Added
+            "length_preference": length_preference, # Added
+            "custom_length": custom_length, # Added  
+            "writing_style": writing_style # Added
         }
 
         # Execute graph
@@ -291,7 +359,8 @@ class OutlineGeneratorAgent(BaseGraphAgent):
 
                 # Cache the result if caching is enabled
                 if use_cache and ( notebook_hash or markdown_hash ): # Ensure there's content to associate the cache with
-                    cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash, user_guidelines)
+                    cache_key = self._create_cache_key(project_name, notebook_hash, markdown_hash, user_guidelines, 
+                                                     length_preference, custom_length, writing_style)
                     source_hashes = [h for h in [notebook_hash, markdown_hash] if h]
                     # Convert the dict back to JSON string for storage
                     outline_json_str = to_json(outline_data)
