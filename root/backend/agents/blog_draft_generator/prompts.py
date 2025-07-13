@@ -1,11 +1,12 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from root.backend.agents.blog_draft_generator.state import ContentReference, CodeExample, DraftSection
+from root.backend.agents.blog_draft_generator.state import ContentReference, CodeExample, DraftSection, ImagePlaceholder
 
 # Initialize parsers
 content_mapping_parser = PydanticOutputParser(pydantic_object=ContentReference)
 section_generation_parser = PydanticOutputParser(pydantic_object=DraftSection)
 code_example_parser = PydanticOutputParser(pydantic_object=CodeExample)
+image_placeholder_parser = PydanticOutputParser(pydantic_object=ImagePlaceholder)
 
 # Content Mapping Prompt
 CONTENT_MAPPING_PROMPT = PromptTemplate(
@@ -46,7 +47,7 @@ Your output MUST be a valid JSON object that includes:
 SECTION_GENERATION_PROMPT = PromptTemplate(
     template="""{persona_instructions}
 
-Generate a comprehensive blog section based on the following information:
+Generate a focused and clear blog section based on the following information:
 
 {format_instructions}
 
@@ -77,22 +78,40 @@ SECTION CONTINUITY GUIDELINES:
 - Maintain consistent technical depth and explanation style throughout the blog
 - Ensure section titles feel like natural progressions, not independent blog titles
 
-LENGTH CONSTRAINTS:
+ANTI-REDUNDANCY GUIDELINES:
+- Avoid repeating concepts already established in previous sections
+- Focus on unique value this section provides to the overall narrative
+- If referencing previous concepts, do so briefly without re-explaining
+- Build upon rather than repeat previously covered material
+- Be concise - prefer clarity over comprehensive coverage
+
+LENGTH CONSTRAINTS (IMPORTANT):
 Target Length for This Section: {target_section_length} words (estimated)
 Current Blog Length: {current_blog_length} words
 Remaining Length Budget: {remaining_length_budget} words
 Length Priority: {length_priority} (expand/maintain/compress - adjust content depth accordingly)
 
-TASK:
-Write a comprehensive and engaging blog section that adheres strictly to the provided constraints:
+**Length Guidelines:**
+- Prioritize clarity and value over word count
+- If length_priority is "compress": Be concise, focus on essential points only
+- If length_priority is "maintain": Aim for target length with balanced coverage
+- If length_priority is "expand": Include additional context and examples as needed
+- Always prefer quality explanations over padding content to meet length targets
 
-**Constraints to Follow:**
-- **Code Inclusion:** Refer to `current_section_data.include_code`. If `false`, DO NOT include any code examples. If `true`, proceed with code generation.
+TASK:
+Write a focused and engaging blog section that adheres strictly to the provided constraints:
+
+**CRITICAL CONSTRAINTS - MUST BE FOLLOWED STRICTLY:**
+- **Code Inclusion (ABSOLUTE RULE):** Check `current_section_data.include_code`:
+  * If `false`: DO NOT include ANY code examples, code blocks, pseudocode, or implementation details
+  * If `false`: Focus ONLY on conceptual explanations, theories, and theoretical frameworks
+  * If `false`: Use descriptive text and explanations without showing "how to implement"
+  * If `true`: Only then proceed with actual code generation and implementation details
 - **Subpoint Limit:** The number of distinct sub-topics or points discussed should not exceed `current_section_data.max_subpoints`. Be concise if the limit is low.
-- **Code Example Limit:** If `include_code` is `true`, generate a maximum of `current_section_data.max_code_examples` relevant code snippets. Choose the most illustrative examples.
+- **Code Example Limit:** If and ONLY if `include_code` is `true`, generate a maximum of `current_section_data.max_code_examples` relevant code snippets. Choose the most illustrative examples.
 
 **TASK:**
-Write a comprehensive and engaging blog section that:
+Write a focused and engaging blog section that:
 
 1. Structure:
    - Adhere to the `max_subpoints` constraint from `current_section_data`.
@@ -117,18 +136,24 @@ Write a comprehensive and engaging blog section that:
    - Include relevant technical specifications *if available in the sources*.
    - Reference industry standards where applicable, *if mentioned in the sources*.
 
-4. Code Examples:
-   - Provide well-commented code snippets
-   - Explain each significant code block
-   - Include setup and configuration details
-   - Show best practices in implementation.
-   - **IMPORTANT**: Only include code examples if `current_section_data.include_code` is `true`. Limit the number of examples to `current_section_data.max_code_examples`.
+4. Code Examples - CONDITIONAL SECTION:
+   - **CRITICAL**: This entire section applies ONLY if `current_section_data.include_code` is `true`
+   - **If include_code is false**: Skip this section entirely and focus on conceptual content
+   - **If include_code is true**: 
+     * Provide well-commented code snippets
+     * Explain each significant code block
+     * Include setup and configuration details
+     * Show best practices in implementation
+     * Limit the number of examples to `current_section_data.max_code_examples`
 
-5. Implementation Focus:
-   - Include practical implementation details.
-   - Highlight common pitfalls and solutions
-   - Discuss performance considerations
-   - Address security implications if relevant
+5. Implementation Focus - CONDITIONAL SECTION:
+   - **CRITICAL**: This section applies ONLY if `current_section_data.include_code` is `true`
+   - **If include_code is false**: Focus on conceptual understanding rather than implementation
+   - **If include_code is true**:
+     * Include practical implementation details
+     * Highlight common pitfalls and solutions
+     * Discuss performance considerations
+     * Address security implications if relevant
 
 6. Educational Style:
    - Use professional technical tone
@@ -139,9 +164,10 @@ Write a comprehensive and engaging blog section that:
 Format Guidelines:
 - The primary output for the section's body should be placed directly into the "content" field of the `DraftSection` JSON object.
 - This "content" field MUST be a string containing well-formed Markdown.
+- **CODE BLOCK WARNING**: Only include code blocks (```language ... ```) if `current_section_data.include_code` is `true`
 - Within this Markdown string in the "content" field:
     - Use Markdown formatting (headings, lists, bold, italics, etc.).
-    - Include code blocks with language specification (e.g., ```python ... ```).
+    - Include code blocks with language specification ONLY if `include_code` is `true` (e.g., ```python ... ```).
     - Use tables for comparing approaches.
     - Add bullet points for key concepts.
     - Include technical notes and warnings.
@@ -176,13 +202,14 @@ Ensure the "content" field's Markdown is:
 
 # Content Enhancement Prompt
 CONTENT_ENHANCEMENT_PROMPT = PromptTemplate(
-    template="""You are an expert technical editor. Enhance the following blog section to make it more comprehensive, technically accurate, and engaging:
+    template="""You are an expert technical editor. Enhance the following blog section to make it more focused, technically accurate, and engaging while strictly adhering to the provided constraints:
 
 {format_instructions}
 
 SECTION INFORMATION:
 Title: {section_title}
 Learning Goals: {learning_goals}
+Constraints: {current_section_data} # Contains include_code, max_subpoints, max_code_examples
 
 ORIGINAL DOCUMENT STRUCTURE:
 {original_structure}
@@ -196,30 +223,46 @@ CURRENT CONTENT:
 ADDITIONAL RELEVANT CONTENT:
 {formatted_content}
 
+**CRITICAL CONSTRAINTS - MUST BE FOLLOWED STRICTLY:**
+- **Code Inclusion (ABSOLUTE RULE):** Check `current_section_data.include_code`:
+  * If `false`: DO NOT include ANY code examples, code blocks, pseudocode, or implementation details
+  * If `false`: Remove any existing code blocks from the current content
+  * If `false`: Focus ONLY on conceptual explanations, theories, and theoretical frameworks
+  * If `false`: Use descriptive text and explanations without showing "how to implement"
+  * If `true`: Only then maintain or enhance existing code examples and implementation details
+- **Subpoint Limit:** The number of distinct sub-topics or points discussed should not exceed `current_section_data.max_subpoints`
+- **Code Example Limit:** If and ONLY if `include_code` is `true`, maintain a maximum of `current_section_data.max_code_examples` relevant code snippets
+
 TASK:
 Enhance the existing content by:
-1. Following the original document structure where applicable
-2. Preserving the logical flow of the original content
-3. Adding more technical depth where needed
-4. Improving code examples with better comments and explanations
-5. Adding practical implementation details
+1. **STRICTLY ENFORCING CONSTRAINTS:** Follow the include_code flag absolutely - NO EXCEPTIONS
+2. Following the original document structure where applicable
+3. Preserving the logical flow of the original content
+4. Adding more technical depth where needed (conceptual only if include_code is false)
+5. Improving explanations and clarity
 6. Clarifying complex concepts
-7. Adding best practices and tips
+7. Adding best practices and tips (non-implementation focused if include_code is false)
 8. Ensuring all learning goals are thoroughly addressed
+
+**CONTENT GROUNDING REQUIREMENTS:**
+- **Crucially, all enhanced content must be based *solely* on the information present in the 'CURRENT CONTENT', 'ADDITIONAL RELEVANT CONTENT', 'ORIGINAL DOCUMENT STRUCTURE', and 'STRUCTURAL INSIGHTS' provided**
+- Do NOT invent or infer information beyond these sources
+- If specific details cannot be substantiated from the provided context, briefly state that the information is not covered in the source material
+- Preserve the original explanations and examples where possible
+- Maintain the logical flow of the original content
 
 IMPORTANT:
 - Do not provide a starting line like "Okay, here's the enhanced blog section.... etc" just provide the main content 
 - Maintain the original structure and flow
 - Prioritize using content from the original document
-- Keep the technical accuracy high
-- Ensure code examples are well-explained
-- Add concrete examples for abstract concepts
-- Reinforce the section's key learning goals or summarize the main technical points covered *in this section*. Avoid generic summaries or takeaways.
+- Keep the technical accuracy high based on provided sources
+- Add concrete examples for abstract concepts only if available in source material
+- Focus on covering the learning goals thoroughly through explanation and examples rather than explicit summaries
 - Preserve the hierarchical relationships between topics
 
 FORMAT:
 - Use markdown formatting
-- Include code blocks with appropriate syntax highlighting
+- **CODE BLOCK WARNING**: Only include code blocks (```language ... ```) if `current_section_data.include_code` is `true`
 - Use headings, lists, and emphasis appropriately
 - Keep paragraphs concise and focused
     """,
@@ -231,6 +274,7 @@ FORMAT:
         "structural_insights",
         "existing_content",
         "formatted_content",
+        "current_section_data",
     ],
 )
 
@@ -317,11 +361,12 @@ Your response MUST be **ONLY** a single, valid JSON object containing the follow
 
 # Feedback Incorporation Prompt
 FEEDBACK_INCORPORATION_PROMPT = PromptTemplate(
-    template="""You are an expert technical editor. Revise the following blog section based on feedback:
+    template="""You are an expert technical editor. Revise the following blog section based on feedback while strictly adhering to the provided constraints:
 
 SECTION INFORMATION:
 Title: {section_title}
 Learning Goals: {learning_goals}
+Constraints: {current_section_data} # Contains include_code, max_subpoints, max_code_examples
 
 CURRENT CONTENT:
 {existing_content}
@@ -329,25 +374,50 @@ CURRENT CONTENT:
 FEEDBACK:
 {feedback}
 
+ORIGINAL DOCUMENT STRUCTURE:
+{original_structure}
+
+STRUCTURAL INSIGHTS:
+{structural_insights}
+
+**CRITICAL CONSTRAINTS - MUST BE FOLLOWED STRICTLY:**
+- **Code Inclusion (ABSOLUTE RULE):** Check `current_section_data.include_code`:
+  * If `false`: DO NOT include ANY code examples, code blocks, pseudocode, or implementation details
+  * If `false`: Remove any code blocks that may have been added
+  * If `false`: Focus ONLY on conceptual explanations, theories, and theoretical frameworks
+  * If `false`: Use descriptive text and explanations without showing "how to implement"
+  * If `true`: Only then maintain or improve existing code examples and implementation details
+- **Subpoint Limit:** The number of distinct sub-topics or points discussed should not exceed `current_section_data.max_subpoints`
+- **Code Example Limit:** If and ONLY if `include_code` is `true`, maintain a maximum of `current_section_data.max_code_examples` relevant code snippets
+
 TASK:
 Revise the content to address all feedback points while:
-1. Maintaining the original structure and flow
-2. Preserving technical accuracy
-3. Enhancing clarity and engagement
-4. Improving code examples if needed
-5. Ensuring all learning goals are thoroughly addressed
-6. Preserving the hierarchical relationships between topics
-7. Maintaining consistency with the original document's organization
+1. **STRICTLY ENFORCING CONSTRAINTS:** Follow the include_code flag absolutely - NO EXCEPTIONS
+2. Maintaining the original structure and flow
+3. Preserving technical accuracy
+4. Enhancing clarity and engagement
+5. Improving explanations (code examples only if include_code is true)
+6. Ensuring all learning goals are thoroughly addressed
+7. Preserving the hierarchical relationships between topics
+8. Maintaining consistency with the original document's organization
+
+**CONTENT GROUNDING REQUIREMENTS:**
+- **Crucially, all revised content must be based *solely* on the information present in the 'CURRENT CONTENT', 'ORIGINAL DOCUMENT STRUCTURE', and 'STRUCTURAL INSIGHTS' provided**
+- Do NOT invent or infer information beyond these sources
+- If the feedback requests information not available in the source material, briefly state that the information is not covered in the source material
+- Preserve the original explanations and examples where possible
+- Maintain the logical flow of the original content
 
 IMPORTANT:
 - If the feedback mentions structural consistency, ensure your revisions align with the original document structure
 - Preserve the logical flow of the original content
 - Maintain the hierarchical relationships between topics
 - Use the original section headers as a guide where applicable
+- Focus only on addressing the specific feedback points while maintaining constraints
 
 FORMAT:
 - Use markdown formatting
-- Include code blocks with appropriate syntax highlighting
+- **CODE BLOCK WARNING**: Only include code blocks (```language ... ```) if `current_section_data.include_code` is `true`
 - Use headings, lists, and emphasis appropriately
 - Keep paragraphs concise and focused
     """,
@@ -356,6 +426,9 @@ FORMAT:
         "learning_goals",
         "existing_content",
         "feedback",
+        "original_structure",
+        "structural_insights",
+        "current_section_data",
     ],
 )
 
@@ -507,6 +580,70 @@ HYPOTHETICAL ANSWER (Write a short paragraph):""",
     input_variables=["section_title", "learning_goals"],
 )
 
+# Image Placeholder Generation Prompt
+IMAGE_PLACEHOLDER_PROMPT = PromptTemplate(
+    template="""You are an expert content designer specializing in technical documentation. Analyze the following blog section and suggest strategic image placeholders that would enhance understanding and break up text-heavy content.
+
+{format_instructions}
+
+SECTION INFORMATION:
+Title: {section_title}
+Learning Goals: {learning_goals}
+Content Type: {content_type}
+Has Code Examples: {has_code_examples}
+
+SECTION CONTENT:
+{section_content}
+
+CONTENT ANALYSIS:
+- Content Length: {content_length} words
+- Technical Complexity: {complexity_level}
+- Main Concepts: {main_concepts}
+
+TASK:
+Analyze the section content and suggest 1-2 strategic image placeholders that would:
+1. Enhance reader understanding of complex concepts
+2. Provide visual breaks in text-heavy sections
+3. Support the learning objectives
+4. Complement the content without being redundant
+
+For each suggested image, consider:
+- **Type**: diagram, screenshot, chart, illustration, flowchart, architecture, comparison, etc.
+- **Description**: Detailed description of what the image should show
+- **Alt Text**: Accessibility-friendly description for screen readers
+- **Placement**: Where in the section it should appear (section_start, after_concept, before_example, section_end)
+- **Purpose**: How it specifically enhances understanding of the content
+
+VISUAL OPPORTUNITY GUIDELINES:
+- **Process Descriptions**: Flow diagrams or step-by-step visualizations
+- **Technical Concepts**: Conceptual diagrams or architectural overviews
+- **Code Examples**: Syntax-highlighted screenshots or IDE views (only if has_code_examples is true)
+- **Data Structures**: Schema diagrams or visual representations
+- **Comparisons**: Side-by-side comparisons or before/after scenarios
+- **Complex Relationships**: Network diagrams or hierarchical structures
+
+PLACEMENT STRATEGY:
+- **section_start**: Overview diagrams that introduce the topic
+- **after_concept**: Diagrams that illustrate concepts just explained
+- **before_example**: Setup diagrams that prepare for examples
+- **section_end**: Summary visualizations or result demonstrations
+
+Only suggest images that would genuinely add value. If the section is already clear and well-structured, suggest fewer or no images.
+
+Your output MUST be a valid JSON object following the ImagePlaceholder schema. If no meaningful images are needed, return an empty JSON object with explanation in the description field.""",
+    input_variables=[
+        "format_instructions",
+        "section_title", 
+        "learning_goals",
+        "content_type",
+        "has_code_examples",
+        "section_content",
+        "content_length",
+        "complexity_level", 
+        "main_concepts",
+    ],
+)
+
 
 # Export the prompts with their parsers
 PROMPT_CONFIGS = {
@@ -549,5 +686,9 @@ PROMPT_CONFIGS = {
     "hyde_generation": {
         "prompt": HYDE_GENERATION_PROMPT,
         "parser": None # Text output
+    },
+    "image_placeholder": {
+        "prompt": IMAGE_PLACEHOLDER_PROMPT,
+        "parser": image_placeholder_parser
     }
 }

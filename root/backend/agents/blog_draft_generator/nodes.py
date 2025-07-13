@@ -5,7 +5,7 @@ import json
 import re
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity # Added for semantic similarity
-from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback
+from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback, ImagePlaceholder
 from root.backend.utils.blog_context import extract_blog_narrative_context, calculate_content_length, calculate_section_length_targets, get_length_priority
 from root.backend.services.persona_service import PersonaService
 from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS
@@ -24,6 +24,34 @@ from root.backend.agents.blog_draft_generator.utils import (
 from root.backend.services.vector_store_service import VectorStoreService
 
 logging.basicConfig(level=logging.INFO)
+
+def validate_and_enforce_constraints(content: str, include_code: bool, section_title: str) -> str:
+    """
+    Validates content against section constraints and enforces them.
+    Removes code blocks if include_code is False.
+    """
+    if not include_code:
+        # Remove all code blocks using regex
+        # Pattern matches: ```language\ncode\n``` or ```\ncode\n```
+        import re
+        code_block_pattern = r'```[\s\S]*?```'
+        
+        # Find all code blocks before removal for logging
+        code_blocks = re.findall(code_block_pattern, content)
+        if code_blocks:
+            logging.warning(f"Section '{section_title}' has include_code=False but contains {len(code_blocks)} code block(s). Removing them.")
+            for i, block in enumerate(code_blocks):
+                logging.info(f"Removed code block {i+1}: {block[:100]}...")
+        
+        # Remove code blocks
+        cleaned_content = re.sub(code_block_pattern, '', content)
+        
+        # Clean up any extra whitespace left after removal
+        cleaned_content = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_content)
+        
+        return cleaned_content.strip()
+    
+    return content
 
 async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
     """Maps content to sections using vector search for semantic matching with section headers."""
@@ -594,10 +622,18 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
         # This could be enhanced with NLP in a future version
         draft_section.key_concepts = learning_goals
         
+        # Validate and enforce constraints on the generated content
+        validated_content = validate_and_enforce_constraints(
+            actual_markdown_content, 
+            section.include_code, 
+            section_title
+        )
+        draft_section.content = validated_content
+        
         # Add to sections list
         state.sections.append(draft_section)
         state.current_section = draft_section
-        state.current_section_index += 1
+        # Note: current_section_index will be incremented in section_finalizer after completion
         
     except Exception as e:
         logging.error(f"Error generating section: {e}")
@@ -618,7 +654,7 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
         return state
     
     section_title = state.current_section.title
-    section_index = state.current_section_index - 1  # Adjust for 0-based indexing
+    section_index = state.current_section_index  # Use current index directly (0-based)
     learning_goals = state.outline.sections[section_index].learning_goals
     relevant_content = state.content_mapping.get(section_title, [])
     existing_content = state.current_section.content
@@ -680,6 +716,9 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
                         if context.get('children'):
                             structural_insights += f"  - Related subtopics: {', '.join(context.get('children')[:3])}\n"
     
+    # Get current section constraints from outline
+    section = state.outline.sections[section_index]
+    
     # Prepare input variables for the prompt
     input_variables = {
         "format_instructions": PROMPT_CONFIGS["content_enhancement"]["parser"].get_format_instructions() if PROMPT_CONFIGS["content_enhancement"]["parser"] else "",
@@ -688,7 +727,8 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
         "existing_content": existing_content,
         "formatted_content": formatted_content,
         "original_structure": original_structure,
-        "structural_insights": structural_insights
+        "structural_insights": structural_insights,
+        "current_section_data": json.dumps(section.model_dump())  # Pass section constraints including include_code
     }
     
     # Format prompt and get LLM response
@@ -738,8 +778,15 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
             changes="Initial enhancement"
         ))
         
+        # Validate and enforce constraints
+        validated_content = validate_and_enforce_constraints(
+            processed_content, 
+            section.include_code, 
+            section_title
+        )
+        
         # Update the section content
-        state.current_section.content = processed_content # Use the processed content
+        state.current_section.content = validated_content
         state.current_section.current_version += 1
         
     except Exception as e:
@@ -828,10 +875,93 @@ async def code_example_extractor(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+async def image_placeholder_generator(state: BlogDraftState) -> BlogDraftState:
+    """Generates strategic image placeholders for enhanced content visualization."""
+    logging.info("Executing node: image_placeholder_generator")
+    
+    if state.current_section is None:
+        logging.warning("No current section to generate image placeholders for.")
+        return state
+    
+    section_title = state.current_section.title
+    section_index = state.current_section_index
+    section_content = state.current_section.content
+    learning_goals = state.outline.sections[section_index].learning_goals
+    
+    # Analyze content characteristics
+    content_length = len(section_content.split())
+    has_code_examples = bool(state.current_section.code_examples) or "```" in section_content
+    
+    # Determine content type based on section analysis
+    content_type = "practical" if has_code_examples else "theoretical"
+    if "algorithm" in section_content.lower() or "process" in section_content.lower():
+        content_type = "process-oriented"
+    elif "architecture" in section_content.lower() or "system" in section_content.lower():
+        content_type = "architectural"
+    
+    # Assess complexity level
+    complexity_indicators = ["implementation", "advanced", "complex", "detailed", "architecture"]
+    complexity_level = "high" if any(indicator in section_content.lower() for indicator in complexity_indicators) else "medium"
+    
+    # Extract main concepts from learning goals and content
+    main_concepts = learning_goals[:3]  # Use first 3 learning goals as main concepts
+    
+    # Only generate image placeholders for substantial content
+    if content_length < 200:
+        logging.info(f"Section '{section_title}' is too short ({content_length} words) for image placeholders.")
+        return state
+    
+    try:
+        # Prepare input variables for the prompt
+        input_variables = {
+            "format_instructions": PROMPT_CONFIGS["image_placeholder"]["parser"].get_format_instructions(),
+            "section_title": section_title,
+            "learning_goals": ", ".join(learning_goals),
+            "content_type": content_type,
+            "has_code_examples": str(has_code_examples),
+            "section_content": section_content,
+            "content_length": str(content_length),
+            "complexity_level": complexity_level,
+            "main_concepts": ", ".join(main_concepts),
+        }
+        
+        # Format prompt and get LLM response
+        prompt = PROMPT_CONFIGS["image_placeholder"]["prompt"].format(**input_variables)
+        
+        llm_response = await state.model.ainvoke(prompt)
+        llm_response_str = llm_response if isinstance(llm_response, str) else llm_response.content
+        
+        logging.info(f"\n\nRaw LLM image placeholder response for {section_title}:\n{llm_response_str}\n\n")
+        
+        # Parse the response
+        try:
+            if llm_response_str.strip():
+                image_placeholder = PROMPT_CONFIGS["image_placeholder"]["parser"].parse(llm_response_str)
+                
+                # Validate the parsed result
+                if isinstance(image_placeholder, ImagePlaceholder) and image_placeholder.description.strip():
+                    state.current_section.image_placeholders = [image_placeholder]
+                    logging.info(f"Generated image placeholder for section '{section_title}': {image_placeholder.type}")
+                else:
+                    logging.info(f"No meaningful image placeholder suggested for section '{section_title}'")
+            else:
+                logging.info(f"LLM returned empty response for image placeholder generation in section '{section_title}'")
+                
+        except Exception as parse_error:
+            logging.warning(f"Failed to parse image placeholder response for '{section_title}': {parse_error}")
+            logging.info("Continuing without image placeholders for this section.")
+    
+    except Exception as e:
+        logging.error(f"Error generating image placeholders for section '{section_title}': {e}")
+        # Continue without image placeholders rather than failing the entire section
+        
+    return state
+
 async def quality_validator(state: BlogDraftState) -> BlogDraftState:
     """Validates the quality of the current section."""
     logging.info("Executing node: quality_validator")
     print(f"Quality validator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
+    logging.info(f"Quality validator - Current section index: {state.current_section_index}, Section: {state.current_section.title if state.current_section else 'None'}")
     
     # Update generation stage
     state.generation_stage = "validating"
@@ -841,7 +971,7 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
         return state
     
     section_title = state.current_section.title
-    section_index = state.current_section_index - 1
+    section_index = state.current_section_index  # Use current index directly (0-based)
     learning_goals = state.outline.sections[section_index].learning_goals
     section_content = state.current_section.content
     
@@ -1042,7 +1172,7 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     print(f"Found unaddressed feedback: {feedback[:50]}...")
     
     section_title = state.current_section.title
-    section_index = state.current_section_index - 1
+    section_index = state.current_section_index  # Use current index directly (0-based)
     learning_goals = state.outline.sections[section_index].learning_goals
     existing_content = state.current_section.content
     relevant_content = state.content_mapping.get(section_title, [])
@@ -1104,6 +1234,9 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     # Check if feedback is about structural consistency
     structural_feedback = "structural" in feedback.lower() or "structure" in feedback.lower() or "organization" in feedback.lower()
     
+    # Get current section constraints from outline
+    section = state.outline.sections[section_index]
+    
     # Prepare input variables for the prompt
     input_variables = {
         "section_title": section_title,
@@ -1111,7 +1244,8 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
         "existing_content": existing_content,
         "feedback": feedback,
         "original_structure": original_structure if structural_feedback else "",
-        "structural_insights": structural_insights if structural_feedback else ""
+        "structural_insights": structural_insights if structural_feedback else "",
+        "current_section_data": json.dumps(section.model_dump())  # Pass section constraints including include_code
     }
     
     # Format prompt and get LLM response
@@ -1167,8 +1301,15 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
             changes=f"Feedback incorporation: {feedback[:50]}..."
         ))
         
+        # Validate and enforce constraints
+        validated_content = validate_and_enforce_constraints(
+            processed_content, 
+            section.include_code, 
+            section_title
+        )
+        
         # Update the section content and version
-        state.current_section.content = processed_content # Use the processed content
+        state.current_section.content = validated_content
         state.current_section.current_version += 1
         
         # Mark feedback as addressed
@@ -1212,6 +1353,11 @@ async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
     # Reset iteration count for next section
     state.iteration_count = 0
     print("Reset iteration count to 0 for next section")
+    
+    # Increment section index only after finalization is complete
+    state.current_section_index += 1
+    print(f"Advanced to section index {state.current_section_index}")
+    logging.info(f"Section index advanced to {state.current_section_index} after finalizing '{section_title}'")
     
     return state
 
@@ -1279,6 +1425,52 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+def format_section_with_images(section: DraftSection) -> str:
+    """Format a section with its content and image placeholders."""
+    content_parts = [f"## {section.title}"]
+    
+    # If there are image placeholders, integrate them with the content
+    if section.image_placeholders:
+        section_content = section.content
+        
+        for placeholder in section.image_placeholders:
+            # Create formatted image placeholder
+            image_markdown = f"""
+[IMAGE_PLACEHOLDER: {placeholder.type} - {placeholder.description}]
+Alt text: {placeholder.alt_text}
+Placement: {placeholder.placement}
+Purpose: {placeholder.purpose}
+"""
+            
+            # Insert image placeholder based on placement strategy
+            if placeholder.placement == "section_start":
+                # Add right after the section title
+                content_parts.append(image_markdown)
+                content_parts.append(section_content)
+            elif placeholder.placement == "section_end":
+                # Add at the end of the section
+                content_parts.append(section_content)
+                content_parts.append(image_markdown)
+            elif placeholder.placement == "after_concept":
+                # Try to insert after the first paragraph (simple heuristic)
+                paragraphs = section_content.split('\n\n')
+                if len(paragraphs) > 1:
+                    content_parts.append(paragraphs[0])
+                    content_parts.append(image_markdown)
+                    content_parts.append('\n\n'.join(paragraphs[1:]))
+                else:
+                    content_parts.append(section_content)
+                    content_parts.append(image_markdown)
+            else:
+                # Default: add after content
+                content_parts.append(section_content)
+                content_parts.append(image_markdown)
+    else:
+        # No image placeholders, just add the content
+        content_parts.append(section.content)
+    
+    return '\n\n'.join(content_parts)
+
 async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
     """Compiles the final blog post while maintaining original document structure."""
     logging.info("Executing node: blog_compiler")
@@ -1313,9 +1505,9 @@ async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
             indent = "  " * (level - 1)
             original_structure += f"{indent}{'#' * level} {text}\n"
     
-    # Get sections content
+    # Get sections content with image placeholders
     sections_content = "\n\n".join([
-        f"## {section.title}\n{section.content}"
+        format_section_with_images(section)
         for section in state.sections
     ])
     
