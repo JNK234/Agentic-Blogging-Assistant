@@ -52,7 +52,45 @@ agent_cache = {}
 
 # In-memory cache for job states (outline, content hashes, model name) with a TTL
 # Sections are now cached persistently in VectorStoreService
-state_cache = TTLCache(maxsize=100, ttl=3600)
+# Extended TTL to 6 hours to accommodate longer user workflows
+state_cache = TTLCache(maxsize=100, ttl=21600)  # 6 hours = 21600 seconds
+
+def refresh_job_cache(job_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve job state and refresh its TTL by re-inserting it into cache.
+    Returns the job state if found, None otherwise.
+    """
+    job_state = state_cache.get(job_id)
+    if job_state:
+        # Re-insert to refresh TTL
+        state_cache[job_id] = job_state
+        logger.info(f"Refreshed cache TTL for job_id: {job_id}")
+    return job_state
+
+@app.get("/validate_job/{job_id}")
+async def validate_job(job_id: str) -> JSONResponse:
+    """Validate if a job exists and refresh its cache."""
+    job_state = refresh_job_cache(job_id)
+    if job_state:
+        return JSONResponse(
+            content={
+                "valid": True,
+                "job_id": job_id,
+                "has_outline": bool(job_state.get("outline")),
+                "has_refined_draft": bool(job_state.get("refined_draft")),
+                "project_name": job_state.get("project_name")
+            }
+        )
+    else:
+        return JSONResponse(
+            content={
+                "valid": False,
+                "job_id": job_id,
+                "error": "Job not found or expired",
+                "suggestion": "Please regenerate the outline to restart the workflow."
+            },
+            status_code=404
+        )
 
 @app.post("/upload/{project_name}")
 async def upload_files(
@@ -235,7 +273,10 @@ async def generate_outline(
     model_name: str = Form(...),
     notebook_hash: Optional[str] = Form(None),
     markdown_hash: Optional[str] = Form(None),
-    user_guidelines: Optional[str] = Form(None) # Added
+    user_guidelines: Optional[str] = Form(None), # Added
+    length_preference: Optional[str] = Form(None), # Added
+    custom_length: Optional[int] = Form(None), # Added  
+    writing_style: Optional[str] = Form(None) # Added
 ) -> JSONResponse:
     """Generate a blog outline for processed content."""
     try:
@@ -255,7 +296,10 @@ async def generate_outline(
             project_name=project_name,
             notebook_hash=notebook_hash,
             markdown_hash=markdown_hash,
-            user_guidelines=user_guidelines # Pass guidelines to agent
+            user_guidelines=user_guidelines, # Pass guidelines to agent
+            length_preference=length_preference, # Pass length preference
+            custom_length=custom_length, # Pass custom length
+            writing_style=writing_style # Pass writing style
         )
 
         # Check if the agent returned an error dictionary
@@ -321,10 +365,15 @@ async def generate_outline(
 async def get_job_status(job_id: str) -> JSONResponse:
     """Get the current status of a job for debugging."""
     try:
-        job_state = state_cache.get(job_id)
+        # Use refresh to extend TTL when checking status
+        job_state = refresh_job_cache(job_id)
         if not job_state:
             return JSONResponse(
-                content={"error": "Job not found", "job_id": job_id},
+                content={
+                    "error": "Job not found", 
+                    "job_id": job_id,
+                    "suggestion": "Job may have expired. Please regenerate the outline."
+                },
                 status_code=404
             )
         
@@ -1164,12 +1213,16 @@ async def compile_draft(
     """Compile final blog draft from sections stored in job state."""
     logger.info(f"Starting draft compilation for job_id: {job_id}")
     try:
-        # Retrieve job state
-        job_state = state_cache.get(job_id)
+        # Retrieve job state and refresh cache TTL
+        job_state = refresh_job_cache(job_id)
         if not job_state:
             logger.error(f"Job state not found for job_id: {job_id}")
             return JSONResponse(
-                content={"error": f"Job state not found for job_id: {job_id}"},
+                content={
+                    "error": f"Job state not found for job_id: {job_id}",
+                    "details": "Job state may have expired. Please regenerate the outline and draft.",
+                    "suggestion": "Try generating a new outline to restart the workflow."
+                },
                 status_code=404
             )
 
@@ -1303,12 +1356,16 @@ async def refine_blog(
 ) -> JSONResponse:
     """Refine a compiled blog draft using the BlogRefinementAgent."""
     try:
-        # Retrieve job state
-        job_state = state_cache.get(job_id)
+        # Retrieve job state and refresh cache TTL
+        job_state = refresh_job_cache(job_id)
         if not job_state:
             logger.error(f"Job state not found for job_id: {job_id}")
             return JSONResponse(
-                content={"error": f"Job state not found for job_id: {job_id}"},
+                content={
+                    "error": f"Job state not found for job_id: {job_id}",
+                    "details": "Job state may have expired. Please regenerate the outline and draft.",
+                    "suggestion": "Try generating a new outline to restart the workflow."
+                },
                 status_code=404
             )
 
@@ -1387,12 +1444,16 @@ async def generate_social_content(
 ) -> JSONResponse:
     """Generate social media content from refined draft."""
     try:
-        # Retrieve job state
-        job_state = state_cache.get(job_id)
+        # Retrieve job state and refresh cache TTL
+        job_state = refresh_job_cache(job_id)
         if not job_state:
             logger.error(f"Job state not found for job_id: {job_id}")
             return JSONResponse(
-                content={"error": f"Job state not found for job_id: {job_id}"},
+                content={
+                    "error": f"Job state not found for job_id: {job_id}",
+                    "details": "Job state may have expired. Please regenerate the outline and draft.",
+                    "suggestion": "Try generating a new outline to restart the workflow."
+                },
                 status_code=404
             )
 
