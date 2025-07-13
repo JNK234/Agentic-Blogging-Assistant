@@ -129,6 +129,9 @@ async def generate_outline(
     notebook_hash: Optional[str] = None,
     markdown_hash: Optional[str] = None,
     user_guidelines: Optional[str] = None, # Added
+    length_preference: Optional[str] = None, # Added
+    custom_length: Optional[int] = None, # Added
+    writing_style: Optional[str] = None, # Added
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -139,6 +142,10 @@ async def generate_outline(
         model_name: The name of the model to use.
         notebook_hash: The hash of the processed notebook content (optional).
         markdown_hash: The hash of the processed markdown content (optional).
+        user_guidelines: Optional user-provided guidelines for outline generation.
+        length_preference: User's preferred blog length category (optional).
+        custom_length: Custom target word count if length_preference is "Custom" (optional).
+        writing_style: User's preferred writing style (optional).
         base_url: The base URL of the API.
 
     Returns:
@@ -149,7 +156,10 @@ async def generate_outline(
         "model_name": model_name,
         "notebook_hash": notebook_hash or "", # Send empty string if None
         "markdown_hash": markdown_hash or "", # Send empty string if None
-        "user_guidelines": user_guidelines or "" # Added - send empty string if None
+        "user_guidelines": user_guidelines or "", # Added - send empty string if None
+        "length_preference": length_preference or "", # Added - send empty string if None
+        "custom_length": custom_length or 0, # Added - send 0 if None
+        "writing_style": writing_style or "" # Added - send empty string if None
     }
     # Filter out empty values if necessary, though FastAPI handles empty strings
     data = {k: v for k, v in data.items() if v is not None}

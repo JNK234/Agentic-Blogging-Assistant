@@ -13,6 +13,11 @@ class ContentAnalysis(BaseModel):
     complexity_indicators: List[str]
     learning_objectives: List[str]
     section_structure: Optional[List[Dict[str, Any]]] = Field(default_factory=list, description="Hierarchical section structure from source content")
+    has_actual_code: bool = Field(default=False, description="Whether content contains actual implementable code vs theoretical concepts")
+    content_type: str = Field(default="theoretical", description="Content classification: theoretical, practical, or mixed")
+    estimated_content_density: str = Field(default="medium", description="Content density assessment: low, medium, high, very_high")
+    suggested_blog_length: int = Field(default=1500, description="AI-recommended optimal blog length in words")
+    length_reasoning: str = Field(default="", description="Explanation for the suggested blog length")
 
 class DifficultyLevel(BaseModel):
     level: str = Field(description="Difficulty level (Beginner/Intermediate/Advanced)")
@@ -60,6 +65,9 @@ class OutlineState(BaseModel):
     markdown_content: Optional[ContentStructure] = Field(description="Parsed markdown content") # Updated type hint
     model: Any = Field(description="LLM model instance")
     user_guidelines: Optional[str] = Field(default=None, description="Optional user-provided guidelines for outline generation")
+    length_preference: Optional[str] = Field(default=None, description="User's preferred blog length category")
+    custom_length: Optional[int] = Field(default=None, description="Custom target word count if specified")
+    writing_style: Optional[str] = Field(default=None, description="User's preferred writing style")
 
     # Intermediate states
     analysis_result: Optional[ContentAnalysis] = None

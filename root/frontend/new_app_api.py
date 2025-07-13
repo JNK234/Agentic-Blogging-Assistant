@@ -631,10 +631,46 @@ class OutlineGeneratorUI:
         user_guidelines = st.text_area("Optional Guidelines:",
                                        help="Provide specific instructions for the outline generation (e.g., 'Focus on practical examples', 'Exclude section on history').",
                                        key="user_guidelines_input")
+        
+        # Add length preference controls
+        with st.expander("📏 Blog Length Preferences (Optional)", expanded=False):
+            st.markdown("**System will analyze your content and suggest optimal length, but you can override these preferences.**")
+            
+            length_preference = st.selectbox(
+                "Preferred Blog Length",
+                ["Auto-detect (Recommended)", "Short (800-1200)", "Medium (1200-2000)", 
+                 "Long (2000-3000)", "Very Long (3000+)", "Custom"],
+                help="System will analyze content density and suggest optimal length. Choose 'Auto-detect' for best results.",
+                key="length_preference_select"
+            )
+            
+            custom_length = None
+            if length_preference == "Custom":
+                custom_length = st.number_input(
+                    "Target Word Count", 
+                    min_value=500, 
+                    max_value=5000, 
+                    value=1500,
+                    step=100,
+                    help="Specify exact target word count for your blog",
+                    key="custom_length_input"
+                )
+            
+            writing_style = st.selectbox(
+                "Writing Style",
+                ["Balanced", "Concise & Focused", "Comprehensive & Detailed"],
+                help="Affects content depth and explanation verbosity. 'Balanced' is recommended for most content.",
+                key="writing_style_select"
+            )
+            
+            st.info("💡 The AI will analyze your content type (theoretical/practical/mixed) and density to suggest the optimal length, then adjust based on your preferences.")
 
         if st.button("Generate Outline", key="gen_outline_btn"):
-            # Retrieve guideline text inside the button's logic block
+            # Retrieve guideline text and length preferences inside the button's logic block
             guideline_text = st.session_state.get('user_guidelines_input', '') # Get value using key
+            length_pref = st.session_state.get('length_preference_select', 'Auto-detect (Recommended)')
+            custom_len = st.session_state.get('custom_length_input', 1500) if length_pref == "Custom" else None
+            style_pref = st.session_state.get('writing_style_select', 'Balanced')
 
             if not notebook_hash and not markdown_hash:
                 st.error("Cannot generate outline without processed notebook or markdown content.")
@@ -650,6 +686,9 @@ class OutlineGeneratorUI:
                         notebook_hash=notebook_hash,
                         markdown_hash=markdown_hash,
                         user_guidelines=guideline_text, # Pass the retrieved guidelines
+                        length_preference=length_pref, # Pass length preference
+                        custom_length=custom_len, # Pass custom length if specified
+                        writing_style=style_pref, # Pass writing style
                         base_url=SessionManager.get('api_base_url')
                     ))
                 SessionManager.set('job_id', result.get('job_id'))

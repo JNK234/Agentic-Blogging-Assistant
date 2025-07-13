@@ -55,9 +55,40 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         self._initialized = True
         logging.info("BlogDraftGeneratorAgent initialized successfully")
 
+    def _extract_intelligent_length_from_outline(self, outline) -> int:
+        """Extract intelligent length from outline content analysis or use reasonable default."""
+        try:
+            # Try to access content analysis from outline structure
+            if isinstance(outline, dict) and 'content_analysis' in outline:
+                content_analysis = outline['content_analysis']
+                if isinstance(content_analysis, dict) and 'suggested_blog_length' in content_analysis:
+                    suggested_length = content_analysis['suggested_blog_length']
+                    logging.info(f"Using AI-suggested blog length: {suggested_length} words")
+                    return max(suggested_length, 800)  # Minimum 800 words
+            
+            # Fallback: estimate based on outline complexity
+            sections_count = len(outline.get('sections', [])) if isinstance(outline, dict) else 0
+            if sections_count == 0:
+                return 1200  # Default for unknown structure
+            
+            # Estimate 300-400 words per section as baseline
+            estimated_length = sections_count * 350
+            estimated_length = max(estimated_length, 1000)  # Minimum 1000 words
+            estimated_length = min(estimated_length, 4000)  # Maximum 4000 words
+            
+            logging.info(f"Estimated blog length based on {sections_count} sections: {estimated_length} words")
+            return estimated_length
+            
+        except Exception as e:
+            logging.warning(f"Could not extract intelligent length from outline: {e}. Using default.")
+            return 1500  # Safe default
+
     async def generate_draft(self, project_name: str, outline, notebook_content, markdown_content): # Added project_name parameter
         """Generates a blog draft section by section using LangGraph."""
         logging.info(f"Generating draft for outline: {outline['title']} (Project: {project_name})")
+
+        # Calculate intelligent target length
+        intelligent_length = self._extract_intelligent_length_from_outline(outline)
 
         # Initialize state
         initial_state = BlogDraftState(
@@ -65,7 +96,9 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             outline=outline,
             notebook_content=notebook_content,
             markdown_content=markdown_content,
-            model=self.llm
+            model=self.llm,
+            target_total_length=intelligent_length,  # Use intelligent length
+            remaining_length_budget=intelligent_length  # Initialize budget
         )
 
         # Execute graph
