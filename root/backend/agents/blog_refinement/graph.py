@@ -25,12 +25,13 @@ logger = logging.getLogger(__name__)
 
 # --- Graph Creation ---
 
-async def create_refinement_graph(model: BaseModel) -> StateGraph:
+async def create_refinement_graph(model: BaseModel, persona_service=None) -> StateGraph:
     """
     Creates the LangGraph StateGraph for the blog refinement process.
 
     Args:
         model: An instance of the language model to be used by the nodes.
+        persona_service: Optional PersonaService instance for voice consistency.
 
     Returns:
         A compiled LangGraph application (StateGraph).
@@ -43,7 +44,7 @@ async def create_refinement_graph(model: BaseModel) -> StateGraph:
     graph.add_node("generate_introduction", partial(generate_introduction_node, model=model))
     graph.add_node("generate_conclusion", partial(generate_conclusion_node, model=model))
     graph.add_node("generate_summary", partial(generate_summary_node, model=model))
-    graph.add_node("generate_titles", partial(generate_titles_node, model=model))
+    graph.add_node("generate_titles", partial(generate_titles_node, model=model, persona_service=persona_service))
     graph.add_node("suggest_clarity_flow", partial(suggest_clarity_flow_node, model=model)) # Add the new node
     # This node doesn't need the model, so no binding is necessary
     graph.add_node("assemble_draft", assemble_refined_draft_node)

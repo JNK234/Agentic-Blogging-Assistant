@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from root.backend.agents.base_agent import BaseGraphAgent
 from root.backend.agents.blog_refinement.state import BlogRefinementState, RefinementResult, TitleOption
 from root.backend.agents.blog_refinement.graph import create_refinement_graph
+from root.backend.services.persona_service import PersonaService
 from root.backend.utils.serialization import serialize_object # For potential result serialization if needed
 
 # Configure logging
@@ -22,12 +23,13 @@ class BlogRefinementAgent(BaseGraphAgent):
     It generates introduction, conclusion, summary, and title options.
     """
 
-    def __init__(self, model: BaseModel):
+    def __init__(self, model: BaseModel, persona_service=None):
         """
         Initializes the BlogRefinementAgent.
 
         Args:
             model: An instance of a language model compatible with BaseGraphAgent.
+            persona_service: Optional PersonaService instance for voice consistency.
         """
         super().__init__(
             llm=model,
@@ -37,6 +39,7 @@ class BlogRefinementAgent(BaseGraphAgent):
         )
         self._initialized = False
         self.model = model # Keep model reference for graph creation
+        self.persona_service = persona_service or PersonaService()
         logger.info(f"BlogRefinementAgent instantiated with model: {type(model).__name__}")
 
     async def initialize(self):
@@ -48,8 +51,8 @@ class BlogRefinementAgent(BaseGraphAgent):
             return
 
         try:
-            # Create the graph, passing the model instance
-            self.graph = await create_refinement_graph(self.model)
+            # Create the graph, passing the model instance and persona service
+            self.graph = await create_refinement_graph(self.model, self.persona_service)
             self._initialized = True
             logger.info("BlogRefinementAgent initialized successfully with graph.")
         except Exception as e:

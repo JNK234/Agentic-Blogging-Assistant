@@ -180,10 +180,10 @@ async def get_or_create_agents(model_name: str):
         draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store, persona_service)
         await draft_agent.initialize()
 
-        refinement_agent = BlogRefinementAgent(model) # Refinement agent might need vector_store later? Check its __init__ if needed.
+        refinement_agent = BlogRefinementAgent(model, persona_service)
         await refinement_agent.initialize()
 
-        social_agent = SocialMediaAgent(model)
+        social_agent = SocialMediaAgent(model, persona_service)
         await social_agent.initialize()
 
         # Cache the agents
@@ -1488,9 +1488,9 @@ async def generate_social_content(
                 status_code=500
             )
 
-        # Generate social content
-        logger.info(f"Generating social content for job_id: {job_id}")
-        social_content = await social_agent.generate_content(
+        # Generate comprehensive social content (including thread)
+        logger.info(f"Generating comprehensive social content for job_id: {job_id}")
+        social_content = await social_agent.generate_comprehensive_content(
             blog_content=refined_draft,
             blog_title=blog_title
         )
@@ -1501,14 +1501,17 @@ async def generate_social_content(
                 status_code=500
             )
 
+        # Convert to API response format
+        social_content_response = social_content.to_api_response()
+
         # Store in job state
-        job_state["social_content"] = social_content
+        job_state["social_content"] = social_content_response
         job_state["social_generated_at"] = datetime.now().isoformat()
 
         return JSONResponse(
             content={
                 "job_id": job_id,
-                "social_content": social_content
+                "social_content": social_content_response
             }
         )
 
@@ -1517,6 +1520,90 @@ async def generate_social_content(
         return JSONResponse(
             content={
                 "error": f"Social content generation failed: {str(e)}",
+                "type": str(type(e).__name__),
+                "details": str(e)
+            },
+            status_code=500
+        )
+
+@app.post("/generate_twitter_thread/{project_name}")
+async def generate_twitter_thread(
+    project_name: str,
+    job_id: str = Form(...)
+) -> JSONResponse:
+    """Generate Twitter/X thread from refined draft."""
+    try:
+        # Retrieve job state and refresh cache TTL
+        job_state = refresh_job_cache(job_id)
+        
+        if not job_state:
+            return JSONResponse(
+                content={
+                    "error": "Job not found or expired",
+                    "suggestion": "Please regenerate the outline to restart the workflow."
+                },
+                status_code=404
+            )
+        
+        refined_draft = job_state.get("refined_draft")
+        if not refined_draft:
+            return JSONResponse(
+                content={"error": "Refined draft not found. Please complete blog refinement first."},
+                status_code=400
+            )
+        
+        blog_title = job_state.get("outline", {}).get("title", "Blog Post")
+        
+        # Get model and agents
+        model_name = job_state.get("model_name")
+        agents = await get_or_create_agents(model_name)
+        social_agent = agents.get("social_agent")
+        
+        if not social_agent:
+            return JSONResponse(
+                content={"error": "Social media agent could not be initialized."},
+                status_code=500
+            )
+        
+        # Generate Twitter thread
+        logger.info(f"Generating Twitter thread for job_id: {job_id}")
+        twitter_thread = await social_agent.generate_thread(
+            blog_content=refined_draft,
+            blog_title=blog_title
+        )
+        
+        if not twitter_thread:
+            return JSONResponse(
+                content={"error": "Failed to generate Twitter thread."},
+                status_code=500
+            )
+        
+        # Convert thread to serializable format
+        thread_data = {
+            "tweets": [tweet.model_dump() for tweet in twitter_thread.tweets],
+            "total_tweets": twitter_thread.total_tweets,
+            "hook_tweet": twitter_thread.hook_tweet,
+            "conclusion_tweet": twitter_thread.conclusion_tweet,
+            "thread_topic": twitter_thread.thread_topic,
+            "learning_journey": twitter_thread.learning_journey
+        }
+        
+        # Store in job state
+        job_state["twitter_thread"] = thread_data
+        job_state["thread_generated_at"] = datetime.now().isoformat()
+        
+        return JSONResponse(
+            content={
+                "job_id": job_id,
+                "twitter_thread": thread_data
+            }
+        )
+        
+    except Exception as e:
+        logger.exception(f"Twitter thread generation failed: {str(e)}")
+        return JSONResponse(
+            content={
+                "error": f"Twitter thread generation failed: {str(e)}",
                 "type": str(type(e).__name__),
                 "details": str(e)
             },

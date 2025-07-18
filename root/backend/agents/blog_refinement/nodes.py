@@ -85,14 +85,22 @@ async def generate_summary_node(state: BlogRefinementState, model: BaseModel) ->
         return {"error": f"Summary generation failed: {str(e)}"}
 
 # Corrected: Expect BlogRefinementState, use attribute access
-async def generate_titles_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+async def generate_titles_node(state: BlogRefinementState, model: BaseModel, persona_service=None) -> Dict[str, Any]:
     """Node to generate title and subtitle options."""
     logger.info("Node: generate_titles_node")
     # Access Pydantic model fields directly
     if state.error: return {"error": state.error}
 
     try:
-        prompt = GENERATE_TITLES_PROMPT.format(blog_draft=state.original_draft)
+        # Get persona instructions if persona_service is provided
+        persona_instructions = ""
+        if persona_service:
+            persona_instructions = persona_service.get_persona_prompt("student_sharing")
+        
+        prompt = GENERATE_TITLES_PROMPT.format(
+            persona_instructions=persona_instructions,
+            blog_draft=state.original_draft
+        )
         response = await model.ainvoke(prompt)
 
         # Clean and parse JSON
