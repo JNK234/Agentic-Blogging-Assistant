@@ -5,6 +5,7 @@ based on a finalized blog draft.
 """
 import logging
 import re
+from typing import List
 from root.backend.prompts.social_media.templates import SOCIAL_MEDIA_GENERATION_PROMPT, TWITTER_THREAD_GENERATION_PROMPT
 from root.backend.services.persona_service import PersonaService
 from root.backend.models.social_media import TwitterThread, Tweet, SocialMediaContent
@@ -178,6 +179,56 @@ class SocialMediaAgent:
         
         return thread_data
 
+    def _split_long_tweet(self, content: str, max_length: int = 280) -> List[str]:
+        """
+        Split a long tweet into multiple tweets while preserving meaning.
+        
+        Args:
+            content: The original tweet content
+            max_length: Maximum character length per tweet
+            
+        Returns:
+            List of tweet parts
+        """
+        if len(content) <= max_length:
+            return [content]
+        
+        # Try to split at sentence boundaries first
+        sentences = re.split(r'(?<=[.!?])\s+', content)
+        tweets = []
+        current_tweet = ""
+        
+        for sentence in sentences:
+            # If adding this sentence would exceed limit, start a new tweet
+            if current_tweet and len(current_tweet + " " + sentence) > max_length:
+                tweets.append(current_tweet.strip())
+                current_tweet = sentence
+            # If the sentence itself is too long, split it at word boundaries
+            elif len(sentence) > max_length:
+                if current_tweet:
+                    tweets.append(current_tweet.strip())
+                    current_tweet = ""
+                
+                # Split long sentence at word boundaries
+                words = sentence.split()
+                temp_tweet = ""
+                for word in words:
+                    if temp_tweet and len(temp_tweet + " " + word) > max_length:
+                        tweets.append(temp_tweet.strip())
+                        temp_tweet = word
+                    else:
+                        temp_tweet = temp_tweet + " " + word if temp_tweet else word
+                
+                if temp_tweet:
+                    current_tweet = temp_tweet
+            else:
+                current_tweet = current_tweet + " " + sentence if current_tweet else sentence
+        
+        if current_tweet:
+            tweets.append(current_tweet.strip())
+        
+        return tweets
+
     def _parse_thread_content(self, thread_content: str, topic: str = "", journey: str = "") -> TwitterThread:
         """
         Parses thread content into structured TwitterThread object.
@@ -196,17 +247,23 @@ class SocialMediaAgent:
         tweet_pattern = r"(\d+)\.\s*(.+?)(?=\n\d+\.|$)"
         matches = re.findall(tweet_pattern, thread_content, re.DOTALL)
         
-        for i, (tweet_num, content) in enumerate(matches, 1):
+        tweet_counter = 1
+        for i, (tweet_num, content) in enumerate(matches):
             cleaned_content = content.strip()
             # Remove extra whitespace and newlines
             cleaned_content = re.sub(r'\s+', ' ', cleaned_content)
             
-            tweet = Tweet(
-                content=cleaned_content,
-                character_count=len(cleaned_content),
-                tweet_number=i
-            )
-            tweets.append(tweet)
+            # Split long tweets if necessary
+            tweet_parts = self._split_long_tweet(cleaned_content)
+            
+            for part in tweet_parts:
+                tweet = Tweet(
+                    content=part,
+                    character_count=len(part),
+                    tweet_number=tweet_counter
+                )
+                tweets.append(tweet)
+                tweet_counter += 1
         
         if not tweets:
             raise ValueError("No valid tweets found in thread content")

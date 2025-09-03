@@ -317,6 +317,40 @@ async def refine_blog(
             raise ConnectionError(f"Failed to connect to API for blog refinement: {e}")
 
 
+async def refine_standalone(
+    project_name: str,
+    compiled_draft: str,
+    model_name: str = "gemini",
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    Refines a blog draft without requiring job state - for resuming after expiry.
+
+    Args:
+        project_name: The name of the project.
+        compiled_draft: The compiled blog draft content.
+        model_name: The model to use for refinement (default: "gemini").
+        base_url: The base URL of the API.
+
+    Returns:
+        The JSON response containing the refined draft, summary, and title options.
+    """
+    api_url = _get_api_url(f"/refine_standalone/{project_name}", base_url)
+    data = {
+        "compiled_draft": compiled_draft,
+        "model_name": model_name
+    }
+
+    async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
+        try:
+            logger.info(f"Requesting standalone refinement for project {project_name} at {api_url}")
+            response = await client.post(api_url, data=data)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during standalone refinement: {e}")
+            raise ConnectionError(f"Failed to connect to API for standalone refinement: {e}")
+
+
 async def generate_social_content(
     project_name: str,
     job_id: str,
@@ -344,6 +378,40 @@ async def generate_social_content(
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during social content generation: {e}")
             raise ConnectionError(f"Failed to connect to API for social content generation: {e}")
+
+
+async def generate_social_content_standalone(
+    project_name: str,
+    refined_blog_content: str,
+    model_name: str = "claude",
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    Generates social media content from refined blog content without requiring job state.
+
+    Args:
+        project_name: The name of the project.
+        refined_blog_content: The refined blog content.
+        model_name: The model to use for generation.
+        base_url: The base URL of the API.
+
+    Returns:
+        The JSON response containing the generated social content (breakdown, linkedin, x, newsletter).
+    """
+    api_url = _get_api_url(f"/generate_social_content_standalone/{project_name}", base_url)
+    data = {
+        "refined_blog_content": refined_blog_content,
+        "model_name": model_name
+    }
+
+    async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for generation
+        try:
+            logger.info(f"Requesting standalone social content generation for project {project_name} at {api_url}")
+            response = await client.post(api_url, data=data)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during standalone social content generation: {e}")
+            raise ConnectionError(f"Failed to connect to API for standalone social content generation: {e}")
 
 async def health_check(base_url: str = DEFAULT_API_BASE_URL) -> bool:
     """Checks the health of the backend API."""

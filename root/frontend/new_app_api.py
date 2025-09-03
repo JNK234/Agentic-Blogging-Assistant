@@ -18,6 +18,7 @@ import io
 
 # Import the API client functions
 import api_client
+from auto_save_manager import AutoSaveManager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +42,16 @@ class AppConfig:
 
 # --- Session State Management ---
 class SessionManager:
+    # Initialize auto-save manager as class variable
+    _auto_save_manager = None
+    
+    @staticmethod
+    def get_auto_save_manager():
+        """Get or create the auto-save manager instance."""
+        if SessionManager._auto_save_manager is None:
+            SessionManager._auto_save_manager = AutoSaveManager()
+        return SessionManager._auto_save_manager
+    
     @staticmethod
     def initialize_state():
         """Initializes the Streamlit session state dictionary."""
@@ -396,6 +407,25 @@ def create_complete_blog_package() -> Dict[str, str]:
         if social_content.get('content_breakdown'):
             package[f"{safe_project_name}_content_analysis.md"] = f"# Content Breakdown\n\n{social_content['content_breakdown']}"
         
+        # Twitter Thread file
+        x_thread = social_content.get('x_thread')
+        if x_thread:
+            thread_content = f"# X (Twitter) Thread\n\n"
+            thread_content += f"**Topic:** {x_thread.get('thread_topic', 'N/A')}\n\n"
+            thread_content += f"**Total Tweets:** {x_thread.get('total_tweets', 0)}\n\n"
+            thread_content += "---\n\n"
+            
+            tweets = x_thread.get('tweets', [])
+            for tweet in tweets:
+                tweet_num = tweet.get('tweet_number', 1)
+                tweet_content_text = tweet.get('content', '')
+                char_count = tweet.get('character_count', len(tweet_content_text))
+                
+                thread_content += f"## Tweet {tweet_num} ({char_count} chars)\n\n"
+                thread_content += f"{tweet_content_text}\n\n"
+            
+            package[f"{safe_project_name}_twitter_thread.md"] = thread_content
+        
         # Combined social media file
         combined_social = "# Social Media Content Package\n\n"
         
@@ -412,6 +442,23 @@ def create_complete_blog_package() -> Dict[str, str]:
         if social_content.get('x_post'):
             combined_social += "## X (Twitter) Post\n\n"
             combined_social += social_content['x_post'] + "\n\n"
+            combined_social += "---\n\n"
+        
+        # Add Twitter Thread to combined file
+        x_thread = social_content.get('x_thread')
+        if x_thread:
+            combined_social += "## X (Twitter) Thread\n\n"
+            combined_social += f"**Topic:** {x_thread.get('thread_topic', 'N/A')}\n\n"
+            combined_social += f"**Total Tweets:** {x_thread.get('total_tweets', 0)}\n\n"
+            
+            tweets = x_thread.get('tweets', [])
+            for tweet in tweets:
+                tweet_num = tweet.get('tweet_number', 1)
+                tweet_content_text = tweet.get('content', '')
+                char_count = tweet.get('character_count', len(tweet_content_text))
+                
+                combined_social += f"**Tweet {tweet_num}** ({char_count} chars): {tweet_content_text}\n\n"
+            
             combined_social += "---\n\n"
         
         if social_content.get('newsletter_content'):
@@ -665,48 +712,104 @@ class OutlineGeneratorUI:
             
             st.info("💡 The AI will analyze your content type (theoretical/practical/mixed) and density to suggest the optimal length, then adjust based on your preferences.")
 
-        if st.button("Generate Outline", key="gen_outline_btn"):
-            # Retrieve guideline text and length preferences inside the button's logic block
-            guideline_text = st.session_state.get('user_guidelines_input', '') # Get value using key
-            length_pref = st.session_state.get('length_preference_select', 'Auto-detect (Recommended)')
-            custom_len = st.session_state.get('custom_length_input', 1500) if length_pref == "Custom" else None
-            style_pref = st.session_state.get('writing_style_select', 'Balanced')
+        # Resume from saved outline option
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            if st.button("Generate Outline", key="gen_outline_btn"):
+                # Retrieve guideline text and length preferences inside the button's logic block
+                guideline_text = st.session_state.get('user_guidelines_input', '') # Get value using key
+                length_pref = st.session_state.get('length_preference_select', 'Auto-detect (Recommended)')
+                custom_len = st.session_state.get('custom_length_input', 1500) if length_pref == "Custom" else None
+                style_pref = st.session_state.get('writing_style_select', 'Balanced')
 
-            if not notebook_hash and not markdown_hash:
-                st.error("Cannot generate outline without processed notebook or markdown content.")
-                return
+                if not notebook_hash and not markdown_hash:
+                    st.error("Cannot generate outline without processed notebook or markdown content.")
+                    return
 
-            SessionManager.set_status("Generating outline...")
-            SessionManager.clear_error()
-            try:
-                with st.spinner("Calling API to generate outline..."):
-                    result = asyncio.run(api_client.generate_outline(
-                        project_name=project_name,
-                        model_name=model_name,
-                        notebook_hash=notebook_hash,
-                        markdown_hash=markdown_hash,
-                        user_guidelines=guideline_text, # Pass the retrieved guidelines
-                        length_preference=length_pref, # Pass length preference
-                        custom_length=custom_len, # Pass custom length if specified
-                        writing_style=style_pref, # Pass writing style
-                        base_url=SessionManager.get('api_base_url')
-                    ))
-                SessionManager.set('job_id', result.get('job_id'))
-                SessionManager.set('generated_outline', result.get('outline'))
-                SessionManager.set('total_sections', len(result.get('outline', {}).get('sections', [])))
-                SessionManager.set('current_section_index', 0) # Reset section index
-                SessionManager.set('generated_sections', {}) # Clear old sections
-                SessionManager.set('final_draft', None) # Clear old draft
-                SessionManager.set('social_content', None) # Clear old social content
-                SessionManager.set_status("Outline generated successfully.")
-                logger.info(f"Outline generated for job ID: {result.get('job_id')}")
-            except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
-                SessionManager.set_error(f"API Error generating outline: {str(api_err)}")
-                SessionManager.set_status("Outline generation failed.")
-            except Exception as e:
-                logger.exception(f"Unexpected error during outline generation: {e}")
-                SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
-                SessionManager.set_status("Outline generation failed.")
+                SessionManager.set_status("Generating outline...")
+                SessionManager.clear_error()
+                try:
+                    with st.spinner("Calling API to generate outline..."):
+                        result = asyncio.run(api_client.generate_outline(
+                            project_name=project_name,
+                            model_name=model_name,
+                            notebook_hash=notebook_hash,
+                            markdown_hash=markdown_hash,
+                            user_guidelines=guideline_text, # Pass the retrieved guidelines
+                            length_preference=length_pref, # Pass length preference
+                            custom_length=custom_len, # Pass custom length if specified
+                            writing_style=style_pref, # Pass writing style
+                            base_url=SessionManager.get('api_base_url')
+                        ))
+                    SessionManager.set('job_id', result.get('job_id'))
+                    SessionManager.set('generated_outline', result.get('outline'))
+                    SessionManager.set('total_sections', len(result.get('outline', {}).get('sections', [])))
+                    SessionManager.set('current_section_index', 0) # Reset section index
+                    SessionManager.set('generated_sections', {}) # Clear old sections
+                    SessionManager.set('final_draft', None) # Clear old draft
+                    SessionManager.set('social_content', None) # Clear old social content
+                    SessionManager.set_status("Outline generated successfully.")
+                    logger.info(f"Outline generated for job ID: {result.get('job_id')}")
+                    
+                    # Auto-save the generated outline
+                    try:
+                        auto_save_manager = SessionManager.get_auto_save_manager()
+                        outline_data = result.get('outline')
+                        if outline_data:
+                            saved_path = auto_save_manager.save_outline(
+                                project_name=project_name,
+                                outline_data=outline_data,
+                                job_id=result.get('job_id'),
+                                add_timestamp=True
+                            )
+                            logger.info(f"Auto-saved outline to: {saved_path}")
+                    except Exception as save_err:
+                        logger.warning(f"Failed to auto-save outline: {save_err}")
+                except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
+                    SessionManager.set_error(f"API Error generating outline: {str(api_err)}")
+                    SessionManager.set_status("Outline generation failed.")
+                except Exception as e:
+                    logger.exception(f"Unexpected error during outline generation: {e}")
+                    SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
+                    SessionManager.set_status("Outline generation failed.")
+        
+        with col2:
+            if st.button("📁 I have outline already", key="load_outline_btn"):
+                # Show option to load from saved outlines
+                auto_save_manager = SessionManager.get_auto_save_manager()
+                project_name = SessionManager.get('project_name')
+                if project_name:
+                    saved_outlines = auto_save_manager.list_saved_outlines(project_name)
+                    if saved_outlines:
+                        st.write("**Available saved outlines:**")
+                        for i, outline_info in enumerate(saved_outlines):
+                            col_load, col_info = st.columns([1, 3])
+                            with col_load:
+                                if st.button("Load", key=f"load_outline_{i}"):
+                                    try:
+                                        # Load the outline
+                                        loaded_outline = auto_save_manager.load_outline(outline_info["file_path"])
+                                        SessionManager.set('generated_outline', loaded_outline)
+                                        SessionManager.set('total_sections', len(loaded_outline.get('sections', [])))
+                                        SessionManager.set('current_section_index', 0)
+                                        SessionManager.set('generated_sections', {})
+                                        SessionManager.set('final_draft', None)
+                                        SessionManager.set('social_content', None)
+                                        SessionManager.set('job_id', outline_info.get("job_id"))
+                                        SessionManager.set_status("Outline loaded successfully from saved file.")
+                                        st.success(f"✅ Loaded outline: {outline_info['title']}")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Failed to load outline: {str(e)}")
+                            with col_info:
+                                st.caption(f"**{outline_info['title']}** ({outline_info['filename']})")
+                                if outline_info.get('saved_at'):
+                                    st.caption(f"Saved: {outline_info['saved_at'][:19]}")
+                    else:
+                        st.info("No saved outlines found for this project.")
+                else:
+                    st.warning("Please set a project name first.")
 
         # Display Outline
         outline = SessionManager.get('generated_outline')
@@ -741,8 +844,44 @@ class BlogDraftUI:
             st.warning("The generated outline has no sections.")
             return
 
-        st.progress(current_section_index / total_sections if total_sections > 0 else 0)
-        st.write(f"Progress: {current_section_index}/{total_sections} sections generated.")
+        # Resume from saved draft option
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.progress(current_section_index / total_sections if total_sections > 0 else 0)
+            st.write(f"Progress: {current_section_index}/{total_sections} sections generated.")
+        
+        with col2:
+            if st.button("📁 I have draft already", key="load_draft_btn"):
+                # Show option to load from saved drafts
+                auto_save_manager = SessionManager.get_auto_save_manager()
+                if project_name:
+                    saved_drafts = auto_save_manager.list_saved_drafts(project_name)
+                    if saved_drafts:
+                        st.write("**Available saved drafts:**")
+                        for i, draft_info in enumerate(saved_drafts):
+                            col_load, col_info = st.columns([1, 3])
+                            with col_load:
+                                if st.button("Load", key=f"load_draft_{i}"):
+                                    try:
+                                        # Load the draft
+                                        loaded_draft = auto_save_manager.load_draft_content(draft_info["file_path"])
+                                        SessionManager.set('final_draft', loaded_draft)
+                                        SessionManager.set('job_id', draft_info.get("job_id"))
+                                        SessionManager.set_status("Blog draft loaded successfully from saved file.")
+                                        st.success(f"✅ Loaded draft: {draft_info['filename']}")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Failed to load draft: {str(e)}")
+                            with col_info:
+                                st.caption(f"**{draft_info['filename']}**")
+                                if draft_info.get('saved_at'):
+                                    st.caption(f"Saved: {draft_info['saved_at'][:19]}")
+                    else:
+                        st.info("No saved drafts found for this project.")
+                else:
+                    st.warning("Please set a project name first.")
+        
         st.markdown("---")
 
         # --- Section Generation ---
@@ -838,6 +977,22 @@ class BlogDraftUI:
                     SessionManager.set('final_draft', final_draft_content)
                     SessionManager.set_status("Draft compiled successfully in frontend.")
                     logger.info(f"Draft compiled in frontend for job ID: {job_id}")
+                    
+                    # Auto-save the compiled blog draft
+                    try:
+                        auto_save_manager = SessionManager.get_auto_save_manager()
+                        project_name = SessionManager.get('project_name')
+                        if project_name and final_draft_content:
+                            saved_path = auto_save_manager.save_blog_draft(
+                                project_name=project_name,
+                                draft_content=final_draft_content,
+                                job_id=job_id,
+                                add_timestamp=True
+                            )
+                            logger.info(f"Auto-saved blog draft to: {saved_path}")
+                    except Exception as save_err:
+                        logger.warning(f"Failed to auto-save blog draft: {save_err}")
+                    
                     st.rerun() # Rerun to update UI and show compiled draft
                 except Exception as e:
                     logger.exception(f"Unexpected error during draft compilation: {e}")
@@ -974,12 +1129,53 @@ class RefinementUI:
     def render(self):
         st.header("3. Refine & Finalize Blog")
 
-        if not SessionManager.get('final_draft'):
-            st.warning("Please compile the draft on the 'Blog Draft' tab first.")
-            return
-
+        final_draft = SessionManager.get('final_draft')
         job_id = SessionManager.get('job_id')
         project_name = SessionManager.get('project_name')
+
+        if not final_draft:
+            st.warning("No blog draft found in current session.")
+            
+            # Add upload option for resuming with existing draft
+            st.subheader("📁 Resume with Existing Draft")
+            st.info("Upload your previously generated blog draft to continue with refinement.")
+            
+            uploaded_file = st.file_uploader(
+                "Choose your blog draft file", 
+                type=['md', 'txt'],
+                help="Upload a markdown (.md) or text (.txt) file containing your blog draft"
+            )
+            
+            if uploaded_file is not None:
+                # Read the uploaded file
+                draft_content = uploaded_file.read().decode('utf-8')
+                
+                # Preview the uploaded content
+                st.subheader("📝 Preview Uploaded Draft")
+                with st.expander("View uploaded content", expanded=False):
+                    st.markdown(draft_content)
+                
+                # Allow user to set project name if not available
+                if not project_name:
+                    project_name = st.text_input(
+                        "Project Name", 
+                        value=uploaded_file.name.split('.')[0],
+                        help="Enter a name for this project"
+                    )
+                
+                if st.button("Use This Draft for Refinement", key="use_uploaded_draft"):
+                    if project_name:
+                        # Store the uploaded draft in session state
+                        SessionManager.set('final_draft', draft_content)
+                        SessionManager.set('project_name', project_name)
+                        # Clear any existing job_id since we're starting fresh
+                        SessionManager.set('job_id', None)
+                        st.success("✅ Draft loaded successfully! You can now refine it.")
+                        st.rerun()
+                    else:
+                        st.error("Please enter a project name.")
+            
+            return
         # final_draft = SessionManager.get('final_draft') # This is the unrefined draft
 
         # Removed the preview of the unrefined 'final_draft' from this tab.
@@ -988,39 +1184,104 @@ class RefinementUI:
 
         st.subheader("Generate Introduction, Conclusion, Summary, Titles & Suggestions") # Updated subheader
 
-        if st.button("Refine Blog", key="refine_blog_btn"):
-            SessionManager.set_status("Refining blog draft...")
-            SessionManager.clear_error()
-            try:
-                with st.spinner("Calling API to refine blog..."):
-                    # Get the compiled draft from session state
-                    compiled_draft_content = SessionManager.get('final_draft')
-                    if not compiled_draft_content:
-                        raise ValueError("Compiled draft content is missing from session state.")
+        # Resume from saved refined blog option
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            if st.button("Refine Blog", key="refine_blog_btn"):
+                SessionManager.set_status("Refining blog draft...")
+                SessionManager.clear_error()
+                try:
+                    with st.spinner("Calling API to refine blog..."):
+                        # Get the compiled draft from session state
+                        compiled_draft_content = SessionManager.get('final_draft')
+                        if not compiled_draft_content:
+                            raise ValueError("Compiled draft content is missing from session state.")
 
-                    # Call the API client function, passing the compiled draft
-                    result = asyncio.run(api_client.refine_blog(
-                        project_name=project_name,
-                        job_id=job_id,
-                        compiled_draft=compiled_draft_content, # Pass the draft content
-                        base_url=SessionManager.get('api_base_url')
-                    ))
-                # Store the results from the API response
-                SessionManager.set('refined_draft', result.get('refined_draft')) # This should be the final text
-                SessionManager.set('summary', result.get('summary'))
-                SessionManager.set('title_options', result.get('title_options')) # Expecting a list of dicts
-                SessionManager.set_status("Blog refined successfully.")
-                logger.info(f"Blog refined for job ID: {job_id}")
-            except AttributeError:
-                 SessionManager.set_error("API Error: `refine_blog` function not found in `api_client.py`. Please update the client.")
-                 SessionManager.set_status("Refinement failed.")
-            except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
-                SessionManager.set_error(f"API Error refining blog: {str(api_err)}")
-                SessionManager.set_status("Refinement failed.")
-            except Exception as e:
-                logger.exception(f"Unexpected error during blog refinement: {e}")
-                SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
-                SessionManager.set_status("Refinement failed.")
+                        # Call the appropriate API client function based on whether we have a job_id
+                        if job_id:
+                            # Use regular refine_blog with job state
+                            result = asyncio.run(api_client.refine_blog(
+                                project_name=project_name,
+                                job_id=job_id,
+                                compiled_draft=compiled_draft_content, # Pass the draft content
+                                base_url=SessionManager.get('api_base_url')
+                            ))
+                        else:
+                            # Use standalone refinement for uploaded drafts without job state
+                            selected_model = SessionManager.get('selected_model', 'claude')  # Get model from session or fallback to claude
+                            result = asyncio.run(api_client.refine_standalone(
+                                project_name=project_name,
+                                compiled_draft=compiled_draft_content,
+                                model_name=selected_model,  # Use the model selected during initialization
+                                base_url=SessionManager.get('api_base_url')
+                            ))
+                    # Store the results from the API response
+                    SessionManager.set('refined_draft', result.get('refined_draft')) # This should be the final text
+                    SessionManager.set('summary', result.get('summary'))
+                    SessionManager.set('title_options', result.get('title_options')) # Expecting a list of dicts
+                    SessionManager.set_status("Blog refined successfully.")
+                    logger.info(f"Blog refined for job ID: {job_id}")
+                    
+                    # Auto-save the refined blog content
+                    try:
+                        auto_save_manager = SessionManager.get_auto_save_manager()
+                        refined_content = result.get('refined_draft')
+                        summary_content = result.get('summary')
+                        title_options_content = result.get('title_options', [])
+                        if project_name and refined_content:
+                            saved_path = auto_save_manager.save_refined_blog(
+                                project_name=project_name,
+                                refined_content=refined_content,
+                                summary=summary_content,
+                                title_options=title_options_content,
+                                job_id=job_id,
+                                add_timestamp=True
+                            )
+                            logger.info(f"Auto-saved refined blog to: {saved_path}")
+                    except Exception as save_err:
+                        logger.warning(f"Failed to auto-save refined blog: {save_err}")
+                except AttributeError:
+                     SessionManager.set_error("API Error: `refine_blog` function not found in `api_client.py`. Please update the client.")
+                     SessionManager.set_status("Refinement failed.")
+                except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
+                    SessionManager.set_error(f"API Error refining blog: {str(api_err)}")
+                    SessionManager.set_status("Refinement failed.")
+                except Exception as e:
+                    logger.exception(f"Unexpected error during blog refinement: {e}")
+                    SessionManager.set_error(f"An unexpected error occurred: {str(e)}")
+                    SessionManager.set_status("Refinement failed.")
+        
+        with col2:
+            if st.button("📁 I have refined already", key="load_refined_btn"):
+                # Show option to load from saved refined blogs
+                auto_save_manager = SessionManager.get_auto_save_manager()
+                if project_name:
+                    saved_refined = auto_save_manager.list_saved_refined_blogs(project_name)
+                    if saved_refined:
+                        st.write("**Available refined blogs:**")
+                        for i, refined_info in enumerate(saved_refined):
+                            col_load, col_info = st.columns([1, 3])
+                            with col_load:
+                                if st.button("Load", key=f"load_refined_{i}"):
+                                    try:
+                                        # Load the refined content
+                                        loaded_refined = auto_save_manager.load_refined_content(refined_info["file_path"])
+                                        SessionManager.set('refined_draft', loaded_refined)
+                                        SessionManager.set('job_id', refined_info.get("job_id"))
+                                        SessionManager.set_status("Refined blog loaded successfully from saved file.")
+                                        st.success(f"✅ Loaded refined blog: {refined_info['filename']}")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Failed to load refined blog: {str(e)}")
+                            with col_info:
+                                st.caption(f"**{refined_info['filename']}**")
+                                if refined_info.get('saved_at'):
+                                    st.caption(f"Saved: {refined_info['saved_at'][:19]}")
+                    else:
+                        st.info("No saved refined blogs found for this project.")
+                else:
+                    st.warning("Please set a project name first.")
 
         # Display Refinement Results
         refined_draft = SessionManager.get('refined_draft')
@@ -1083,9 +1344,47 @@ class SocialPostsUI:
     def render(self):
         st.header("4. Generate Social Media Content") # Updated header number
 
-        # Check for refined draft now
-        if not SessionManager.get('refined_draft'):
-            st.warning("Please refine the blog draft on the 'Refine & Finalize' tab first.")
+        # Check for refined draft
+        refined_draft = SessionManager.get('refined_draft')
+        
+        if not refined_draft:
+            st.info("📁 **Upload your refined blog to generate social media content**")
+            
+            # Upload section for refined blog
+            uploaded_file = st.file_uploader(
+                "Choose your refined blog file", 
+                type=['md', 'txt'],
+                help="Upload a markdown (.md) or text (.txt) file containing your refined blog"
+            )
+            
+            if uploaded_file is not None:
+                # Read the content
+                refined_content = uploaded_file.read().decode('utf-8')
+                
+                # Display preview
+                st.subheader("📄 Refined Blog Preview")
+                st.text_area("Content Preview", refined_content[:500] + "...", height=150, disabled=True)
+                
+                # Project name input
+                project_name = SessionManager.get('project_name')
+                if not project_name:
+                    project_name = st.text_input(
+                        "Project Name", 
+                        value=uploaded_file.name.split('.')[0],
+                        help="Enter a name for this project"
+                    )
+                
+                if st.button("✅ Use This Refined Blog", key="use_uploaded_refined"):
+                    if project_name and refined_content:
+                        # Store in session state
+                        SessionManager.set('refined_draft', refined_content)
+                        SessionManager.set('project_name', project_name)
+                        # Clear job_id since we're using uploaded content
+                        SessionManager.set('job_id', None)
+                        st.success("✅ Refined blog loaded successfully! You can now generate social content.")
+                        st.rerun()
+                    else:
+                        st.error("Please enter a project name.")
             return
 
         job_id = SessionManager.get('job_id')
@@ -1096,14 +1395,27 @@ class SocialPostsUI:
             SessionManager.clear_error()
             try:
                 with st.spinner("Calling API to generate social content..."):
-                    result = asyncio.run(api_client.generate_social_content(
-                        project_name=project_name,
-                        job_id=job_id,
-                        base_url=SessionManager.get('api_base_url')
-                    ))
+                    # Check if we have a job_id and use appropriate endpoint
+                    if job_id:
+                        # Use regular social content generation with job state
+                        result = asyncio.run(api_client.generate_social_content(
+                            project_name=project_name,
+                            job_id=job_id,
+                            base_url=SessionManager.get('api_base_url')
+                        ))
+                    else:
+                        # Use standalone social content generation for uploaded drafts
+                        refined_content = SessionManager.get('refined_draft')
+                        selected_model = SessionManager.get('selected_model', 'claude')
+                        result = asyncio.run(api_client.generate_social_content_standalone(
+                            project_name=project_name,
+                            refined_blog_content=refined_content,
+                            model_name=selected_model,
+                            base_url=SessionManager.get('api_base_url')
+                        ))
                 SessionManager.set('social_content', result.get('social_content'))
                 SessionManager.set_status("Social content generated.")
-                logger.info(f"Social content generated for job ID: {job_id}")
+                logger.info(f"Social content generated for project: {project_name}")
             except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
                 SessionManager.set_error(f"API Error generating social content: {str(api_err)}")
                 SessionManager.set_status("Social content generation failed.")
@@ -1125,6 +1437,24 @@ class SocialPostsUI:
 
             with st.expander("X (Twitter) Post", expanded=True):
                 st.markdown(social_content.get('x_post', 'Not available.'))
+
+            # Display Twitter Thread if available
+            x_thread = social_content.get('x_thread')
+            if x_thread:
+                with st.expander("X (Twitter) Thread", expanded=True):
+                    st.markdown(f"**Thread Topic:** {x_thread.get('thread_topic', 'N/A')}")
+                    st.markdown(f"**Total Tweets:** {x_thread.get('total_tweets', 0)}")
+                    st.markdown("---")
+                    
+                    tweets = x_thread.get('tweets', [])
+                    for tweet in tweets:
+                        tweet_num = tweet.get('tweet_number', 1)
+                        tweet_content = tweet.get('content', '')
+                        char_count = tweet.get('character_count', len(tweet_content))
+                        
+                        st.markdown(f"**Tweet {tweet_num}:** ({char_count} chars)")
+                        st.markdown(f"> {tweet_content}")
+                        st.markdown("")
 
             with st.expander("Newsletter Content", expanded=True):
                 st.markdown(social_content.get('newsletter_content', 'Not available.'))
@@ -1163,6 +1493,32 @@ class SocialPostsUI:
                         file_name=f"{SessionManager.get('project_name', 'blog')}_newsletter.md",
                         mime="text/markdown",
                         key="dl_newsletter_individual"
+                    )
+                
+                # Twitter Thread download
+                x_thread = social_content.get('x_thread')
+                if x_thread:
+                    # Format thread for download
+                    thread_content = f"# X (Twitter) Thread\n\n"
+                    thread_content += f"**Topic:** {x_thread.get('thread_topic', 'N/A')}\n\n"
+                    thread_content += f"**Total Tweets:** {x_thread.get('total_tweets', 0)}\n\n"
+                    thread_content += "---\n\n"
+                    
+                    tweets = x_thread.get('tweets', [])
+                    for tweet in tweets:
+                        tweet_num = tweet.get('tweet_number', 1)
+                        tweet_content_text = tweet.get('content', '')
+                        char_count = tweet.get('character_count', len(tweet_content_text))
+                        
+                        thread_content += f"## Tweet {tweet_num} ({char_count} chars)\n\n"
+                        thread_content += f"{tweet_content_text}\n\n"
+                    
+                    st.download_button(
+                        label="🧵 Twitter Thread (.md)",
+                        data=thread_content,
+                        file_name=f"{SessionManager.get('project_name', 'blog')}_twitter_thread.md",
+                        mime="text/markdown",
+                        key="dl_thread_individual"
                     )
             
             with col2:

@@ -67,51 +67,41 @@ Provide *only* the raw text for the summary. Do NOT include any markdown formatt
 
 # --- Title/Subtitle Generation ---
 GENERATE_TITLES_PROMPT = """
-{persona_instructions}
+You are an expert copywriter and SEO specialist tasked with generating compelling titles and subtitles for a blog post.
+The full draft of the blog post is provided below.
 
-You wrote this blog post as part of your ongoing exploration of technology topics, and now you want to create compelling titles that will resonate with your professional audience and optimize for search discoverability.
-
-**Blog Post You Wrote:**
+**Blog Draft:**
 ```markdown
 {blog_draft}
 ```
 
-**Your Task:**
-Create 3-4 different title and subtitle options for this post. Think about how you'd present this topic to different audiences - fellow professionals, practitioners exploring this area, or colleagues in your industry.
+**Task:**
+Generate 3-4 distinct and high-quality title and subtitle options for this blog post.
+Each option must include:
+1.  **Title:** Catchy, professional, simple, and SEO-optimized. Should accurately reflect the core topic.
+2.  **Subtitle:** Complements the title, provides more context, and entices the reader.
+3.  **Reasoning:** A brief explanation (1-2 sentences) justifying why this title/subtitle pair is effective (e.g., highlights key benefit, targets specific keywords, uses strong verbs, addresses audience need).
 
-For each option, include:
-1. **Title:** How you'd naturally frame this topic (clear, authoritative, professionally compelling)
-2. **Subtitle:** Additional context that clarifies the scope and value of your exploration
-3. **Reasoning:** Why this approach would attract and serve your target professional audience (balance of discoverability and genuine value)
+**Desired Output Format:**
+Provide the output as a JSON list of objects, where each object has the keys "title", "subtitle", and "reasoning".
 
-**What makes a good title from your perspective:**
-- Honest about what you actually explored and discovered in your research
-- Clear about the practical value and applications without overselling
-- Uses language that resonates with professionals seeking these insights
-- Reflects the depth of investigation and key findings from your analysis
-- Balances SEO discoverability with authentic professional communication
-
-**Different angles to consider:**
-- What key insights emerged from your investigation of this topic?
-- What practical problems does this knowledge help solve in professional contexts?
-- What would make someone in your field want to dive deeper into your research?
-- How would you frame this for different levels of technical expertise in your audience?
-- What search terms would professionals use to find content like this?
-
-**Output Format:**
-Provide your options as a JSON list:
-
+Example Format:
 ```json
 [
   {{
-    "title": "Your natural way of introducing this topic",
-    "subtitle": "Additional context that helps explain the value",
-    "reasoning": "Why you think this resonates - focus on learning value and genuine usefulness"
+    "title": "Example Title 1: Catchy and Clear",
+    "subtitle": "An engaging subtitle explaining the core benefit.",
+    "reasoning": "This option uses strong keywords for SEO and clearly states the value proposition."
+  }},
+  {{
+    "title": "Example Title 2: Question-Based",
+    "subtitle": "A subtitle that poses a relevant question to the reader.",
+    "reasoning": "Engages the reader directly and highlights a common pain point relevant to the blog's content."
   }}
 ]
 ```
 
-Remember: You're creating titles that balance professional credibility with discoverability. Focus on accurately representing the value of your research while making it appealing to professionals who would benefit from these insights.
+**Generate 3-4 options following this exact JSON format.**
 """
 
 # --- Main Content Formatting ---

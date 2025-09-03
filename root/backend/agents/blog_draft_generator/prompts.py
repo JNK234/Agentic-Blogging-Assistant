@@ -83,7 +83,7 @@ ANTI-REDUNDANCY GUIDELINES:
 - Focus on unique value this section provides to the overall narrative
 - If referencing previous concepts, do so briefly without re-explaining
 - Build upon rather than repeat previously covered material
-- Be concise - prefer clarity over comprehensive coverage
+- Be concise - prefer clarity over excessive coverage
 
 LENGTH CONSTRAINTS (IMPORTANT):
 Target Length for This Section: {target_section_length} words (estimated)
@@ -122,7 +122,17 @@ Write a focused and engaging blog section that:
    - Build concepts progressively.
    - Ensure the section ends by covering its intended scope. Avoid adding separate summary paragraphs for this section, as overall summarization is handled at the blog compilation stage and transitions will bridge to the next section.
 
-2. Content Preservation:
+2. Writing Format:
+   - **PRIMARY APPROACH**: Write in well-structured paragraphs that develop each concept clearly
+   - **AVOID UNNECESSARY LISTS**: Do not automatically convert every concept into bullet points or numbered lists
+   - **USE LISTS ONLY WHEN**: 
+     * Providing step-by-step instructions that must be followed in order
+     * Comparing distinct features, tools, or approaches side-by-side
+     * Listing specific requirements, dependencies, or prerequisites
+     * Enumerating clear, separate items that don't benefit from paragraph explanation
+   - **NATURAL FLOW**: Connect ideas between paragraphs smoothly
+
+3. Content Preservation:
    - Prioritize using content from the original document
    - Maintain the original explanations and examples where possible
    - Preserve the logical flow of the original content
@@ -166,12 +176,18 @@ Format Guidelines:
 - This "content" field MUST be a string containing well-formed Markdown.
 - **CODE BLOCK WARNING**: Only include code blocks (```language ... ```) if `current_section_data.include_code` is `true`
 - Within this Markdown string in the "content" field:
-    - Use Markdown formatting (headings, lists, bold, italics, etc.).
+    - **PRIMARY FORMAT**: Write comprehensive explanations in well-structured paragraphs. Each paragraph should develop a complete thought or concept.
+    - **PARAGRAPH STRUCTURE**: Use multiple paragraphs to explore topics in depth. Connect ideas smoothly with transitional phrases.
+    - Use Markdown formatting (headings, bold, italics, etc.) to enhance readability within paragraphs.
     - Include code blocks with language specification ONLY if `include_code` is `true` (e.g., ```python ... ```).
-    - Use tables for comparing approaches.
-    - Add bullet points for key concepts.
-    - Include technical notes and warnings.
-    - Reference external documentation where relevant.
+    - Use tables for comparing approaches when appropriate.
+    - **LISTS ONLY WHEN NECESSARY**: Use bullet points or numbered lists ONLY for:
+        - Step-by-step procedures or instructions
+        - Comparing multiple distinct options or features
+        - Listing prerequisites, dependencies, or requirements
+        - Enumerating clear, distinct items that don't need paragraph explanations
+    - Include technical notes and warnings as separate paragraphs with appropriate emphasis.
+    - Reference external documentation where relevant, integrating citations naturally into paragraph text.
 - Ensure LaTeX formulas are correctly embedded in the Markdown (e.g., $E=mc^2$ or $$ \sum x_i $$).
 - **Adherence to Source**: The generated Markdown in the "content" field must strictly adhere to the provided 'RELEVANT CONTENT' and structural information. Avoid introducing external knowledge or hallucinated details.
 
@@ -236,13 +252,14 @@ ADDITIONAL RELEVANT CONTENT:
 TASK:
 Enhance the existing content by:
 1. **STRICTLY ENFORCING CONSTRAINTS:** Follow the include_code flag absolutely - NO EXCEPTIONS
-2. Following the original document structure where applicable
-3. Preserving the logical flow of the original content
-4. Adding more technical depth where needed (conceptual only if include_code is false)
-5. Improving explanations and clarity
-6. Clarifying complex concepts
-7. Adding best practices and tips (non-implementation focused if include_code is false)
-8. Ensuring all learning goals are thoroughly addressed
+2. **PARAGRAPH-BASED FORMATTING:** Convert unnecessary bullet points to well-structured paragraphs unless they serve specific purposes (step-by-step instructions, comparing options, listing requirements)
+3. Following the original document structure where applicable
+4. Preserving the logical flow of the original content
+5. Adding more technical depth where needed (conceptual only if include_code is false)
+6. Improving explanations and clarity
+7. Clarifying complex concepts
+8. Adding best practices and tips (non-implementation focused if include_code is false)
+9. Ensuring all learning goals are thoroughly addressed
 
 **CONTENT GROUNDING REQUIREMENTS:**
 - **Crucially, all enhanced content must be based *solely* on the information present in the 'CURRENT CONTENT', 'ADDITIONAL RELEVANT CONTENT', 'ORIGINAL DOCUMENT STRUCTURE', and 'STRUCTURAL INSIGHTS' provided**

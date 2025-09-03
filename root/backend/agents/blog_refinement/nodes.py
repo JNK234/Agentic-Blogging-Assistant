@@ -92,24 +92,39 @@ async def generate_titles_node(state: BlogRefinementState, model: BaseModel, per
     if state.error: return {"error": state.error}
 
     try:
-        # Get persona instructions if persona_service is provided
-        persona_instructions = ""
-        if persona_service:
-            persona_instructions = persona_service.get_persona_prompt("student_sharing")
-        
         prompt = GENERATE_TITLES_PROMPT.format(
-            persona_instructions=persona_instructions,
             blog_draft=state.original_draft
         )
+        
+        logger.info(f"Generated prompt length: {len(prompt)}")
         response = await model.ainvoke(prompt)
 
         # Clean and parse JSON
         cleaned_response = response.strip()
+        
+        # Enhanced debugging
+        logger.info(f"Raw model response: '{response}'")
+        logger.info(f"Response length: {len(response)}")
+        logger.info(f"Response type: {type(response)}")
+        
+        # Handle empty response
+        if not cleaned_response:
+            logger.error("Model returned empty response")
+            # Create fallback title options
+            fallback_options = [{
+                "title": "Technical Deep Dive",
+                "subtitle": "Exploring key concepts and practical applications", 
+                "reasoning": "Fallback title due to generation error"
+            }]
+            return {"title_options": fallback_options}
+        
         if cleaned_response.startswith("```json"):
             cleaned_response = cleaned_response[7:]
         if cleaned_response.endswith("```"):
             cleaned_response = cleaned_response[:-3]
         cleaned_response = cleaned_response.strip()
+        
+        logger.info(f"Cleaned response: '{cleaned_response}'")
 
         try:
             title_data = json.loads(cleaned_response)
@@ -126,8 +141,14 @@ async def generate_titles_node(state: BlogRefinementState, model: BaseModel, per
             return {"title_options": options} # Store list of dicts
 
         except (json.JSONDecodeError, ValueError, ValidationError) as parse_err: # Catch Pydantic validation errors too
-            logger.error(f"Failed to parse/validate title options: {parse_err}. Raw response: {response}")
-            return {"error": f"Failed to parse or validate title options: {parse_err}"}
+            logger.error(f"Failed to parse/validate title options: {parse_err}. Raw response: '{response}', Cleaned: '{cleaned_response}'")
+            # Create fallback title options on parse error
+            fallback_options = [{
+                "title": "Technical Analysis", 
+                "subtitle": "Key insights and practical considerations",
+                "reasoning": f"Fallback title due to parse error: {parse_err}"
+            }]
+            return {"title_options": fallback_options}
 
     except Exception as e:
         logger.exception("Error in generate_titles_node")

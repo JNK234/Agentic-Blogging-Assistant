@@ -359,6 +359,9 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
     ) -> Optional[str]: # Return only content (cache status not relevant for direct regen call)
         """Regenerates a section with user feedback, updating the cache."""
         section_title = section.get('title', 'Unknown Section')
+        
+        # Calculate outline hash
+        outline_hash = hashlib.sha256(json.dumps(outline, sort_keys=True).encode()).hexdigest()
         logging.info(f"Regenerating section with feedback: {section_title} (Project: {project_name}, OutlineHash: {outline_hash})")
 
         # Find the section index

@@ -1437,6 +1437,55 @@ async def refine_blog(
             status_code=500
         )
 
+@app.post("/refine_standalone/{project_name}")
+async def refine_standalone(
+    project_name: str,
+    compiled_draft: str = Form(...),
+    model_name: str = Form("gemini")
+) -> JSONResponse:
+    """Refine a blog draft without requiring job state - for resuming after expiry."""
+    try:
+        logger.info(f"Standalone refinement for project: {project_name}")
+        
+        # Get or create agents using provided model name
+        agents = await get_or_create_agents(model_name)
+        refinement_agent = agents["refinement_agent"]
+
+        # Run refinement directly without job state
+        logger.info(f"Refining blog draft for project: {project_name}")
+        refinement_result = await refinement_agent.refine_blog_with_graph(
+            blog_draft=compiled_draft
+        )
+
+        if not refinement_result:
+            return JSONResponse(
+                content={"error": "Failed to refine blog draft."},
+                status_code=500
+            )
+
+        logger.info(f"Successfully refined blog for project: {project_name}")
+
+        return JSONResponse(
+            content={
+                "project_name": project_name,
+                "refined_draft": refinement_result.refined_draft,
+                "summary": refinement_result.summary,
+                "title_options": [option.model_dump() for option in refinement_result.title_options],
+                "status": "completed"
+            }
+        )
+
+    except Exception as e:
+        logger.exception(f"Error in standalone refinement for project {project_name}")
+        error_detail = {
+            "error": "Standalone blog refinement failed",
+            "details": str(e)
+        }
+        return JSONResponse(
+            content=error_detail,
+            status_code=500
+        )
+
 @app.post("/generate_social_content/{project_name}")
 async def generate_social_content(
     project_name: str,
@@ -1492,7 +1541,8 @@ async def generate_social_content(
         logger.info(f"Generating comprehensive social content for job_id: {job_id}")
         social_content = await social_agent.generate_comprehensive_content(
             blog_content=refined_draft,
-            blog_title=blog_title
+            blog_title=blog_title,
+            persona=""  # No persona - use natural model voice
         )
 
         if not social_content:
@@ -1525,6 +1575,75 @@ async def generate_social_content(
             },
             status_code=500
         )
+
+
+@app.post("/generate_social_content_standalone/{project_name}")
+async def generate_social_content_standalone(
+    project_name: str,
+    refined_blog_content: str = Form(...),
+    model_name: str = Form(...)
+) -> JSONResponse:
+    """Generate social media content from refined blog content without requiring job state."""
+    try:
+        logger.info(f"Generating standalone social content for project: {project_name}")
+        
+        # Get or create agents using the provided model
+        agents = await get_or_create_agents(model_name)
+        social_agent = agents.get("social_agent")
+
+        if not social_agent:
+            return JSONResponse(
+                content={"error": "Social media agent could not be initialized."},
+                status_code=500
+            )
+
+        # Extract blog title from the refined content (try to get first heading)
+        blog_title = project_name  # Fallback to project name
+        lines = refined_blog_content.split('\n')
+        for line in lines:
+            line = line.strip()
+            if line.startswith('# '):
+                blog_title = line[2:].strip()
+                break
+            elif line.startswith('## '):
+                blog_title = line[3:].strip()
+                break
+
+        # Generate comprehensive social content
+        logger.info(f"Generating comprehensive social content for standalone project: {project_name}")
+        social_content = await social_agent.generate_comprehensive_content(
+            blog_content=refined_blog_content,
+            blog_title=blog_title,
+            persona=""  # No persona - use natural model voice
+        )
+
+        if not social_content:
+            return JSONResponse(
+                content={"error": "Failed to generate social media content."},
+                status_code=500
+            )
+
+        # Convert to API response format
+        social_content_response = social_content.to_api_response()
+
+        return JSONResponse(
+            content={
+                "project_name": project_name,
+                "social_content": social_content_response
+            }
+        )
+
+    except Exception as e:
+        logger.exception(f"Standalone social content generation failed: {str(e)}")
+        return JSONResponse(
+            content={
+                "error": f"Standalone social content generation failed: {str(e)}",
+                "type": str(type(e).__name__),
+                "details": str(e)
+            },
+            status_code=500
+        )
+
 
 @app.post("/generate_twitter_thread/{project_name}")
 async def generate_twitter_thread(
