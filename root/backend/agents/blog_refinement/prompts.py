@@ -222,3 +222,34 @@ If there is repeated content, remove that, the entire content has to be meaningf
 **Flow**
 Thee flow of the content should have an introduction, the main content, the summary and conclusion
 """
+
+# --- Redundancy Reduction ---
+REDUCE_REDUNDANCY_PROMPT = """
+You are an expert technical editor specializing in content optimization and redundancy reduction.
+The full draft of the blog post is provided below.
+
+**Blog Draft:**
+```markdown
+{blog_draft}
+```
+
+**Task:**
+Analyze the blog post for redundant content and produce a refined version with redundancies removed or reduced.
+Focus on:
+
+1. **Repeated Information**: Identify and consolidate information that appears multiple times throughout the post
+2. **Overlapping Sections**: Merge sections that cover similar topics
+3. **Redundant Examples**: Keep only the most illustrative examples when multiple similar ones exist
+4. **Verbose Phrasing**: Replace wordy expressions with concise alternatives
+5. **Circular Arguments**: Remove content that reiterates the same point without adding new value
+
+**Important Guidelines:**
+- Preserve all unique and valuable information
+- Maintain the logical flow and structure of the content
+- Keep the technical accuracy intact
+- Ensure that removing redundancy doesn't create gaps in understanding
+- Retain at least one instance of important concepts for clarity
+
+**Output:**
+Provide the complete refined blog post with redundancies removed. Output only the markdown content without any explanations or meta-commentary.
+"""

@@ -18,6 +18,7 @@ from root.backend.agents.blog_refinement.nodes import (
     generate_summary_node,
     generate_titles_node,
     suggest_clarity_flow_node, # Import the new node function
+    reduce_redundancy_node,  # Import the redundancy reduction node
     assemble_refined_draft_node
 )
 
@@ -46,6 +47,7 @@ async def create_refinement_graph(model: BaseModel, persona_service=None) -> Sta
     graph.add_node("generate_summary", partial(generate_summary_node, model=model))
     graph.add_node("generate_titles", partial(generate_titles_node, model=model, persona_service=persona_service))
     graph.add_node("suggest_clarity_flow", partial(suggest_clarity_flow_node, model=model)) # Add the new node
+    graph.add_node("reduce_redundancy", partial(reduce_redundancy_node, model=model))  # Add redundancy reduction node
     # This node doesn't need the model, so no binding is necessary
     graph.add_node("assemble_draft", assemble_refined_draft_node)
 
@@ -64,7 +66,8 @@ async def create_refinement_graph(model: BaseModel, persona_service=None) -> Sta
     graph.add_edge("generate_conclusion", "generate_summary")
     graph.add_edge("generate_summary", "generate_titles")
     graph.add_edge("generate_titles", "assemble_draft") # Titles goes to assemble
-    graph.add_edge("assemble_draft", "suggest_clarity_flow") # Assemble goes to clarity/flow
+    graph.add_edge("assemble_draft", "reduce_redundancy") # Assemble goes to redundancy reduction
+    graph.add_edge("reduce_redundancy", "suggest_clarity_flow") # Redundancy reduction goes to clarity/flow
     graph.add_edge("suggest_clarity_flow", END) # Clarity/flow is the last step before END
 
     # Compile the graph into a runnable application
