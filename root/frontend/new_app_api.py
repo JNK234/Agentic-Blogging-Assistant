@@ -19,6 +19,8 @@ import io
 # Import the API client functions
 import api_client
 from auto_save_manager import AutoSaveManager
+from services.project_service import ProjectService
+from components.project_manager import ProjectManagerUI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -79,6 +81,14 @@ class SessionManager:
                 'is_initialized': False, # Flag to indicate if setup is complete
                 'error_message': None,
                 'status_message': "Please initialize the assistant.",
+                # Project Management State
+                'current_project_id': None,
+                'current_project_name': None,
+                'project_milestones': {},
+                'resume_point': None,
+                'project_metadata': {},
+                'available_projects': [],
+                'show_archived_projects': False,
             }
             logger.info("Initialized session state.")
 
@@ -109,6 +119,26 @@ class SessionManager:
         """Sets a status message."""
         st.session_state.api_app_state['status_message'] = message
         logger.info(f"UI Status Set: {message}")
+    
+    @staticmethod
+    def reset_project_state():
+        """Resets all project-related state for switching projects."""
+        keys_to_reset = [
+            'project_name', 'selected_model', 'uploaded_files_info', 'processed_file_paths',
+            'processed_file_hashes', 'notebook_hash', 'markdown_hash', 'python_hashes',
+            'job_id', 'generated_outline', 'generated_sections', 'final_draft', 'refined_draft',
+            'summary', 'title_options', 'social_content', 'current_section_index', 'total_sections',
+            'is_initialized', 'error_message'
+        ]
+        for key in keys_to_reset:
+            st.session_state.api_app_state[key] = None if key not in ['uploaded_files_info', 'processed_file_paths', 
+                                                                     'processed_file_hashes', 'python_hashes', 
+                                                                     'generated_sections'] else []
+        st.session_state.api_app_state['current_section_index'] = 0
+        st.session_state.api_app_state['total_sections'] = 0
+        st.session_state.api_app_state['is_initialized'] = False
+        st.session_state.api_app_state['status_message'] = "Project switched. Please initialize if needed."
+        logger.info("Project state reset for switching projects.")
 
 
 # --- Helper Functions ---
@@ -531,6 +561,18 @@ class SidebarUI:
             if st.button("Check API Connection"):
                 self._check_api_health(api_base_url)
 
+            st.markdown("---")
+            
+            # Project Management Section
+            try:
+                project_manager = ProjectManagerUI(SessionManager, api_base_url)
+                project_manager.render()
+            except Exception as e:
+                st.error(f"Project manager error: {str(e)}")
+                logger.error(f"Project manager error: {e}")
+
+            st.markdown("---")
+
             # Initialization Form
             with st.form("init_form"):
                 st.subheader("Initialize Project")
@@ -647,6 +689,13 @@ class SidebarUI:
         SessionManager.set('notebook_hash', next((h for p, h in file_hashes.items() if p.endswith(".ipynb")), None))
         SessionManager.set('markdown_hash', next((h for p, h in file_hashes.items() if p.endswith(".md")), None))
         SessionManager.set('python_hashes', [h for p, h in file_hashes.items() if p.endswith(".py")]) # Store potentially multiple python hashes
+
+        # Try to get project_id from upload result (assumes backend creates project during upload)
+        project_id = upload_result.get("project_id")
+        if project_id:
+            SessionManager.set('current_project_id', project_id)
+            SessionManager.set('current_project_name', project_name)
+            logger.info(f"Project created with ID: {project_id}")
 
         SessionManager.set_status("Assistant Initialized Successfully!")
         SessionManager.set('is_initialized', True)
@@ -1590,12 +1639,16 @@ class BloggingAssistantAPIApp:
         elif status_message and not SessionManager.get('is_initialized'): # Show status only if not initialized
              st.info(status_message)
 
+        # Show current project context
+        current_project_name = SessionManager.get('current_project_name')
+        if current_project_name:
+            st.markdown(f"### 📝 Current Project: **{current_project_name}**")
+            st.markdown("---")
 
         if SessionManager.get('is_initialized'):
-            # Create tabs only after initialization, including the new Refine tab
-            tab_outline, tab_draft, tab_refine, tab_social = st.tabs([
-                "1. Outline", "2. Blog Draft", "3. Refine & Finalize", "4. Social Posts"
-            ])
+            # Create tabs with progress indicators
+            tab_labels = self._get_tab_labels_with_progress()
+            tab_outline, tab_draft, tab_refine, tab_social = st.tabs(tab_labels)
 
             with tab_outline:
                 self.outline_generator.render()
@@ -1603,7 +1656,7 @@ class BloggingAssistantAPIApp:
             with tab_draft:
                 self.blog_draft.render()
 
-            with tab_refine: # Added tab rendering
+            with tab_refine:
                 self.refinement.render()
 
             with tab_social:
@@ -1612,6 +1665,24 @@ class BloggingAssistantAPIApp:
             # Optionally show a placeholder if not initialized
             st.markdown("---")
             st.info("⬅️ Please configure and initialize the assistant using the sidebar.")
+    
+    def _get_tab_labels_with_progress(self):
+        """Generate tab labels with progress indicators."""
+        # Check completion status for each milestone
+        has_outline = SessionManager.get('generated_outline') is not None
+        has_draft = SessionManager.get('final_draft') is not None
+        has_refined = SessionManager.get('refined_draft') is not None
+        has_social = SessionManager.get('social_content') is not None
+        
+        # Generate labels with status indicators
+        labels = [
+            f"1. Outline {'✅' if has_outline else '⏳'}",
+            f"2. Blog Draft {'✅' if has_draft else '⏳'}",
+            f"3. Refine & Finalize {'✅' if has_refined else '⏳'}",
+            f"4. Social Posts {'✅' if has_social else '⏳'}"
+        ]
+        
+        return labels
 
 
 # --- Application Entry Point ---
