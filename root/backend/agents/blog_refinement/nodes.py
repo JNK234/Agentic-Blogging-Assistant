@@ -14,7 +14,8 @@ from root.backend.agents.blog_refinement.prompts import (
     GENERATE_CONCLUSION_PROMPT,
     GENERATE_SUMMARY_PROMPT,
     GENERATE_TITLES_PROMPT,
-    SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT # Import the new prompt
+    SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT, # Import the new prompt
+    REDUCE_REDUNDANCY_PROMPT  # Import the redundancy reduction prompt
 )
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,36 @@ async def suggest_clarity_flow_node(state: BlogRefinementState, model: BaseModel
     except Exception as e:
         logger.exception("Error in suggest_clarity_flow_node")
         return {"error": f"Clarity/flow suggestion generation failed: {str(e)}"}
+
+
+async def reduce_redundancy_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+    """Node to reduce redundancy in the blog content."""
+    logger.info("Node: reduce_redundancy_node")
+    # Access Pydantic model fields directly
+    if state.error: return {"error": state.error}
+
+    try:
+        # Use the refined draft if available, otherwise use original draft
+        draft_to_refine = state.refined_draft if state.refined_draft else state.original_draft
+        
+        if not draft_to_refine:
+            logger.error("No draft found in state for redundancy reduction.")
+            return {"error": "No draft available for redundancy reduction."}
+
+        prompt = REDUCE_REDUNDANCY_PROMPT.format(blog_draft=draft_to_refine)
+        response = await model.ainvoke(prompt)
+        
+        if isinstance(response, str) and response.strip():
+            logger.info("Redundancy reduction completed successfully.")
+            # Update the refined draft with the redundancy-reduced version
+            return {"refined_draft": response.strip()}
+        else:
+            logger.warning(f"Redundancy reduction returned empty/invalid response: {response}")
+            # If no reduction needed, keep the original
+            return {"refined_draft": draft_to_refine}
+    except Exception as e:
+        logger.exception("Error in reduce_redundancy_node")
+        return {"error": f"Redundancy reduction failed: {str(e)}"}
 
 
 def assemble_refined_draft_node(state: BlogRefinementState) -> Dict[str, Any]:

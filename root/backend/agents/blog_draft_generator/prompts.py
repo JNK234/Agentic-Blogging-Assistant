@@ -2,6 +2,39 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from root.backend.agents.blog_draft_generator.state import ContentReference, CodeExample, DraftSection, ImagePlaceholder
 
+# Expert Writing Principles for contextual content generation
+EXPERT_WRITING_PRINCIPLES = """**CONTEXTUAL CONTENT GENERATION PRINCIPLES:**
+
+VOICE AUTHENTICITY:
+- Embody expert practitioner sharing insights with peers
+- Use conversational authority: balance confidence with appropriate uncertainty
+- Apply strategic vulnerability: acknowledge limitations and share learning moments
+- Create reader partnership: collaborative exploration rather than one-way information transfer
+
+STRUCTURAL INTELLIGENCE:
+- Apply "Context-Definition-Application" pattern for introducing new concepts
+- Use "Pyramid of Clarity" organization when content has varying complexity levels
+- Employ "Time-Context-Question" introductions for historically relevant topics
+- Adapt paragraph length based on content function: brief hooks, detailed explanations, bridge transitions
+
+ENGAGEMENT MASTERY:
+- Build genuine curiosity through strategic questions and surprising observations
+- Apply engagement formulas contextually: "Surprise-Insight-Application", "Historical-Current-Future"
+- Create narrative structure with setup → exploration → insight → implications
+- Use natural variation in sentence structure and transition phrases
+
+COMPLEXITY ADAPTATION:
+- Assess content depth and adjust complexity layering appropriately
+- Start with value proposition before diving into implementation details
+- Use progressive disclosure only when content complexity actually varies
+- Connect abstract concepts to practical applications throughout
+
+NATURAL LANGUAGE FLOW:
+- Vary sentence structure for reading rhythm (short declarations, medium explanations, longer analysis)
+- Use organic transitions that emerge from content logic, not forced patterns
+- Apply personal insights and observations when they add genuine value
+- Maintain technical precision while ensuring accessibility to intended audience"""
+
 # Initialize parsers
 content_mapping_parser = PydanticOutputParser(pydantic_object=ContentReference)
 section_generation_parser = PydanticOutputParser(pydantic_object=DraftSection)
@@ -46,6 +79,8 @@ Your output MUST be a valid JSON object that includes:
 # Section Generation Prompt
 SECTION_GENERATION_PROMPT = PromptTemplate(
     template="""{persona_instructions}
+
+{expert_writing_principles}
 
 Generate a focused and clear blog section based on the following information:
 
@@ -98,6 +133,19 @@ Length Priority: {length_priority} (expand/maintain/compress - adjust content de
 - If length_priority is "expand": Include additional context and examples as needed
 - Always prefer quality explanations over padding content to meet length targets
 
+**SECTION CONTEXT:**
+Title: {section_title}
+Learning Goals: {learning_goals}
+Content Depth: Adapt complexity and engagement based on material analysis
+Audience: Fellow practitioners seeking both understanding and practical insights
+
+**GENERATION APPROACH:**
+1. Analyze the content requirements and determine appropriate complexity level
+2. Choose narrative structure that best serves the material (not predetermined formula)
+3. Apply engagement principles naturally based on content opportunities
+4. Use expert practitioner voice with contextual authority and appropriate vulnerability
+5. Create reading experience that serves the learner's journey, not style compliance
+
 TASK:
 Write a focused and engaging blog section that adheres strictly to the provided constraints:
 
@@ -110,7 +158,9 @@ Write a focused and engaging blog section that adheres strictly to the provided 
 - **Subpoint Limit:** The number of distinct sub-topics or points discussed should not exceed `current_section_data.max_subpoints`. Be concise if the limit is low.
 - **Code Example Limit:** If and ONLY if `include_code` is `true`, generate a maximum of `current_section_data.max_code_examples` relevant code snippets. Choose the most illustrative examples.
 
-**TASK:**
+Generate section content that embodies these principles while serving the specific learning goals and maintaining technical accuracy.
+
+**CONTENT GENERATION:**
 Write a focused and engaging blog section that:
 
 1. Structure:
@@ -200,6 +250,7 @@ Ensure the "content" field's Markdown is:
     """,
     input_variables=[
         "persona_instructions",
+        "expert_writing_principles",
         "format_instructions",
         "section_title",
         "learning_goals",

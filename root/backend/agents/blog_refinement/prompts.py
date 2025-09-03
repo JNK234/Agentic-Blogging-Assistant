@@ -70,38 +70,64 @@ GENERATE_TITLES_PROMPT = """
 You are an expert copywriter and SEO specialist tasked with generating compelling titles and subtitles for a blog post.
 The full draft of the blog post is provided below.
 
-**Blog Draft:**
+Create compelling titles that reflect how an expert practitioner would share insights with peers. Your titles should communicate clear value and specific outcomes while maintaining the authentic voice of someone sharing hard-earned knowledge.
+
+**EXPERT PRACTITIONER TITLE PHILOSOPHY:**
+You're not creating marketing copy—you're offering genuine insights to fellow practitioners who value substance over style. Your titles should reflect the same conversational authority and strategic clarity found in the best technical writing.
+
+**BLOG POST ANALYSIS:**
 ```markdown
 {blog_draft}
 ```
 
-**Task:**
-Generate 3-4 distinct and high-quality title and subtitle options for this blog post.
-Each option must include:
-1.  **Title:** Catchy, professional, simple, and SEO-optimized. Should accurately reflect the core topic.
-2.  **Subtitle:** Complements the title, provides more context, and entices the reader.
-3.  **Reasoning:** A brief explanation (1-2 sentences) justifying why this title/subtitle pair is effective (e.g., highlights key benefit, targets specific keywords, uses strong verbs, addresses audience need).
+**TITLE CREATION PRINCIPLES:**
 
-**Desired Output Format:**
-Provide the output as a JSON list of objects, where each object has the keys "title", "subtitle", and "reasoning".
+1. **Direct Value Communication**:
+   - Promise specific learning outcomes based on actual content
+   - Use concrete language over abstract descriptions
+   - Lead with the most valuable insight or practical outcome
+   - Reflect the expert practitioner's authentic voice
 
-Example Format:
+2. **Contextual Specificity**:
+   - Include relevant technical context (when appropriate)
+   - Specify the scope and application domain
+   - Use precise terminology that signals expertise
+   - Avoid generic technology labels when specifics matter
+
+3. **Natural Language Patterns**:
+   - Use conversational phrasing that sounds natural, not corporate
+   - Apply the narrative elements present in the content
+   - Reflect any historical context or evolution presented
+   - Match the sophistication level of the content
+
+4. **Engagement Through Curiosity**:
+   - Pose questions when content explores open problems
+   - Highlight surprising insights or counterintuitive findings
+   - Use comparison/contrast when content compares approaches
+   - Create intrigue about methodology or implementation details
+
+**ADAPTIVE TITLE APPROACHES:**
+
+Based on content analysis, choose the most appropriate approach:
+- **Evolution Narrative**: "From [Past] to [Present]: [Insight]"
+- **Practical Implementation**: "[Specific Approach] for [Specific Context]"
+- **Insight Sharing**: "Why [Observation] Matters for [Application]"
+- **Problem-Solution**: "[Challenge] and [Effective Solution]"
+- **Comparative Analysis**: "[Method A] vs [Method B]: [Key Difference]"
+
+**OUTPUT FORMAT:**
 ```json
 [
-  {{
-    "title": "Example Title 1: Catchy and Clear",
-    "subtitle": "An engaging subtitle explaining the core benefit.",
-    "reasoning": "This option uses strong keywords for SEO and clearly states the value proposition."
-  }},
-  {{
-    "title": "Example Title 2: Question-Based",
-    "subtitle": "A subtitle that poses a relevant question to the reader.",
-    "reasoning": "Engages the reader directly and highlights a common pain point relevant to the blog's content."
-  }}
+  {
+    "title": "Expert practitioner title reflecting content depth and value",
+    "subtitle": "Additional context that clarifies practical scope and technical domain",
+    "approach": "Which narrative approach this title uses and why it fits the content",
+    "value_promise": "Specific learning outcome or insight readers will gain"
+  }
 ]
 ```
 
-**Generate 3-4 options following this exact JSON format.**
+Focus on titles that authentically represent both the content depth and the expert practitioner voice—direct, valuable, and reflective of genuine technical insight sharing.
 """
 
 # --- Main Content Formatting ---
@@ -196,4 +222,35 @@ If there is repeated content, remove that, the entire content has to be meaningf
 
 **Flow**
 Thee flow of the content should have an introduction, the main content, the summary and conclusion
+"""
+
+# --- Redundancy Reduction ---
+REDUCE_REDUNDANCY_PROMPT = """
+You are an expert technical editor specializing in content optimization and redundancy reduction.
+The full draft of the blog post is provided below.
+
+**Blog Draft:**
+```markdown
+{blog_draft}
+```
+
+**Task:**
+Analyze the blog post for redundant content and produce a refined version with redundancies removed or reduced.
+Focus on:
+
+1. **Repeated Information**: Identify and consolidate information that appears multiple times throughout the post
+2. **Overlapping Sections**: Merge sections that cover similar topics
+3. **Redundant Examples**: Keep only the most illustrative examples when multiple similar ones exist
+4. **Verbose Phrasing**: Replace wordy expressions with concise alternatives
+5. **Circular Arguments**: Remove content that reiterates the same point without adding new value
+
+**Important Guidelines:**
+- Preserve all unique and valuable information
+- Maintain the logical flow and structure of the content
+- Keep the technical accuracy intact
+- Ensure that removing redundancy doesn't create gaps in understanding
+- Retain at least one instance of important concepts for clarity
+
+**Output:**
+Provide the complete refined blog post with redundancies removed. Output only the markdown content without any explanations or meta-commentary.
 """
