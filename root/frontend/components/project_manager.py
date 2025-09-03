@@ -40,8 +40,9 @@ class ProjectManagerUI:
         """Load available projects from backend."""
         try:
             show_archived = self.session_manager.get('show_archived_projects', False)
-            projects = asyncio.run(self.project_service.list_projects(archived=show_archived))
-            self.session_manager.set('available_projects', projects)
+            with st.spinner("Loading projects..."):
+                projects = asyncio.run(self.project_service.list_projects(archived=show_archived))
+                self.session_manager.set('available_projects', projects)
         except Exception as e:
             logger.error(f"Failed to load projects: {e}")
             st.error(f"Failed to load projects: {str(e)}")
@@ -103,7 +104,8 @@ class ProjectManagerUI:
             return
         
         try:
-            progress_data = asyncio.run(self.project_service.get_project_progress(current_project_id))
+            with st.spinner("Loading project progress..."):
+                progress_data = asyncio.run(self.project_service.get_project_progress(current_project_id))
             
             st.markdown("#### 📊 Progress")
             
