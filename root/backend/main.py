@@ -27,6 +27,7 @@ from root.backend.utils.serialization import serialize_object
 from root.backend.models.model_factory import ModelFactory
 from root.backend.services.vector_store_service import VectorStoreService # Added
 from root.backend.services.persona_service import PersonaService # Added
+from root.backend.services.project_manager import ProjectManager, MilestoneType, ProjectStatus # Added
 
 # Configure logging
 logging.basicConfig(
@@ -54,6 +55,9 @@ agent_cache = {}
 # Sections are now cached persistently in VectorStoreService
 # Extended TTL to 6 hours to accommodate longer user workflows
 state_cache = TTLCache(maxsize=100, ttl=21600)  # 6 hours = 21600 seconds
+
+# Initialize ProjectManager for persistent project tracking
+project_manager = ProjectManager()
 
 def refresh_job_cache(job_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -95,9 +99,11 @@ async def validate_job(job_id: str) -> JSONResponse:
 @app.post("/upload/{project_name}")
 async def upload_files(
     project_name: str,
-    files: List[UploadFile] = File(...)
+    files: List[UploadFile] = File(...),
+    model_name: Optional[str] = Form(None),
+    persona: Optional[str] = Form(None)
 ) -> JSONResponse:
-    """Upload files for a specific project."""
+    """Upload files for a specific project and create a project entry."""
     try:
         # Create project directory
         project_dir = Path(UPLOAD_DIRECTORY) / project_name
@@ -136,11 +142,34 @@ async def upload_files(
                 content={"error": "No valid files were uploaded"},
                 status_code=400
             )
+        
+        # Create project in ProjectManager
+        metadata = {
+            "model_name": model_name,
+            "persona": persona,
+            "upload_directory": str(project_dir)
+        }
+        project_id = project_manager.create_project(project_name, metadata)
+        
+        # Save files_uploaded milestone
+        milestone_data = {
+            "files": uploaded_files,
+            "file_count": len(uploaded_files),
+            "upload_time": datetime.now().isoformat()
+        }
+        project_manager.save_milestone(
+            project_id,
+            MilestoneType.FILES_UPLOADED,
+            milestone_data
+        )
+        
+        logger.info(f"Created project {project_id} with {len(uploaded_files)} uploaded files")
 
         return JSONResponse(
             content={
                 "message": "Files uploaded successfully",
                 "project": project_name,
+                "project_id": project_id,
                 "files": uploaded_files
             }
         )
@@ -325,22 +354,71 @@ async def generate_outline(
 
         # Generate a unique job ID
         job_id = str(uuid.uuid4())
+        
+        # Generate outline hash for caching/tracking
+        import hashlib
+        outline_str = json.dumps(outline_data, sort_keys=True)
+        outline_hash = hashlib.sha256(outline_str.encode()).hexdigest()[:16]
 
         # Store the state in the cache (still use in-memory cache for job state)
         state_cache[job_id] = {
             "outline": outline_data, # Store parsed data
+            "outline_hash": outline_hash,
             "notebook_content": notebook_content,
             "markdown_content": markdown_content,
             "project_name": project_name,
-            "model_name": model_name
+            "model_name": model_name,
+            "persona": writing_style  # Store persona/writing style
             # Remove "generated_sections": {} - no longer needed here
         }
         logger.info(f"Stored initial state for job_id: {job_id}")
+        
+        # Check if we have a project_id in the request or need to find it
+        # Look for existing project by name
+        projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
+        project_id = None
+        for project in projects:
+            if project.get("name") == project_name:
+                project_id = project.get("id")
+                break
+        
+        # Save outline milestone if project exists
+        if project_id:
+            milestone_data = {
+                "outline": outline_data,
+                "outline_hash": outline_hash,
+                "job_id": job_id,
+                "model_name": model_name,
+                "persona": writing_style,
+                "user_guidelines": user_guidelines,
+                "length_preference": length_preference,
+                "custom_length": custom_length,
+                "was_cached": was_cached
+            }
+            
+            project_manager.save_milestone(
+                project_id,
+                MilestoneType.OUTLINE_GENERATED,
+                milestone_data
+            )
+            
+            # Update project metadata
+            project_manager.update_metadata(project_id, {
+                "model_name": model_name,
+                "persona": writing_style,
+                "latest_job_id": job_id
+            })
+            
+            # Add project_id to state cache
+            state_cache[job_id]["project_id"] = project_id
+            
+            logger.info(f"Saved outline milestone for project {project_id}")
 
         # Return the job ID and the outline itself (for immediate display)
         return JSONResponse(
             content=serialize_object({
                 "job_id": job_id,
+                "project_id": project_id,
                 "outline": outline_data # Return the parsed outline data
             })
         )
@@ -1329,9 +1407,38 @@ async def compile_draft(
             draft_saved_to_file = True
         except IOError as io_err:
             logger.error(f"Failed to save compiled draft to file: {io_err}")
+        
+        # Save draft milestone if project exists
+        project_id = job_state.get("project_id")
+        if not project_id:
+            # Try to find project by name
+            projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
+            for project in projects:
+                if project.get("name") == project_name:
+                    project_id = project.get("id")
+                    break
+        
+        if project_id:
+            milestone_data = {
+                "compiled_blog": final_draft,
+                "job_id": job_id,
+                "compiled_at": datetime.now().isoformat(),
+                "sections_count": num_outline_sections,
+                "word_count": len(final_draft.split()),
+                "outline_hash": job_state.get("outline_hash")
+            }
+            
+            project_manager.save_milestone(
+                project_id,
+                MilestoneType.DRAFT_COMPLETED,
+                milestone_data
+            )
+            
+            logger.info(f"Saved draft milestone for project {project_id}")
 
         return JSONResponse(content={
             "job_id": job_id,
+            "project_id": project_id,
             "draft": final_draft,
             "draft_saved": draft_saved_to_file,
             "sections_compiled": num_outline_sections
@@ -1416,10 +1523,39 @@ async def refine_blog(
         job_state["refined_at"] = datetime.now().isoformat()
         
         logger.info(f"Successfully refined blog for job_id: {job_id}")
+        
+        # Save refined blog milestone if project exists
+        project_id = job_state.get("project_id")
+        if not project_id:
+            # Try to find project by name
+            projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
+            for project in projects:
+                if project.get("name") == project_name:
+                    project_id = project.get("id")
+                    break
+        
+        if project_id:
+            milestone_data = {
+                "refined_content": refinement_result.refined_draft,
+                "summary": refinement_result.summary,
+                "title_options": job_state["title_options"],
+                "job_id": job_id,
+                "refined_at": datetime.now().isoformat(),
+                "word_count": len(refinement_result.refined_draft.split())
+            }
+            
+            project_manager.save_milestone(
+                project_id,
+                MilestoneType.BLOG_REFINED,
+                milestone_data
+            )
+            
+            logger.info(f"Saved refined blog milestone for project {project_id}")
 
         return JSONResponse(
             content={
                 "job_id": job_id,
+                "project_id": project_id,
                 "refined_draft": refinement_result.refined_draft,
                 "summary": refinement_result.summary,
                 "title_options": job_state["title_options"]
@@ -1557,10 +1693,37 @@ async def generate_social_content(
         # Store in job state
         job_state["social_content"] = social_content_response
         job_state["social_generated_at"] = datetime.now().isoformat()
+        
+        # Save social media milestone if project exists
+        project_id = job_state.get("project_id")
+        if not project_id:
+            # Try to find project by name
+            projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
+            for project in projects:
+                if project.get("name") == project_name:
+                    project_id = project.get("id")
+                    break
+        
+        if project_id:
+            milestone_data = {
+                "social_content": social_content_response,
+                "job_id": job_id,
+                "generated_at": datetime.now().isoformat(),
+                "blog_title": blog_title
+            }
+            
+            project_manager.save_milestone(
+                project_id,
+                MilestoneType.SOCIAL_GENERATED,
+                milestone_data
+            )
+            
+            logger.info(f"Saved social media milestone for project {project_id}")
 
         return JSONResponse(
             content={
                 "job_id": job_id,
+                "project_id": project_id,
                 "social_content": social_content_response
             }
         )
@@ -1802,3 +1965,309 @@ async def delete_project(project_name: str) -> JSONResponse:
 async def health_check() -> JSONResponse:
     """Health check endpoint."""
     return JSONResponse(content={"status": "ok"})
+
+
+# ==================== PROJECT MANAGEMENT ENDPOINTS ====================
+
+@app.get("/projects")
+async def list_projects(status: Optional[str] = None) -> JSONResponse:
+    """
+    List all projects, optionally filtered by status.
+    
+    Args:
+        status: Optional status filter (active, archived, deleted)
+    
+    Returns:
+        List of project summaries
+    """
+    try:
+        # Convert status string to enum if provided
+        status_filter = None
+        if status:
+            try:
+                status_filter = ProjectStatus(status)
+            except ValueError:
+                return JSONResponse(
+                    content={"error": f"Invalid status: {status}. Must be one of: active, archived, deleted"},
+                    status_code=400
+                )
+        
+        projects = project_manager.list_projects(status=status_filter)
+        
+        return JSONResponse(
+            content={
+                "status": "success",
+                "count": len(projects),
+                "projects": projects
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to list projects: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to list projects: {str(e)}"},
+            status_code=500
+        )
+
+
+@app.get("/project/{project_id}")
+async def get_project_details(project_id: str) -> JSONResponse:
+    """
+    Get detailed information about a specific project.
+    
+    Args:
+        project_id: Project UUID
+    
+    Returns:
+        Project details including milestones
+    """
+    try:
+        project_data = project_manager.get_project(project_id)
+        
+        if not project_data:
+            return JSONResponse(
+                content={"error": f"Project {project_id} not found"},
+                status_code=404
+            )
+        
+        # Get all milestones
+        milestones = {}
+        for milestone_type in MilestoneType:
+            milestone_data = project_manager.load_milestone(project_id, milestone_type)
+            if milestone_data:
+                # Don't include full data in listing, just metadata
+                milestones[milestone_type.value] = {
+                    "created_at": milestone_data.get("created_at"),
+                    "metadata": milestone_data.get("metadata", {})
+                }
+        
+        return JSONResponse(
+            content={
+                "status": "success",
+                "project": project_data,
+                "milestones": milestones
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to get project {project_id}: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to get project details: {str(e)}"},
+            status_code=500
+        )
+
+
+@app.post("/project/{project_id}/resume")
+async def resume_project(project_id: str) -> JSONResponse:
+    """
+    Resume a project from its latest milestone.
+    
+    Args:
+        project_id: Project UUID
+    
+    Returns:
+        Resume data including next step and cached state
+    """
+    try:
+        resume_data = project_manager.resume_project(project_id)
+        
+        if not resume_data:
+            return JSONResponse(
+                content={"error": f"Project {project_id} not found"},
+                status_code=404
+            )
+        
+        project_data = resume_data["project"]
+        latest_milestone = resume_data["latest_milestone"]
+        next_step = resume_data["next_step"]
+        
+        # Generate a new job_id for this resume session
+        job_id = str(uuid.uuid4())
+        
+        # Reconstruct state cache entry based on milestones
+        job_state = {
+            "job_id": job_id,
+            "project_id": project_id,
+            "project_name": project_data.get("name"),
+            "created_at": datetime.now().isoformat(),
+            "model_name": project_data.get("metadata", {}).get("model_name"),
+            "persona": project_data.get("metadata", {}).get("persona")
+        }
+        
+        # Load outline if available
+        outline_milestone = project_manager.load_milestone(project_id, MilestoneType.OUTLINE_GENERATED)
+        if outline_milestone:
+            job_state["outline"] = outline_milestone.get("data", {}).get("outline")
+            job_state["outline_hash"] = outline_milestone.get("data", {}).get("outline_hash")
+        
+        # Load draft if available
+        draft_milestone = project_manager.load_milestone(project_id, MilestoneType.DRAFT_COMPLETED)
+        if draft_milestone:
+            job_state["final_draft"] = draft_milestone.get("data", {}).get("compiled_blog")
+        
+        # Load refined blog if available
+        refined_milestone = project_manager.load_milestone(project_id, MilestoneType.BLOG_REFINED)
+        if refined_milestone:
+            job_state["refined_draft"] = refined_milestone.get("data", {}).get("refined_content")
+            job_state["summary"] = refined_milestone.get("data", {}).get("summary")
+            job_state["title_options"] = refined_milestone.get("data", {}).get("title_options")
+        
+        # Store in state cache for session
+        state_cache[job_id] = job_state
+        logger.info(f"Resumed project {project_id} with new job_id {job_id}")
+        
+        return JSONResponse(
+            content={
+                "status": "success",
+                "job_id": job_id,
+                "project_id": project_id,
+                "project_name": project_data.get("name"),
+                "current_milestone": project_data.get("current_milestone"),
+                "next_step": next_step,
+                "has_outline": bool(job_state.get("outline")),
+                "has_draft": bool(job_state.get("final_draft")),
+                "has_refined": bool(job_state.get("refined_draft"))
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to resume project {project_id}: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to resume project: {str(e)}"},
+            status_code=500
+        )
+
+
+@app.delete("/project/{project_id}/permanent")
+async def delete_project_permanent(project_id: str) -> JSONResponse:
+    """
+    Permanently delete a project and all its data.
+    
+    Args:
+        project_id: Project UUID
+    
+    Returns:
+        Success status
+    """
+    try:
+        success = project_manager.delete_project(project_id, permanent=True)
+        
+        if not success:
+            return JSONResponse(
+                content={"error": f"Failed to delete project {project_id}"},
+                status_code=500
+            )
+        
+        return JSONResponse(
+            content={
+                "status": "success",
+                "message": f"Project {project_id} permanently deleted"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to delete project {project_id}: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to delete project: {str(e)}"},
+            status_code=500
+        )
+
+
+@app.post("/project/{project_id}/archive")
+async def archive_project(project_id: str) -> JSONResponse:
+    """
+    Archive a project (soft delete).
+    
+    Args:
+        project_id: Project UUID
+    
+    Returns:
+        Success status
+    """
+    try:
+        success = project_manager.archive_project(project_id)
+        
+        if not success:
+            return JSONResponse(
+                content={"error": f"Failed to archive project {project_id}"},
+                status_code=404
+            )
+        
+        return JSONResponse(
+            content={
+                "status": "success",
+                "message": f"Project {project_id} archived"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to archive project {project_id}: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to archive project: {str(e)}"},
+            status_code=500
+        )
+
+
+@app.get("/project/{project_id}/export")
+async def export_project(
+    project_id: str,
+    format: str = "json"
+) -> Any:
+    """
+    Export project data in specified format.
+    
+    Args:
+        project_id: Project UUID
+        format: Export format (json, markdown, zip)
+    
+    Returns:
+        Exported data in requested format
+    """
+    try:
+        from fastapi.responses import Response, FileResponse
+        import tempfile
+        
+        export_data = project_manager.export_project(project_id, format=format)
+        
+        if export_data is None:
+            return JSONResponse(
+                content={"error": f"Project {project_id} not found or export failed"},
+                status_code=404
+            )
+        
+        if format == "json":
+            return JSONResponse(content=export_data)
+        
+        elif format == "markdown":
+            return Response(
+                content=export_data,
+                media_type="text/markdown",
+                headers={
+                    "Content-Disposition": f"attachment; filename=project_{project_id}.md"
+                }
+            )
+        
+        elif format == "zip":
+            # Write zip data to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
+                tmp.write(export_data)
+                tmp_path = tmp.name
+            
+            return FileResponse(
+                path=tmp_path,
+                media_type="application/zip",
+                filename=f"project_{project_id}.zip"
+            )
+        
+        else:
+            return JSONResponse(
+                content={"error": f"Unsupported export format: {format}"},
+                status_code=400
+            )
+            
+    except Exception as e:
+        logger.error(f"Failed to export project {project_id}: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to export project: {str(e)}"},
+            status_code=500
+        )
