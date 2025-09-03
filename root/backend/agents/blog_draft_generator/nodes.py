@@ -8,7 +8,7 @@ from sklearn.metrics.pairwise import cosine_similarity # Added for semantic simi
 from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback, ImagePlaceholder
 from root.backend.utils.blog_context import extract_blog_narrative_context, calculate_content_length, calculate_section_length_targets, get_length_priority
 from root.backend.services.persona_service import PersonaService
-from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS
+from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS, EXPERT_WRITING_PRINCIPLES
 from root.backend.agents.blog_draft_generator.utils import (
     extract_code_blocks,
     format_content_references,
@@ -28,20 +28,40 @@ logging.basicConfig(level=logging.INFO)
 def validate_and_enforce_constraints(content: str, include_code: bool, section_title: str) -> str:
     """
     Validates content against section constraints and enforces them.
-    Removes code blocks if include_code is False.
+    Removes code blocks if include_code is False, but preserves markdown-wrapped content.
     """
+    import re
+    
+    print(f"DEBUG: validate_and_enforce_constraints - Input content length: {len(content)}, include_code: {include_code}")
+    
+    if not content:
+        print(f"DEBUG: validate_and_enforce_constraints - Empty content received for section '{section_title}'")
+        return content
+    
+    # First, handle the case where LLM wraps content in markdown fences
+    # Pattern: ```markdown\n<content>\n```
+    markdown_wrapper_pattern = r'```markdown\s*\n([\s\S]*?)\n\s*```'
+    markdown_match = re.match(markdown_wrapper_pattern, content.strip(), re.DOTALL)
+    
+    if markdown_match:
+        print(f"DEBUG: Found markdown-wrapped content, extracting inner content")
+        content = markdown_match.group(1).strip()
+        print(f"DEBUG: After markdown extraction, content length: {len(content)}")
+        
     if not include_code:
-        # Remove all code blocks using regex
-        # Pattern matches: ```language\ncode\n``` or ```\ncode\n```
-        import re
-        code_block_pattern = r'```[\s\S]*?```'
+        # More specific pattern that excludes markdown language specifiers
+        # This pattern matches code blocks but not ```markdown wrappers
+        code_block_pattern = r'```(?!markdown\s*\n)[\w]*\s*\n[\s\S]*?\n```'
         
         # Find all code blocks before removal for logging
         code_blocks = re.findall(code_block_pattern, content)
         if code_blocks:
             logging.warning(f"Section '{section_title}' has include_code=False but contains {len(code_blocks)} code block(s). Removing them.")
+            print(f"DEBUG: Found {len(code_blocks)} actual code blocks to remove")
             for i, block in enumerate(code_blocks):
                 logging.info(f"Removed code block {i+1}: {block[:100]}...")
+        else:
+            print(f"DEBUG: No actual code blocks found to remove")
         
         # Remove code blocks
         cleaned_content = re.sub(code_block_pattern, '', content)
@@ -49,8 +69,11 @@ def validate_and_enforce_constraints(content: str, include_code: bool, section_t
         # Clean up any extra whitespace left after removal
         cleaned_content = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_content)
         
-        return cleaned_content.strip()
+        result = cleaned_content.strip()
+        print(f"DEBUG: validate_and_enforce_constraints - After code removal, content length: {len(result)}")
+        return result
     
+    print(f"DEBUG: validate_and_enforce_constraints - No constraints applied, returning original content")
     return content
 
 async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
@@ -539,7 +562,9 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
 
     # Initialize persona service and get persona instructions
     persona_service = PersonaService()
-    persona_instructions = persona_service.get_persona_prompt("neuraforge")
+    # Use Sebastian Raschka persona by default, with fallback to neuraforge
+    persona_name = "sebastian_raschka" if "sebastian_raschka" in persona_service.list_personas() else "neuraforge"
+    persona_instructions = persona_service.get_persona_prompt(persona_name)
     
     # Extract blog narrative context
     blog_narrative_context = extract_blog_narrative_context(state)
@@ -562,6 +587,7 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
     # Prepare input variables for the prompt, using formatted_hyde_context
     input_variables = {
         "persona_instructions": persona_instructions,
+        "expert_writing_principles": EXPERT_WRITING_PRINCIPLES,
         "format_instructions": PROMPT_CONFIGS["section_generation"]["parser"].get_format_instructions() if PROMPT_CONFIGS["section_generation"]["parser"] else "",
         "section_title": section_title,
         "learning_goals": ", ".join(learning_goals),
@@ -598,15 +624,21 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
             # Optionally, update title if LLM refines it, though prompt doesn't explicitly ask for this.
             # parsed_title = parsed_draft_section_object.title 
             logging.info(f"Successfully parsed DraftSection. Extracted content length: {len(actual_markdown_content)}")
+            print(f"DEBUG: Successfully parsed DraftSection content length: {len(actual_markdown_content)}")
         except Exception as e:
             logging.error(f"Failed to parse DraftSection from LLM output for section '{section_title}': {e}. LLM output was: {llm_output_str}")
+            print(f"DEBUG: Failed to parse DraftSection, attempting fallback. Error: {e}")
             # Fallback: Try to extract content if LLM just returned markdown, or use error message.
             # This might happen if the LLM doesn't perfectly follow the JSON instruction.
             if "{" not in llm_output_str and "}" not in llm_output_str: # Heuristic: if no JSON structure, assume it's direct markdown
                 actual_markdown_content = llm_output_str
                 logging.warning("LLM output did not seem to be JSON, using raw output as content.")
+                print(f"DEBUG: Using raw output as content. Length: {len(actual_markdown_content)}")
             else:
                 actual_markdown_content = f"Error: Could not parse section content from LLM. Raw output: {llm_output_str}"
+                print(f"DEBUG: Using error fallback content. Length: {len(actual_markdown_content)}")
+        
+        print(f"DEBUG: Before validation - actual_markdown_content length: {len(actual_markdown_content)}")
         
         # Create a new draft section
         draft_section = DraftSection(
@@ -623,12 +655,15 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
         draft_section.key_concepts = learning_goals
         
         # Validate and enforce constraints on the generated content
+        print(f"DEBUG: Section '{section_title}' include_code: {section.include_code}")
         validated_content = validate_and_enforce_constraints(
             actual_markdown_content, 
             section.include_code, 
             section_title
         )
+        print(f"DEBUG: After validation - content length: {len(validated_content)}")
         draft_section.content = validated_content
+        print(f"DEBUG: Final draft section content length: {len(draft_section.content)}")
         
         # Add to sections list
         state.sections.append(draft_section)

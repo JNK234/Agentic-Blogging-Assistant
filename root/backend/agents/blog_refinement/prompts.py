@@ -69,49 +69,64 @@ Provide *only* the raw text for the summary. Do NOT include any markdown formatt
 GENERATE_TITLES_PROMPT = """
 {persona_instructions}
 
-You wrote this blog post as part of your ongoing exploration of technology topics, and now you want to create compelling titles that will resonate with your professional audience and optimize for search discoverability.
+Create compelling titles that reflect how an expert practitioner would share insights with peers. Your titles should communicate clear value and specific outcomes while maintaining the authentic voice of someone sharing hard-earned knowledge.
 
-**Blog Post You Wrote:**
+**EXPERT PRACTITIONER TITLE PHILOSOPHY:**
+You're not creating marketing copy—you're offering genuine insights to fellow practitioners who value substance over style. Your titles should reflect the same conversational authority and strategic clarity found in the best technical writing.
+
+**BLOG POST ANALYSIS:**
 ```markdown
 {blog_draft}
 ```
 
-**Your Task:**
-Create 3-4 different title and subtitle options for this post. Think about how you'd present this topic to different audiences - fellow professionals, practitioners exploring this area, or colleagues in your industry.
+**TITLE CREATION PRINCIPLES:**
 
-For each option, include:
-1. **Title:** How you'd naturally frame this topic (clear, authoritative, professionally compelling)
-2. **Subtitle:** Additional context that clarifies the scope and value of your exploration
-3. **Reasoning:** Why this approach would attract and serve your target professional audience (balance of discoverability and genuine value)
+1. **Direct Value Communication**:
+   - Promise specific learning outcomes based on actual content
+   - Use concrete language over abstract descriptions
+   - Lead with the most valuable insight or practical outcome
+   - Reflect the expert practitioner's authentic voice
 
-**What makes a good title from your perspective:**
-- Honest about what you actually explored and discovered in your research
-- Clear about the practical value and applications without overselling
-- Uses language that resonates with professionals seeking these insights
-- Reflects the depth of investigation and key findings from your analysis
-- Balances SEO discoverability with authentic professional communication
+2. **Contextual Specificity**:
+   - Include relevant technical context (when appropriate)
+   - Specify the scope and application domain
+   - Use precise terminology that signals expertise
+   - Avoid generic technology labels when specifics matter
 
-**Different angles to consider:**
-- What key insights emerged from your investigation of this topic?
-- What practical problems does this knowledge help solve in professional contexts?
-- What would make someone in your field want to dive deeper into your research?
-- How would you frame this for different levels of technical expertise in your audience?
-- What search terms would professionals use to find content like this?
+3. **Natural Language Patterns**:
+   - Use conversational phrasing that sounds natural, not corporate
+   - Apply the narrative elements present in the content
+   - Reflect any historical context or evolution presented
+   - Match the sophistication level of the content
 
-**Output Format:**
-Provide your options as a JSON list:
+4. **Engagement Through Curiosity**:
+   - Pose questions when content explores open problems
+   - Highlight surprising insights or counterintuitive findings
+   - Use comparison/contrast when content compares approaches
+   - Create intrigue about methodology or implementation details
 
+**ADAPTIVE TITLE APPROACHES:**
+
+Based on content analysis, choose the most appropriate approach:
+- **Evolution Narrative**: "From [Past] to [Present]: [Insight]"
+- **Practical Implementation**: "[Specific Approach] for [Specific Context]"
+- **Insight Sharing**: "Why [Observation] Matters for [Application]"
+- **Problem-Solution**: "[Challenge] and [Effective Solution]"
+- **Comparative Analysis**: "[Method A] vs [Method B]: [Key Difference]"
+
+**OUTPUT FORMAT:**
 ```json
 [
-  {{
-    "title": "Your natural way of introducing this topic",
-    "subtitle": "Additional context that helps explain the value",
-    "reasoning": "Why you think this resonates - focus on learning value and genuine usefulness"
-  }}
+  {
+    "title": "Expert practitioner title reflecting content depth and value",
+    "subtitle": "Additional context that clarifies practical scope and technical domain",
+    "approach": "Which narrative approach this title uses and why it fits the content",
+    "value_promise": "Specific learning outcome or insight readers will gain"
+  }
 ]
 ```
 
-Remember: You're creating titles that balance professional credibility with discoverability. Focus on accurately representing the value of your research while making it appealing to professionals who would benefit from these insights.
+Focus on titles that authentically represent both the content depth and the expert practitioner voice—direct, valuable, and reflective of genuine technical insight sharing.
 """
 
 # --- Main Content Formatting ---
@@ -206,4 +221,35 @@ If there is repeated content, remove that, the entire content has to be meaningf
 
 **Flow**
 Thee flow of the content should have an introduction, the main content, the summary and conclusion
+"""
+
+# --- Redundancy Reduction ---
+REDUCE_REDUNDANCY_PROMPT = """
+You are an expert technical editor specializing in content optimization and redundancy reduction.
+The full draft of the blog post is provided below.
+
+**Blog Draft:**
+```markdown
+{blog_draft}
+```
+
+**Task:**
+Analyze the blog post for redundant content and produce a refined version with redundancies removed or reduced.
+Focus on:
+
+1. **Repeated Information**: Identify and consolidate information that appears multiple times throughout the post
+2. **Overlapping Sections**: Merge sections that cover similar topics
+3. **Redundant Examples**: Keep only the most illustrative examples when multiple similar ones exist
+4. **Verbose Phrasing**: Replace wordy expressions with concise alternatives
+5. **Circular Arguments**: Remove content that reiterates the same point without adding new value
+
+**Important Guidelines:**
+- Preserve all unique and valuable information
+- Maintain the logical flow and structure of the content
+- Keep the technical accuracy intact
+- Ensure that removing redundancy doesn't create gaps in understanding
+- Retain at least one instance of important concepts for clarity
+
+**Output:**
+Provide the complete refined blog post with redundancies removed. Output only the markdown content without any explanations or meta-commentary.
 """
