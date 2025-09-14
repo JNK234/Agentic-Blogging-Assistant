@@ -100,77 +100,60 @@ analyze_content → assess_difficulty → identify_prerequisites → structure_o
 #### 3. BlogDraftGeneratorAgent
 **Purpose**: Generates complete blog drafts with iterative quality refinement
 
-**Complex LangGraph Workflow**:
+**LangGraph Workflow**:
 ```
-semantic_mapper → generator → enhancer → code_extractor → validator
-                                                            ↓
-finalizer ← [auto_feedback → feedback_inc → validator (loop)]
-    ↓
-transition_gen → [next_section OR compile_blog]
+semantic_content_mapper → section_generator → content_enhancer → code_example_extractor → quality_validator
+                                                                                              ↓
+section_finalizer ← [auto_feedback_generator → feedback_incorporator → quality_validator (loop)]
 ```
 
 **Key Technical Decisions**:
-- **HyDE RAG Implementation**: Hypothetical Document Embeddings for enhanced semantic matching
-- **Quality-Driven Iteration**: Multi-dimensional scoring (completeness, accuracy, clarity, engagement)
-- **Conditional Routing**: Quality thresholds determine refinement vs finalization paths
-- **Section-Level Caching**: Granular performance optimization based on outline hashes
+- **HyDE RAG Implementation**: Uses `generate_hypothetical_document` and `retrieve_context_with_hyde` for enhanced semantic matching
+- **Quality-Driven Iteration**: Multi-dimensional scoring with feedback loops
+- **Section-by-Section Processing**: Individual section generation with validation
+- **Code Example Extraction**: Dedicated node for extracting and formatting code blocks
 
 ### Vector Storage & Semantic Intelligence
 
 #### ChromaDB Implementation
-- **Persistent Storage**: SQLite backend with filesystem persistence
-- **Embedding Flexibility**: Dual provider support (Azure OpenAI, Sentence Transformers)
-- **Single Collection Design**: Metadata-driven organization for efficient filtering
-- **Content Hash Deduplication**: Prevents storage bloat and redundant processing
+- **Persistent Storage**: SQLite backend in `root/data/vector_store/`
+- **Embedding Functions**: Uses `EmbeddingFactory` to support multiple providers
+- **Single Collection Design**: "content" collection with metadata filtering
+- **Content Hash Deduplication**: SHA256 hashing prevents duplicate storage
 
-#### Advanced Retrieval Techniques
-- **Content-Aware Chunking**:
-  - Markdown: `MarkdownHeaderTextSplitter` preserves document structure
-  - Python: `PythonCodeTextSplitter` for syntax-aware segmentation
-  - Fallback: `RecursiveCharacterTextSplitter` for general content
-
-- **HyDE Enhancement**: Two-stage process generating hypothetical documents for improved semantic matching
-- **Structural Boosting**: Document hierarchy awareness for relevance enhancement
-- **Quality Thresholds**: Adaptive filtering based on content type and relevance scores
+#### Retrieval Techniques
+- **Content Chunking**: Processes text into manageable chunks for embedding
+- **Metadata Filtering**: Project scoping and content type organization
+- **Hash-Based Validation**: Prevents redundant processing of identical content
+- **Vector Similarity Search**: Semantic matching for relevant content retrieval
 
 ### Performance Optimization
 
-#### Multi-Level Caching Strategy
-```
-┌─────────────────────────────────────────┐
-│           Cache Hierarchy               │
-├─────────────────────────────────────────┤
-│  L1: Content Hash Cache                 │
-│      └─ Deduplication Layer            │
-├─────────────────────────────────────────┤
-│  L2: Outline Cache (TTL)                │
-│      └─ Generated Outlines             │
-├─────────────────────────────────────────┤
-│  L3: Section Cache                      │
-│      └─ Generated Blog Sections        │
-├─────────────────────────────────────────┤
-│  L4: Job State Cache                    │
-│      └─ Session Management             │
-└─────────────────────────────────────────┘
-```
+#### Caching Implementation
+- **Content Hash Caching**: Prevents reprocessing of duplicate files
+- **Outline Caching**: TTL-based storage using FastAPI's TTLCache
+- **Section Caching**: Generated sections cached based on outline hashes
+- **Job State Caching**: Session management with in-memory state storage
 
 #### Agent Coordination
-- **Dependency Injection**: Hierarchical initialization through FastAPI
-- **Async Operations**: Full async support across agents and workflows
-- **Resource Sharing**: Shared vector store and model instances for efficiency
+- **Dependency Injection**: Agents initialized with shared vector store and model instances
+- **Async Operations**: All agents support async processing
+- **Resource Sharing**: VectorStoreService and PersonaService shared across agents
 
 ### Quality Assurance & Testing
 
 #### Testing Infrastructure
-- **Pytest Framework**: Comprehensive test suite with fixtures and mocking
-- **API Testing**: Endpoint validation with test clients
-- **Service Layer Testing**: Unit tests for core business logic
-- **Integration Testing**: End-to-end workflow validation
+- **Pytest Framework**: Test suite located in `root/backend/tests/`
+- **API Testing**: Endpoint validation in `tests/api/`
+- **Service Layer Testing**: Unit tests in `tests/services/`
+- **Test Configuration**: `pytest.ini` with test discovery settings
+- **Test Requirements**: Separate `test-requirements.txt` for testing dependencies
 
-#### Quality Metrics
-- **Multi-Dimensional Scoring**: Automated assessment across completeness, accuracy, clarity, engagement
-- **Iterative Refinement**: Feedback loops with configurable quality thresholds
-- **User Feedback Integration**: Manual override capabilities for section regeneration
+#### Quality Features
+- **Quality Validator Node**: Automated section quality assessment
+- **Feedback Generation**: Auto-feedback generator for content improvement
+- **Iterative Refinement**: Feedback incorporation loops in blog draft generation
+- **Content Enhancement**: Dedicated enhancer node for improving section quality
 
 ## 🚀 Setup & Deployment
 
@@ -236,38 +219,17 @@ pytest tests/services/ -v     # Service layer tests
 pytest tests/utils/ -v        # Utility function tests
 ```
 
-### Production Deployment Considerations
+### Development Features
 
-#### Performance Optimization
-- **Vector Database**: Consider PostgreSQL with pgvector for production-scale vector storage
-- **Caching**: Redis implementation for distributed caching across multiple instances
-- **Load Balancing**: Multiple FastAPI worker processes with uvicorn/gunicorn
-- **CDN Integration**: Static asset delivery for improved frontend performance
+#### Launch Scripts
+- **Parallel Launch**: `launch-parallel.sh` runs both services in the same terminal
+- **Individual Launch**: `launch.sh` for separate terminal deployment
+- **Process Management**: Built-in cleanup and signal handling
 
-#### Security & Monitoring
-- **API Rate Limiting**: Implement rate limiting for LLM API calls
-- **Authentication**: Add OAuth2/JWT authentication for multi-user environments
-- **Logging**: Structured logging with ELK stack or similar for observability
-- **Health Checks**: Implement comprehensive health monitoring for all services
-
-#### Scalability Architecture
-```
-┌─────────────────┐    ┌─────────────────┐
-│   Load Balancer │    │   Redis Cache   │
-│   (nginx/HAProxy)│    │   (Distributed) │
-└─────────┬───────┘    └─────────┬───────┘
-          │                      │
-┌─────────▼───────┐    ┌─────────▼───────┐
-│   FastAPI       │    │   PostgreSQL    │
-│   (Multiple     │    │   + pgvector    │
-│   Workers)      │    │   (Production   │
-└─────────┬───────┘    │   Vector DB)    │
-          │            └─────────────────┘
-┌─────────▼───────┐
-│   Streamlit     │
-│   (Frontend)    │
-└─────────────────┘
-```
+#### Storage Structure
+- **Vector Storage**: `root/data/vector_store/` for ChromaDB persistence
+- **Project Data**: `root/data/projects/` for project management storage
+- **Upload Directory**: `root/data/uploads/` for file processing
 
 ## 📊 Key Technical Decisions & Rationale
 
@@ -286,18 +248,29 @@ pytest tests/utils/ -v        # Utility function tests
 - **Development Velocity**: Rapid prototyping and iteration capabilities
 - **Production Ready**: Async support, automatic API documentation, and robust error handling
 
-### Quality-First Architecture
-The system prioritizes content quality through multiple validation layers rather than speed-first generation. This design decision reflects the target use case: producing publication-ready technical content rather than quick drafts.
+### Quality-First Design
+The system emphasizes content quality through validation nodes and feedback loops rather than speed-only generation. This reflects the goal of producing high-quality technical content.
 
-## 📈 Performance Benchmarks
+## 📁 File Structure
 
-### Typical Processing Times
-- **Content Parsing**: 1-3 seconds per file (depending on size)
-- **Outline Generation**: 10-30 seconds (varies by complexity)
-- **Blog Draft Generation**: 2-5 minutes per section (with quality refinement)
-- **Complete Blog**: 15-45 minutes (depending on outline complexity)
-
-### Resource Requirements
-- **Memory**: 2-4GB RAM for typical operations
-- **Storage**: ~100MB base + vector embeddings (varies by content volume)
-- **CPU**: Multi-core recommended for parallel agent processing
+### Core Components
+```
+root/
+├── backend/                 # FastAPI application
+│   ├── agents/             # Specialized agents with LangGraph workflows
+│   │   ├── content_parsing/        # File processing agent
+│   │   ├── outline_generator/      # Blog outline generation
+│   │   ├── blog_draft_generator/   # Section-by-section drafting
+│   │   └── blog_refinement/        # Content refinement and titles
+│   ├── models/             # LLM providers and embeddings
+│   ├── services/           # Vector store, personas, project management
+│   ├── parsers/            # File format parsers (.ipynb, .md, .py)
+│   └── tests/              # Comprehensive test suite
+├── frontend/               # Streamlit interface
+│   ├── components/         # UI components and project management
+│   └── services/           # Frontend service layer
+└── data/                   # Storage directories
+    ├── vector_store/       # ChromaDB persistence
+    ├── projects/           # Project management data
+    └── uploads/            # Uploaded files
+```
