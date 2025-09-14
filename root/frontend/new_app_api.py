@@ -62,6 +62,10 @@ class SessionManager:
                 'api_base_url': api_client.DEFAULT_API_BASE_URL,
                 'project_name': None,
                 'selected_model': AppConfig.DEFAULT_MODEL,
+                'selected_persona': 'neuraforge', # Default persona
+                'specific_model': None, # Specific model within provider
+                'available_personas': {}, # Cache for personas from API
+                'available_models': {}, # Cache for models from API
                 'uploaded_files_info': [], # Stores basic info like name, type
                 'processed_file_paths': [], # Paths returned by backend /upload
                 'processed_file_hashes': {}, # Hashes returned by backend /process_files
@@ -124,7 +128,7 @@ class SessionManager:
     def reset_project_state():
         """Resets all project-related state for switching projects."""
         keys_to_reset = [
-            'project_name', 'selected_model', 'uploaded_files_info', 'processed_file_paths',
+            'project_name', 'selected_model', 'selected_persona', 'specific_model', 'uploaded_files_info', 'processed_file_paths',
             'processed_file_hashes', 'notebook_hash', 'markdown_hash', 'python_hashes',
             'job_id', 'generated_outline', 'generated_sections', 'final_draft', 'refined_draft',
             'summary', 'title_options', 'social_content', 'current_section_index', 'total_sections',
@@ -544,6 +548,40 @@ def create_zip_download(package: Dict[str, str]) -> bytes:
 class SidebarUI:
     """Handles rendering the sidebar and initialization logic."""
 
+    def _fetch_personas(self, api_base_url: str) -> Dict[str, Any]:
+        """Fetch available personas from backend, with caching."""
+        cached_personas = SessionManager.get('available_personas', {})
+        if cached_personas:
+            return cached_personas
+
+        try:
+            personas = asyncio.run(api_client.get_personas(api_base_url))
+            SessionManager.set('available_personas', personas)
+            return personas
+        except Exception as e:
+            logger.error(f"Failed to fetch personas: {e}")
+            # Return default fallback
+            return {
+                'neuraforge': {'name': 'Neuraforge', 'description': 'Technical newsletter voice'},
+                'student_sharing': {'name': 'Student Sharing', 'description': 'Authentic student voice'},
+                'sebastian_raschka': {'name': 'Sebastian Raschka', 'description': 'Expert practitioner voice'}
+            }
+
+    def _fetch_models(self, api_base_url: str) -> Dict[str, Any]:
+        """Fetch available models from backend, with caching."""
+        cached_models = SessionManager.get('available_models', {})
+        if cached_models:
+            return cached_models
+
+        try:
+            models = asyncio.run(api_client.get_models(api_base_url))
+            SessionManager.set('available_models', models)
+            return models
+        except Exception as e:
+            logger.error(f"Failed to fetch models: {e}")
+            # Return default fallback based on current config
+            return {provider: [f"{provider}-default"] for provider in AppConfig.SUPPORTED_MODELS}
+
     def render(self):
         with st.sidebar:
             st.title(AppConfig.PAGE_TITLE)
@@ -581,17 +619,70 @@ class SidebarUI:
                     value=SessionManager.get('project_name', ""),
                     help="A unique name for your blog project."
                 )
-                # Safely get the model index with fallback
+                # Enhanced Model Selection UI
+                st.markdown("**🤖 Model Configuration**")
+
+                # Fetch available models
+                available_models = self._fetch_models(api_base_url)
+
+                # Provider selection (keeping existing logic as fallback)
                 current_model = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
                 if current_model not in AppConfig.SUPPORTED_MODELS:
                     current_model = AppConfig.DEFAULT_MODEL
-                    
+
                 selected_model = st.selectbox(
-                    "Select LLM Model",
+                    "Model Provider",
                     options=AppConfig.SUPPORTED_MODELS,
                     index=AppConfig.SUPPORTED_MODELS.index(current_model),
-                    help="Choose the language model for generation."
+                    help="Choose the LLM provider."
                 )
+
+                # Specific model selection within provider
+                specific_model = None
+                if selected_model in available_models and available_models[selected_model]:
+                    model_options = available_models[selected_model]
+                    if len(model_options) > 1:
+                        current_specific = SessionManager.get('specific_model')
+                        specific_index = 0
+                        if current_specific and current_specific in model_options:
+                            specific_index = model_options.index(current_specific)
+
+                        specific_model = st.selectbox(
+                            f"Specific {selected_model.title()} Model",
+                            options=model_options,
+                            index=specific_index,
+                            help=f"Choose the specific model variant for {selected_model}."
+                        )
+                    else:
+                        st.info(f"Using default model for {selected_model}")
+
+                # Persona/Output Style Selection
+                st.markdown("**✍️ Writing Style Configuration**")
+
+                # Fetch available personas
+                available_personas = self._fetch_personas(api_base_url)
+
+                # Create persona selection
+                persona_options = list(available_personas.keys())
+                persona_names = [available_personas[p].get('name', p.title()) for p in persona_options]
+                persona_descriptions = [available_personas[p].get('description', 'No description') for p in persona_options]
+
+                current_persona = SessionManager.get('selected_persona', 'neuraforge')
+                persona_index = 0
+                if current_persona in persona_options:
+                    persona_index = persona_options.index(current_persona)
+
+                selected_persona = st.selectbox(
+                    "Writing Persona",
+                    options=persona_options,
+                    format_func=lambda x: available_personas[x].get('name', x.title()),
+                    index=persona_index,
+                    help="Choose the writing style and voice for your blog content."
+                )
+
+                # Show persona description
+                if selected_persona in available_personas:
+                    st.markdown(f"*{available_personas[selected_persona].get('description', '')}*")
                 uploaded_files = st.file_uploader(
                     "Upload Files (.ipynb, .md, .py)",
                     type=AppConfig.SUPPORTED_FILE_TYPES,
@@ -610,6 +701,8 @@ class SidebarUI:
                     # Store basic info immediately for potential later use
                     SessionManager.set('project_name', project_name)
                     SessionManager.set('selected_model', selected_model)
+                    SessionManager.set('selected_persona', selected_persona)
+                    SessionManager.set('specific_model', specific_model)
                     SessionManager.set('uploaded_files_info', [{"name": f.name, "type": f.type, "size": f.size} for f in uploaded_files])
                     SessionManager.set('is_initialized', False) # Reset initialization status
                     SessionManager.set_status("Initializing...")
@@ -728,6 +821,25 @@ class OutlineGeneratorUI:
              st.info("No processed notebook or markdown files found. Outline generation requires at least one.")
              # Optionally allow generating outline without content? Requires backend change.
 
+        # Display current configuration
+        with st.expander("🔧 Current Configuration", expanded=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Model Provider:** {model_name}")
+                specific_model = SessionManager.get('specific_model')
+                if specific_model:
+                    st.markdown(f"**Specific Model:** {specific_model}")
+                else:
+                    st.markdown(f"**Specific Model:** Default")
+            with col2:
+                persona = SessionManager.get('selected_persona', 'neuraforge')
+                personas = SessionManager.get('available_personas', {})
+                persona_name = personas.get(persona, {}).get('name', persona.title()) if personas else persona.title()
+                st.markdown(f"**Writing Style:** {persona_name}")
+
+                if personas and persona in personas:
+                    st.markdown(f"*{personas[persona].get('description', '')}*")
+
         # Add text area for user guidelines here
         user_guidelines = st.text_area("Optional Guidelines:",
                                        help="Provide specific instructions for the outline generation (e.g., 'Focus on practical examples', 'Exclude section on history').",
@@ -794,6 +906,8 @@ class OutlineGeneratorUI:
                             length_preference=length_pref, # Pass length preference
                             custom_length=custom_len, # Pass custom length if specified
                             writing_style=style_pref, # Pass writing style
+                            persona_style=SessionManager.get('selected_persona'), # Pass selected persona
+                            specific_model=SessionManager.get('specific_model'), # Pass specific model
                             base_url=SessionManager.get('api_base_url')
                         ))
                     SessionManager.set('job_id', result.get('job_id'))

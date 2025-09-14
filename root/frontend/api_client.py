@@ -123,6 +123,48 @@ async def process_files(
             logger.error(f"HTTP request failed during file processing: {e}")
             raise ConnectionError(f"Failed to connect to API for file processing: {e}")
 
+async def get_personas(base_url: str = DEFAULT_API_BASE_URL) -> Dict[str, Any]:
+    """
+    Fetches available writing personas/output styles from the backend.
+
+    Args:
+        base_url: The base URL of the API.
+
+    Returns:
+        Dictionary containing available personas with their names and descriptions.
+    """
+    api_url = _get_api_url("/personas", base_url)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            logger.info(f"Requesting personas at {api_url}")
+            response = await client.get(api_url)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during personas fetch: {e}")
+            raise ConnectionError(f"Failed to connect to API for personas: {e}")
+
+async def get_models(base_url: str = DEFAULT_API_BASE_URL) -> Dict[str, Any]:
+    """
+    Fetches available models grouped by provider from the backend.
+
+    Args:
+        base_url: The base URL of the API.
+
+    Returns:
+        Dictionary containing model providers and their available models.
+    """
+    api_url = _get_api_url("/models", base_url)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            logger.info(f"Requesting models at {api_url}")
+            response = await client.get(api_url)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during models fetch: {e}")
+            raise ConnectionError(f"Failed to connect to API for models: {e}")
+
 async def generate_outline(
     project_name: str,
     model_name: str,
@@ -132,6 +174,8 @@ async def generate_outline(
     length_preference: Optional[str] = None, # Added
     custom_length: Optional[int] = None, # Added
     writing_style: Optional[str] = None, # Added
+    persona_style: Optional[str] = None, # Added for output style
+    specific_model: Optional[str] = None, # Added for granular model control
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -146,6 +190,8 @@ async def generate_outline(
         length_preference: User's preferred blog length category (optional).
         custom_length: Custom target word count if length_preference is "Custom" (optional).
         writing_style: User's preferred writing style (optional).
+        persona_style: Selected writing persona/output style (optional).
+        specific_model: Specific model within the provider (optional).
         base_url: The base URL of the API.
 
     Returns:
@@ -159,7 +205,9 @@ async def generate_outline(
         "user_guidelines": user_guidelines or "", # Added - send empty string if None
         "length_preference": length_preference or "", # Added - send empty string if None
         "custom_length": custom_length or 0, # Added - send 0 if None
-        "writing_style": writing_style or "" # Added - send empty string if None
+        "writing_style": writing_style or "", # Added - send empty string if None
+        "persona_style": persona_style or "", # Added - send empty string if None
+        "specific_model": specific_model or "" # Added - send empty string if None
     }
     # Filter out empty values if necessary, though FastAPI handles empty strings
     data = {k: v for k, v in data.items() if v is not None}

@@ -203,9 +203,10 @@ async def upload_files(
             status_code=500
         )
 
-async def get_or_create_agents(model_name: str):
+async def get_or_create_agents(model_name: str, specific_model: Optional[str] = None):
     """Get or create agents for the specified model."""
-    cache_key = f"agents_{model_name}"
+    # Include specific model in cache key if provided
+    cache_key = f"agents_{model_name}_{specific_model or 'default'}"
 
     if cache_key in agent_cache:
         return agent_cache[cache_key]
@@ -213,7 +214,7 @@ async def get_or_create_agents(model_name: str):
     try:
         # Create model instance
         model_factory = ModelFactory()
-        model = model_factory.create_model(model_name.lower())
+        model = model_factory.create_model(model_name.lower(), specific_model)
 
         # Create and initialize agents
         content_parser = ContentParsingAgent(model)
@@ -327,8 +328,10 @@ async def generate_outline(
     markdown_hash: Optional[str] = Form(None),
     user_guidelines: Optional[str] = Form(None), # Added
     length_preference: Optional[str] = Form(None), # Added
-    custom_length: Optional[int] = Form(None), # Added  
-    writing_style: Optional[str] = Form(None) # Added
+    custom_length: Optional[int] = Form(None), # Added
+    writing_style: Optional[str] = Form(None), # Added
+    persona_style: Optional[str] = Form("neuraforge"), # Added persona selection
+    specific_model: Optional[str] = Form(None) # Added specific model selection
 ) -> JSONResponse:
     """Generate a blog outline for processed content."""
     try:
@@ -2302,5 +2305,85 @@ async def export_project(
         logger.error(f"Failed to export project {project_id}: {e}")
         return JSONResponse(
             content={"error": f"Failed to export project: {str(e)}"},
+            status_code=500
+        )
+
+# === New API Endpoints for Enhanced UI Configuration ===
+
+@app.get("/personas")
+async def get_personas():
+    """Get available personas for output styling."""
+    try:
+        persona_service = PersonaService()
+        # Use the full personas dict instead of list_personas which only returns descriptions
+        all_personas = persona_service.personas
+
+        return JSONResponse(content={
+            name: {
+                "name": persona_data.get("name", name.replace('_', ' ').title()),
+                "description": persona_data.get("description", "")
+            }
+            for name, persona_data in all_personas.items()
+        })
+    except Exception as e:
+        logger.error(f"Failed to get personas: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to get personas: {str(e)}"},
+            status_code=500
+        )
+
+@app.get("/models")
+async def get_available_models():
+    """Get available models organized by provider with specific model options."""
+    try:
+        # Model configurations mapping
+        model_configs = {
+            "openai": {
+                "name": "OpenAI",
+                "models": [
+                    {"id": "gpt-4o", "name": "GPT-4O", "description": "Most capable model for complex tasks"},
+                    {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "description": "Fast and capable for most tasks"},
+                    {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "description": "Fast and cost-effective"}
+                ]
+            },
+            "claude": {
+                "name": "Anthropic Claude",
+                "models": [
+                    {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "Best for analysis and writing"},
+                    {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "description": "Fast and efficient"},
+                    {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "Most capable for complex tasks"}
+                ]
+            },
+            "gemini": {
+                "name": "Google Gemini",
+                "models": [
+                    {"id": "gemini-2.0-flash-001", "name": "Gemini 2.0 Flash", "description": "Latest fast model"},
+                    {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "description": "Advanced reasoning capabilities"},
+                    {"id": "gemini-pro", "name": "Gemini Pro", "description": "Standard high-performance model"}
+                ]
+            },
+            "deepseek": {
+                "name": "DeepSeek",
+                "models": [
+                    {"id": "deepseek-chat", "name": "DeepSeek Chat", "description": "Optimized for conversational tasks"},
+                    {"id": "deepseek-coder", "name": "DeepSeek Coder", "description": "Specialized for coding tasks"}
+                ]
+            },
+            "openrouter": {
+                "name": "OpenRouter",
+                "models": [
+                    {"id": "openrouter/auto", "name": "Auto (Best Available)", "description": "Automatically selects best model"},
+                    {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet (via OpenRouter)", "description": "Claude via OpenRouter"},
+                    {"id": "openai/gpt-4-turbo", "name": "GPT-4 Turbo (via OpenRouter)", "description": "OpenAI via OpenRouter"}
+                ]
+            }
+        }
+
+        return JSONResponse(content={"providers": model_configs})
+
+    except Exception as e:
+        logger.error(f"Failed to get model configurations: {e}")
+        return JSONResponse(
+            content={"error": f"Failed to get model configurations: {str(e)}"},
             status_code=500
         )
