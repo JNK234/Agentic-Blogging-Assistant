@@ -132,23 +132,64 @@ async def generate_titles_node(state: BlogRefinementState, model: BaseModel, per
             if not isinstance(title_data, list):
                 raise ValueError("Parsed JSON is not a list.")
 
-            # Validate using Pydantic model (convert back to dict for storage in state)
-            # Nodes return dicts, so agent needs to handle parsing TitleOption list
-            options = [TitleOption.model_validate(item).model_dump() for item in title_data if isinstance(item, dict)]
-            if not options:
+            # Validate and ensure each item has required fields
+            validated_options = []
+            for i, item in enumerate(title_data):
+                if not isinstance(item, dict):
+                    logger.warning(f"Item {i} is not a dictionary, skipping")
+                    continue
+                
+                # Ensure all required fields are present
+                if "title" not in item or "subtitle" not in item:
+                    logger.warning(f"Item {i} missing required fields, adding defaults")
+                    item = {
+                        "title": item.get("title", f"Blog Post Title {i+1}"),
+                        "subtitle": item.get("subtitle", "Insights and practical applications"),
+                        "reasoning": item.get("reasoning", item.get("approach", item.get("value_promise", "Generated title option")))
+                    }
+                
+                # Ensure reasoning field exists (for backward compatibility)
+                if "reasoning" not in item:
+                    item["reasoning"] = item.get("approach", item.get("value_promise", "Generated title option"))
+                
+                try:
+                    # Validate with Pydantic model
+                    validated = TitleOption.model_validate(item).model_dump()
+                    validated_options.append(validated)
+                except ValidationError as ve:
+                    logger.warning(f"Validation error for item {i}: {ve}, using defaults")
+                    validated_options.append({
+                        "title": str(item.get("title", f"Blog Post Title {i+1}")),
+                        "subtitle": str(item.get("subtitle", "Insights and practical applications")),
+                        "reasoning": str(item.get("reasoning", "Generated title option"))
+                    })
+            
+            if not validated_options:
                 raise ValueError("No valid title options found after validation.")
 
-            logger.info(f"Successfully generated {len(options)} title options.")
-            return {"title_options": options} # Store list of dicts
+            logger.info(f"Successfully generated {len(validated_options)} title options.")
+            return {"title_options": validated_options}
 
-        except (json.JSONDecodeError, ValueError, ValidationError) as parse_err: # Catch Pydantic validation errors too
-            logger.error(f"Failed to parse/validate title options: {parse_err}. Raw response: '{response}', Cleaned: '{cleaned_response}'")
+        except (json.JSONDecodeError, ValueError) as parse_err:
+            logger.error(f"Failed to parse title options: {parse_err}. Raw response: '{response}', Cleaned: '{cleaned_response}'")
             # Create fallback title options on parse error
-            fallback_options = [{
-                "title": "Technical Analysis", 
-                "subtitle": "Key insights and practical considerations",
-                "reasoning": f"Fallback title due to parse error: {parse_err}"
-            }]
+            fallback_options = [
+                {
+                    "title": "Technical Deep Dive", 
+                    "subtitle": "Exploring concepts and implementation details",
+                    "reasoning": "Default title due to generation error"
+                },
+                {
+                    "title": "Practical Guide",
+                    "subtitle": "Step-by-step approach and best practices",
+                    "reasoning": "Alternative title option"
+                },
+                {
+                    "title": "Technical Analysis",
+                    "subtitle": "Key insights and practical considerations",
+                    "reasoning": "Third fallback option"
+                }
+            ]
             return {"title_options": fallback_options}
 
     except Exception as e:

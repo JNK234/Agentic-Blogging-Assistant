@@ -116,16 +116,35 @@ Based on content analysis, choose the most appropriate approach:
 - **Comparative Analysis**: "[Method A] vs [Method B]: [Key Difference]"
 
 **OUTPUT FORMAT:**
+
+Generate exactly 3 title options as a JSON array. Each option should follow this exact structure:
+
 ```json
 [
-  {
-    "title": "Expert practitioner title reflecting content depth and value",
-    "subtitle": "Additional context that clarifies practical scope and technical domain",
-    "approach": "Which narrative approach this title uses and why it fits the content",
-    "value_promise": "Specific learning outcome or insight readers will gain"
-  }
+  {{
+    "title": "Your compelling title here",
+    "subtitle": "Your informative subtitle that adds context",
+    "reasoning": "Brief explanation of why this title works"
+  }},
+  {{
+    "title": "Second title option",
+    "subtitle": "Second subtitle option",
+    "reasoning": "Brief explanation for second option"
+  }},
+  {{
+    "title": "Third title option",
+    "subtitle": "Third subtitle option",
+    "reasoning": "Brief explanation for third option"
+  }}
 ]
 ```
+
+**CRITICAL INSTRUCTIONS:**
+- Output ONLY the JSON array, no other text
+- Generate exactly 3 options
+- Each object must have exactly these three keys: "title", "subtitle", "reasoning"
+- Ensure proper JSON formatting with double quotes
+- Do not include markdown code blocks or any other formatting
 
 Focus on titles that authentically represent both the content depth and the expert practitioner voice—direct, valuable, and reflective of genuine technical insight sharing.
 """

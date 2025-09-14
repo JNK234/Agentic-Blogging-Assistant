@@ -104,29 +104,31 @@ class ProjectManagerUI:
             return
         
         try:
-            with st.spinner("Loading project progress..."):
-                progress_data = asyncio.run(self.project_service.get_project_progress(current_project_id))
+            # Temporarily disabled - progress endpoint not yet implemented in backend
+            # with st.spinner("Loading project progress..."):
+            #     progress_data = asyncio.run(self.project_service.get_project_progress(current_project_id))
             
-            st.markdown("#### 📊 Progress")
+            # st.markdown("#### 📊 Progress")
             
-            # Overall progress bar
-            overall_progress = progress_data.get('overall_progress', 0)
-            st.progress(overall_progress / 100.0, text=f"Overall: {overall_progress}%")
+            # # Overall progress bar
+            # overall_progress = progress_data.get('overall_progress', 0)
+            # st.progress(overall_progress / 100.0, text=f"Overall: {overall_progress}%")
             
-            # Milestone indicators
-            milestones = progress_data.get('milestones', {})
+            # # Milestone indicators
+            # milestones = progress_data.get('milestones', {})
+            pass  # Progress display temporarily disabled
             
-            cols = st.columns(5)
-            milestone_names = ['Upload', 'Outline', 'Draft', 'Refined', 'Social']
-            milestone_keys = ['files_uploaded', 'outline_generated', 'draft_completed', 'blog_refined', 'social_generated']
+            # cols = st.columns(5)
+            # milestone_names = ['Upload', 'Outline', 'Draft', 'Refined', 'Social']
+            # milestone_keys = ['files_uploaded', 'outline_generated', 'draft_completed', 'blog_refined', 'social_generated']
             
-            for i, (name, key) in enumerate(zip(milestone_names, milestone_keys)):
-                with cols[i]:
-                    completed = milestones.get(key, {}).get('completed', False)
-                    if completed:
-                        st.success(f"✅ {name}")
-                    else:
-                        st.info(f"⏳ {name}")
+            # for i, (name, key) in enumerate(zip(milestone_names, milestone_keys)):
+            #     with cols[i]:
+            #         completed = milestones.get(key, {}).get('completed', False)
+            #         if completed:
+            #             st.success(f"✅ {name}")
+            #         else:
+            #             st.info(f"⏳ {name}")
             
         except Exception as e:
             logger.error(f"Failed to get progress for project {current_project_id}: {e}")
@@ -151,10 +153,16 @@ class ProjectManagerUI:
         
         with col2:
             if st.button("🗑️ Delete Project", key="delete_project_btn"):
-                self._delete_project(current_project_id)
+                st.session_state["delete_mode"] = current_project_id
+                st.rerun()
             
             if st.button("📦 Archive Project", key="archive_project_btn"):
                 self._archive_project(current_project_id)
+        
+        # Show delete confirmation if in delete mode
+        if st.session_state.get("delete_mode") == current_project_id:
+            st.markdown("---")
+            self._delete_project(current_project_id)
     
     def _switch_project(self, project: Dict[str, Any]):
         """Switch to a different project."""
@@ -199,12 +207,29 @@ class ProjectManagerUI:
         """Resume a project by loading its state."""
         try:
             with st.spinner("Resuming project..."):
-                project_data = asyncio.run(self.project_service.resume_project(project_id))
+                resume_data = asyncio.run(self.project_service.resume_project(project_id))
+                
+                # Set the job_id first (critical for workflow continuation)
+                job_id = resume_data.get('job_id')
+                if job_id:
+                    self.session_manager.set('job_id', job_id)
+                    
+                    # Now fetch the actual job state content
+                    try:
+                        job_status = asyncio.run(self.project_service.get_job_status(job_id))
+                        self._restore_content_from_job_state(job_status)
+                    except Exception as job_err:
+                        logger.warning(f"Could not fetch job state content: {job_err}")
+                        # Continue with basic resume data
                 
                 # Restore session state from project data
-                self._restore_session_from_project(project_data)
+                self._restore_session_from_project(resume_data)
                 
-                st.success("Project resumed successfully!")
+                # Set the next step hint for user guidance
+                next_step = resume_data.get('next_step', 'Unknown')
+                self.session_manager.set('status_message', f"Project resumed! Next step: {next_step}")
+                
+                st.success(f"Project resumed successfully! Next step: {next_step}")
                 st.rerun()
                 
         except Exception as e:
@@ -257,21 +282,33 @@ class ProjectManagerUI:
             key="delete_confirmation_input"
         )
         
-        if confirm_delete == "DELETE" and st.button("🗑️ Permanently Delete", key="confirm_delete_btn"):
-            try:
-                with st.spinner("Deleting project..."):
-                    asyncio.run(self.project_service.delete_project(project_id))
-                    
-                    # Clear current project if it was the deleted one
-                    if self.session_manager.get('current_project_id') == project_id:
-                        self._clear_current_project()
-                    
-                    st.success("Project deleted successfully!")
-                    st.rerun()
-                    
-            except Exception as e:
-                logger.error(f"Failed to delete project {project_id}: {e}")
-                st.error(f"Failed to delete project: {str(e)}")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("❌ Cancel", key="cancel_delete_btn"):
+                st.session_state.pop("delete_mode", None)
+                st.rerun()
+        
+        with col2:
+            if confirm_delete == "DELETE" and st.button("🗑️ Permanently Delete", key="confirm_delete_btn"):
+                try:
+                    with st.spinner("Deleting project..."):
+                        asyncio.run(self.project_service.delete_project(project_id))
+                        
+                        # Clear current project if it was the deleted one
+                        if self.session_manager.get('current_project_id') == project_id:
+                            self._clear_current_project()
+                        
+                        # Clear delete mode
+                        st.session_state.pop("delete_mode", None)
+                        
+                        st.success("Project deleted successfully!")
+                        st.rerun()
+                        
+                except Exception as e:
+                    logger.error(f"Failed to delete project {project_id}: {e}")
+                    st.error(f"Failed to delete project: {str(e)}")
+                    st.session_state.pop("delete_mode", None)
     
     def _archive_project(self, project_id: str):
         """Archive or unarchive a project."""
@@ -294,31 +331,117 @@ class ProjectManagerUI:
                 logger.error(f"Failed to {action.lower()} project {project_id}: {e}")
                 st.error(f"Failed to {action.lower()} project: {str(e)}")
     
-    def _restore_session_from_project(self, project_data: Dict[str, Any]):
-        """Restore session state from project data."""
-        # Map project data to session state
-        milestones = project_data.get('milestones', {})
+    def _restore_session_from_project(self, resume_data: Dict[str, Any]):
+        """Restore session state from resume data."""
+        # Handle both direct milestones format and nested project format
+        if 'project' in resume_data:
+            # New format: resume_data contains nested project data
+            project_data = resume_data['project']
+            milestones = project_data.get('milestones', {})
+        else:
+            # Legacy format: resume_data is the project data directly
+            project_data = resume_data
+            milestones = resume_data.get('milestones', {})
         
         # Basic project info
-        self.session_manager.set('project_name', project_data.get('name'))
+        self.session_manager.set('current_project_id', project_data.get('id') or resume_data.get('project_id'))
+        self.session_manager.set('current_project_name', project_data.get('name') or resume_data.get('project_name'))
+        self.session_manager.set('project_name', project_data.get('name') or resume_data.get('project_name'))
         self.session_manager.set('selected_model', project_data.get('metadata', {}).get('model_used', 'gemini'))
         
-        # Restore milestones
+        # Restore milestones (check both formats)
         if 'outline_generated' in milestones:
-            self.session_manager.set('generated_outline', milestones['outline_generated'].get('data'))
+            outline_data = milestones['outline_generated'].get('data')
+            self.session_manager.set('generated_outline', outline_data)
+            # Set total_sections for frontend navigation
+            if outline_data and isinstance(outline_data, dict):
+                sections = outline_data.get('sections', [])
+                self.session_manager.set('total_sections', len(sections))
+                logger.info(f"Restored outline with {len(sections)} sections from milestones")
+        elif resume_data.get('has_outline'):
+            # Backend indicates outline exists, but we may need to fetch it separately
+            pass
             
         if 'draft_completed' in milestones:
             self.session_manager.set('final_draft', milestones['draft_completed'].get('data'))
+        elif resume_data.get('has_draft'):
+            # Backend indicates draft exists, but we may need to fetch it separately
+            pass
             
         if 'blog_refined' in milestones:
             refined_data = milestones['blog_refined'].get('data', {})
             self.session_manager.set('refined_draft', refined_data.get('content'))
             self.session_manager.set('summary', refined_data.get('summary'))
             self.session_manager.set('title_options', refined_data.get('title_options'))
+        elif resume_data.get('has_refined'):
+            # Backend indicates refined content exists, but we may need to fetch it separately
+            pass
             
         if 'social_generated' in milestones:
             self.session_manager.set('social_content', milestones['social_generated'].get('data'))
         
+        # Set default session variables for workflow navigation
+        if not self.session_manager.get('current_section_index'):
+            self.session_manager.set('current_section_index', 0)
+        if not self.session_manager.get('generated_sections'):
+            self.session_manager.set('generated_sections', {})
+        
         # Set initialization flag
         self.session_manager.set('is_initialized', True)
-        self.session_manager.set('status_message', "Project resumed successfully!")
+        
+    def _restore_content_from_job_state(self, job_status: Dict[str, Any]):
+        """Restore actual content from job state cache."""
+        try:
+            # Restore outline if available
+            if job_status.get('has_outline'):
+                outline_data = job_status.get('outline')
+                if outline_data:
+                    self.session_manager.set('generated_outline', outline_data)
+                    # Set total_sections for frontend navigation
+                    if isinstance(outline_data, dict):
+                        sections = outline_data.get('sections', [])
+                        self.session_manager.set('total_sections', len(sections))
+                        logger.info(f"Restored outline with {len(sections)} sections from job state")
+                    else:
+                        logger.info("Restored outline from job state")
+                    
+            # Restore draft if available  
+            if job_status.get('has_final_draft'):
+                final_draft = job_status.get('final_draft')
+                if final_draft:
+                    self.session_manager.set('final_draft', final_draft)
+                    logger.info("Restored final draft from job state")
+                    
+            # Restore refined content if available
+            if job_status.get('has_refined_draft'):
+                refined_draft = job_status.get('refined_draft')
+                summary = job_status.get('summary')
+                title_options = job_status.get('title_options')
+                
+                if refined_draft:
+                    self.session_manager.set('refined_draft', refined_draft)
+                    logger.info("Restored refined draft from job state")
+                if summary:
+                    self.session_manager.set('summary', summary)
+                if title_options:
+                    self.session_manager.set('title_options', title_options)
+                    
+            # Restore social content if available
+            social_content = job_status.get('social_content')
+            if social_content:
+                self.session_manager.set('social_content', social_content)
+                logger.info("Restored social content from job state")
+            
+            # Restore generated sections if available
+            generated_sections = job_status.get('generated_sections', {})
+            if generated_sections:
+                self.session_manager.set('generated_sections', generated_sections)
+                logger.info(f"Restored {len(generated_sections)} generated sections from job state")
+                
+            # Set current section index based on progress
+            current_section_index = job_status.get('current_section_index', 0)
+            self.session_manager.set('current_section_index', current_section_index)
+                
+        except Exception as e:
+            logger.error(f"Error restoring content from job state: {e}")
+            # Don't fail the entire resume process

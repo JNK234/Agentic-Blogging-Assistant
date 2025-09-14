@@ -99,7 +99,7 @@ class ProjectService:
         
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.get(f"{self.base_url}/projects/{project_id}")
+                response = await client.get(f"{self.base_url}/project/{project_id}")
                 response.raise_for_status()
                 return response.json()
                 
@@ -127,7 +127,7 @@ class ProjectService:
         
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.post(f"{self.base_url}/projects/{project_id}/resume")
+                response = await client.post(f"{self.base_url}/project/{project_id}/resume")
                 response.raise_for_status()
                 return response.json()
                 
@@ -155,7 +155,7 @@ class ProjectService:
         
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.delete(f"{self.base_url}/projects/{project_id}")
+                response = await client.delete(f"{self.base_url}/project/{project_id}/permanent")
                 response.raise_for_status()
                 return response.json()
                 
@@ -185,7 +185,7 @@ class ProjectService:
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
                 response = await client.patch(
-                    f"{self.base_url}/projects/{project_id}/archive",
+                    f"{self.base_url}/project/{project_id}/archive",
                     json={"archived": archive}
                 )
                 response.raise_for_status()
@@ -218,7 +218,7 @@ class ProjectService:
         try:
             async with httpx.AsyncClient(timeout=EXPORT_TIMEOUT) as client:
                 response = await client.get(
-                    f"{self.base_url}/projects/{project_id}/export",
+                    f"{self.base_url}/project/{project_id}/export",
                     params={"format": format_type}
                 )
                 response.raise_for_status()
@@ -298,3 +298,36 @@ class ProjectService:
         except Exception as e:
             logger.error(f"Unexpected error searching projects: {e}")
             raise
+    
+    async def get_job_status(self, job_id: str) -> Dict[str, Any]:
+        """
+        Get job status including available content.
+        
+        Args:
+            job_id: Job identifier
+            
+        Returns:
+            Job status data including content availability
+        """
+        self._validate_job_id(job_id)
+        
+        try:
+            async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+                response = await client.get(f"{self.base_url}/job_status/{job_id}")
+                response.raise_for_status()
+                return response.json()
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error getting job status {job_id}: {e.response.status_code}")
+            raise
+        except httpx.ConnectError as e:
+            logger.error(f"Connection error getting job status {job_id}: {e}")
+            raise  
+        except Exception as e:
+            logger.error(f"Unexpected error getting job status {job_id}: {e}")
+            raise
+            
+    def _validate_job_id(self, job_id: str):
+        """Validate job ID format."""
+        if not job_id or not isinstance(job_id, str):
+            raise ValueError("Job ID must be a non-empty string")

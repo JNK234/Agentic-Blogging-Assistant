@@ -581,10 +581,15 @@ class SidebarUI:
                     value=SessionManager.get('project_name', ""),
                     help="A unique name for your blog project."
                 )
+                # Safely get the model index with fallback
+                current_model = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
+                if current_model not in AppConfig.SUPPORTED_MODELS:
+                    current_model = AppConfig.DEFAULT_MODEL
+                    
                 selected_model = st.selectbox(
                     "Select LLM Model",
                     options=AppConfig.SUPPORTED_MODELS,
-                    index=AppConfig.SUPPORTED_MODELS.index(SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)),
+                    index=AppConfig.SUPPORTED_MODELS.index(current_model),
                     help="Choose the language model for generation."
                 )
                 uploaded_files = st.file_uploader(

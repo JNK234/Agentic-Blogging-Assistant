@@ -99,20 +99,43 @@ async def validate_job(job_id: str) -> JSONResponse:
 @app.post("/upload/{project_name}")
 async def upload_files(
     project_name: str,
-    files: List[UploadFile] = File(...),
+    files: Optional[List[UploadFile]] = File(None),
     model_name: Optional[str] = Form(None),
     persona: Optional[str] = Form(None)
 ) -> JSONResponse:
     """Upload files for a specific project and create a project entry."""
     try:
+        # Validate inputs
+        if not files or len(files) == 0:
+            return JSONResponse(
+                content={"error": "No valid files were uploaded"},
+                status_code=400
+            )
+        
+        # Validate project name
+        if not project_name or not project_name.strip():
+            return JSONResponse(
+                content={"error": "Project name cannot be empty"},
+                status_code=400
+            )
+            
+        # Sanitize project name for filesystem safety
+        safe_project_name = project_name.strip()[:100]  # Limit length
+        
         # Create project directory
-        project_dir = Path(UPLOAD_DIRECTORY) / project_name
+        project_dir = Path(UPLOAD_DIRECTORY) / safe_project_name
         project_dir.mkdir(parents=True, exist_ok=True)
 
         uploaded_files = []
-        for file in files:
-            if not file.filename:
-                continue
+        valid_files = [f for f in files if f.filename and f.filename.strip()]
+        
+        if not valid_files:
+            return JSONResponse(
+                content={"error": "No valid files provided - all files have empty names"},
+                status_code=400
+            )
+        
+        for file in valid_files:
 
             file_extension = Path(file.filename).suffix.lower()
             if file_extension not in SUPPORTED_EXTENSIONS:
@@ -469,7 +492,16 @@ async def get_job_status(job_id: str) -> JSONResponse:
             "has_final_draft": bool(job_state.get('final_draft')),
             "has_refined_draft": bool(job_state.get('refined_draft')),
             "status": job_state.get('status_message', 'unknown'),
-            "outline_title": outline.get('title', 'Unknown')
+            "outline_title": outline.get('title', 'Unknown'),
+            # Include actual content for frontend resume
+            "has_outline": bool(outline),
+            "outline": outline,
+            "final_draft": job_state.get('final_draft'),
+            "refined_draft": job_state.get('refined_draft'),
+            "summary": job_state.get('summary'),
+            "title_options": job_state.get('title_options'),
+            "social_content": job_state.get('social_content'),
+            "generated_sections": job_state.get('generated_sections', {})
         })
     except Exception as e:
         logger.exception(f"Error getting job status: {str(e)}")
@@ -2097,8 +2129,9 @@ async def resume_project(project_id: str) -> JSONResponse:
         # Load outline if available
         outline_milestone = project_manager.load_milestone(project_id, MilestoneType.OUTLINE_GENERATED)
         if outline_milestone:
-            job_state["outline"] = outline_milestone.get("data", {}).get("outline")
-            job_state["outline_hash"] = outline_milestone.get("data", {}).get("outline_hash")
+            outline_data = outline_milestone.get("data", {})
+            job_state["outline"] = outline_data  # The outline data is directly in the data field
+            job_state["outline_hash"] = outline_milestone.get("metadata", {}).get("outline_hash")
         
         # Load draft if available
         draft_milestone = project_manager.load_milestone(project_id, MilestoneType.DRAFT_COMPLETED)

@@ -1,0 +1,23 @@
+# Testing dependencies for the Agentic Blogging Assistant project
+# Install with: pip install -r test-requirements.txt
+
+# Core testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+pytest-xdist>=3.3.0
+
+# HTTP testing for FastAPI
+httpx>=0.24.0
+fastapi[testing]>=0.100.0
+
+# Additional testing utilities
+faker>=19.0.0
+factory-boy>=3.3.0
+freezegun>=1.2.0
+
+# Test reporting and formatting
+pytest-html>=3.2.0
+pytest-json-report>=1.5.0
+pytest-clarity>=1.0.1

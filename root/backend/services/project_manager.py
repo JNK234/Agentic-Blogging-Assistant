@@ -64,7 +64,64 @@ class ProjectManager:
     
     def _get_project_path(self, project_id: str) -> Path:
         """Get the directory path for a specific project."""
-        return self.base_dir / project_id
+        # Sanitize project_id to prevent path traversal attacks
+        safe_id = self._sanitize_project_id(project_id)
+        return self.base_dir / safe_id
+    
+    def _sanitize_project_id(self, project_id: str) -> str:
+        """
+        Sanitize project ID to prevent path traversal and ensure safe filesystem operations.
+        
+        Args:
+            project_id: Raw project ID from user input
+            
+        Returns:
+            Sanitized project ID safe for filesystem operations
+            
+        Raises:
+            ValueError: If project_id is invalid after sanitization
+        """
+        import re
+        import hashlib
+        
+        # Check for obviously malicious input
+        malicious_patterns = ['..' , '/', '\\', 'etc', 'passwd', 'system32', 'windows', 'users', 'root']
+        project_lower = project_id.lower()
+        
+        for pattern in malicious_patterns:
+            if pattern in project_lower:
+                # Generate a safe hash instead of using the malicious input
+                hash_obj = hashlib.md5(project_id.encode())
+                safe_id = f"sanitized_{hash_obj.hexdigest()[:8]}"
+                logger.warning(f"Detected potentially malicious project ID '{project_id}', using sanitized version: {safe_id}")
+                return safe_id
+        
+        # Remove any path separators and dangerous characters
+        # Only allow alphanumeric characters, hyphens, and underscores
+        safe_id = re.sub(r'[^a-zA-Z0-9\-_]', '', project_id)
+        
+        # Ensure it's not empty after sanitization
+        if not safe_id or len(safe_id) == 0:
+            # Generate a hash if nothing remains after sanitization
+            hash_obj = hashlib.md5(project_id.encode())
+            safe_id = f"project_{hash_obj.hexdigest()[:8]}"
+            logger.warning(f"Project ID '{project_id}' became empty after sanitization, using: {safe_id}")
+        
+        # Ensure it's not too long (prevent filesystem issues)
+        if len(safe_id) > 100:
+            # Truncate and add hash to maintain uniqueness
+            hash_obj = hashlib.md5(project_id.encode())
+            safe_id = safe_id[:90] + '_' + hash_obj.hexdigest()[:8]
+            
+        # Prevent reserved names and path components
+        reserved_names = {'.', '..', 'con', 'prn', 'aux', 'nul', 'com1', 'com2', 'com3', 
+                         'com4', 'com5', 'com6', 'com7', 'com8', 'com9', 'lpt1', 'lpt2', 
+                         'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9'}
+        if safe_id.lower() in reserved_names:
+            hash_obj = hashlib.md5(project_id.encode())
+            safe_id = f"reserved_{hash_obj.hexdigest()[:8]}"
+        
+        return safe_id
     
     def _atomic_write(self, file_path: Path, data: Any) -> None:
         """
