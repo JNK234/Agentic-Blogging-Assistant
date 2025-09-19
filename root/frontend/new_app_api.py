@@ -34,12 +34,14 @@ except ImportError:
     logger.warning("nest_asyncio not found. Skipping patch.")
 
 # --- Configuration ---
+from config import ModelConfig
+
 class AppConfig:
     PAGE_TITLE = "Agentic Blogging Assistant (API)"
     PAGE_ICON = "📝"
     LAYOUT = "wide"
-    DEFAULT_MODEL = "gemini" # Default model selection
-    SUPPORTED_MODELS = ["gemini", "claude", "openai", "deepseek", "openrouter"] # Align with backend ModelFactory
+    DEFAULT_MODEL = ModelConfig.DEFAULT_MODEL # Default provider selection
+    SUPPORTED_MODELS = ModelConfig.DEFAULT_PROVIDERS # Provider keys
     SUPPORTED_FILE_TYPES = ["ipynb", "md", "py"]
 
 # --- Session State Management ---
@@ -85,6 +87,7 @@ class SessionManager:
                 'is_initialized': False, # Flag to indicate if setup is complete
                 'error_message': None,
                 'status_message': "Please initialize the assistant.",
+                'cost_summary': None,
                 # Project Management State
                 'current_project_id': None,
                 'current_project_name': None,
@@ -564,7 +567,8 @@ class SidebarUI:
             return {
                 'neuraforge': {'name': 'Neuraforge', 'description': 'Technical newsletter voice'},
                 'student_sharing': {'name': 'Student Sharing', 'description': 'Authentic student voice'},
-                'sebastian_raschka': {'name': 'Sebastian Raschka', 'description': 'Expert practitioner voice'}
+                'sebastian_raschka': {'name': 'Sebastian Raschka', 'description': 'Expert practitioner voice'},
+                'tech_blog_writer': {'name': 'Tech Blog Writer', 'description': 'Technical blog writer following industry best practices'}
             }
 
     def _fetch_models(self, api_base_url: str) -> Dict[str, Any]:
@@ -574,13 +578,32 @@ class SidebarUI:
             return cached_models
 
         try:
-            models = asyncio.run(api_client.get_models(api_base_url))
-            SessionManager.set('available_models', models)
-            return models
+            models_resp = asyncio.run(api_client.get_models(api_base_url))
+            # Normalize shape to { 'providers': { provider: { name, models: [ {id, name, description} ] } } }
+            providers = {}
+            if isinstance(models_resp, dict) and 'providers' in models_resp:
+                providers = models_resp['providers'] or {}
+            else:
+                # Backward-compat: assume {provider: [model_ids]}
+                providers = {p: {"name": p.title(), "models": [{"id": mid, "name": mid, "description": ""} for mid in mids]}
+                             for p, mids in (models_resp or {}).items()}
+
+            normalized = { 'providers': providers }
+            SessionManager.set('available_models', normalized)
+            return normalized
         except Exception as e:
             logger.error(f"Failed to fetch models: {e}")
             # Return default fallback based on current config
-            return {provider: [f"{provider}-default"] for provider in AppConfig.SUPPORTED_MODELS}
+            fallback = {
+                'providers': {
+                    provider: {
+                        "name": ModelConfig.get_provider_display_name(provider),
+                        "models": [{"id": f"{provider}-default", "name": f"Default {ModelConfig.get_provider_display_name(provider)} Model", "description": "Default model for this provider"}]
+                    }
+                    for provider in AppConfig.SUPPORTED_MODELS
+                }
+            }
+            return fallback
 
     def render(self):
         with st.sidebar:
@@ -611,7 +634,107 @@ class SidebarUI:
 
             st.markdown("---")
 
-            # Initialization Form
+            # Fetch available models (used for provider/model dropdowns)
+            available_models = self._fetch_models(api_base_url)
+
+            # Get available providers from backend (with fallback to config)
+            provider_map = (available_models or {}).get('providers', {})
+            available_providers = list(provider_map.keys()) if provider_map else AppConfig.SUPPORTED_MODELS
+
+            # --- Model Configuration (outside form for reactivity) ---
+            st.markdown("**🤖 Model Configuration**")
+
+            # Provider selection with enhanced display
+            current_model = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
+            if current_model not in available_providers:
+                current_model = available_providers[0] if available_providers else AppConfig.DEFAULT_MODEL
+
+            # Create provider options with clean display
+            def format_provider_option(provider):
+                return ModelConfig.get_provider_display_name(provider)
+
+            selected_model = st.selectbox(
+                "Model Provider",
+                options=available_providers,
+                index=available_providers.index(current_model) if current_model in available_providers else 0,
+                format_func=format_provider_option,
+                help="Choose the LLM provider. Each provider offers different models and capabilities."
+            )
+
+            # Check if provider changed (for reactivity) - store before updating
+            provider_changed = selected_model != current_model
+
+            # Update session state immediately when provider changes
+            if provider_changed:
+                SessionManager.set('selected_model', selected_model)
+                # Clear specific model when provider changes
+                SessionManager.set('specific_model', None)
+                # Rerun will happen automatically since this widget is outside a form
+
+            # Specific model selection within provider (using /models shape)
+            specific_model = None
+            provider_entry = provider_map.get(selected_model, {})
+            provider_models = provider_entry.get('models', []) or []
+
+            if provider_models:
+                # Show provider description
+                provider_description = ModelConfig.get_provider_description(selected_model)
+                st.caption(provider_description)
+
+                # Build options with enhanced formatting
+                model_ids = [m.get('id') for m in provider_models if m.get('id')]
+                id_to_display = {}
+                id_to_description = {}
+
+                for model in provider_models:
+                    model_id = model.get('id')
+                    model_name = model.get('name', model_id)
+                    model_desc = model.get('description', '')
+                    id_to_display[model_id] = model_name
+                    id_to_description[model_id] = model_desc
+
+                if model_ids:
+                    # Handle dependent dropdown logic properly
+                    current_specific = SessionManager.get('specific_model')
+                    specific_index = 0
+
+                    # Reset to first option if provider changed OR current specific model not available
+                    if provider_changed or not (current_specific and current_specific in model_ids):
+                        specific_index = 0
+                    else:
+                        specific_index = model_ids.index(current_specific)
+
+                    def format_model_option(model_id):
+                        name = id_to_display.get(model_id, model_id)
+                        desc = id_to_description.get(model_id, '')
+                        if desc:
+                            return f"{name} - {desc}"
+                        return name
+
+                    specific_model = st.selectbox(
+                        f"{ModelConfig.get_provider_display_name(selected_model)} Model",
+                        options=model_ids,
+                        index=specific_index,
+                        format_func=format_model_option,
+                        help=f"Choose the specific model variant for {ModelConfig.get_provider_display_name(selected_model)}",
+                        key=f"specific_model_{selected_model}"  # Dynamic key for reactivity
+                    )
+
+                    # Show selected model description
+                    if specific_model and id_to_description.get(specific_model):
+                        st.caption(id_to_description[specific_model])
+                else:
+                    st.info(f"No specific models available for {selected_model}")
+            else:
+                st.info(f"Using default model for {ModelConfig.get_provider_display_name(selected_model)}")
+
+            # Persist the latest specific model selection
+            if specific_model:
+                SessionManager.set('specific_model', specific_model)
+
+            st.markdown("---")
+
+            # Initialization Form (keeps project name, persona, file upload inside form)
             with st.form("init_form"):
                 st.subheader("Initialize Project")
                 project_name = st.text_input(
@@ -619,42 +742,6 @@ class SidebarUI:
                     value=SessionManager.get('project_name', ""),
                     help="A unique name for your blog project."
                 )
-                # Enhanced Model Selection UI
-                st.markdown("**🤖 Model Configuration**")
-
-                # Fetch available models
-                available_models = self._fetch_models(api_base_url)
-
-                # Provider selection (keeping existing logic as fallback)
-                current_model = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
-                if current_model not in AppConfig.SUPPORTED_MODELS:
-                    current_model = AppConfig.DEFAULT_MODEL
-
-                selected_model = st.selectbox(
-                    "Model Provider",
-                    options=AppConfig.SUPPORTED_MODELS,
-                    index=AppConfig.SUPPORTED_MODELS.index(current_model),
-                    help="Choose the LLM provider."
-                )
-
-                # Specific model selection within provider
-                specific_model = None
-                if selected_model in available_models and available_models[selected_model]:
-                    model_options = available_models[selected_model]
-                    if len(model_options) > 1:
-                        current_specific = SessionManager.get('specific_model')
-                        specific_index = 0
-                        if current_specific and current_specific in model_options:
-                            specific_index = model_options.index(current_specific)
-
-                        specific_model = st.selectbox(
-                            f"Specific {selected_model.title()} Model",
-                            options=model_options,
-                            index=specific_index,
-                            help=f"Choose the specific model variant for {selected_model}."
-                        )
-                    else:
-                        st.info(f"Using default model for {selected_model}")
 
                 # Persona/Output Style Selection
                 st.markdown("**✍️ Writing Style Configuration**")
@@ -700,9 +787,7 @@ class SidebarUI:
                 else:
                     # Store basic info immediately for potential later use
                     SessionManager.set('project_name', project_name)
-                    SessionManager.set('selected_model', selected_model)
                     SessionManager.set('selected_persona', selected_persona)
-                    SessionManager.set('specific_model', specific_model)
                     SessionManager.set('uploaded_files_info', [{"name": f.name, "type": f.type, "size": f.size} for f in uploaded_files])
                     SessionManager.set('is_initialized', False) # Reset initialization status
                     SessionManager.set_status("Initializing...")
@@ -710,7 +795,9 @@ class SidebarUI:
 
                     # Run the async initialization process
                     try:
-                        asyncio.run(self._initialize_assistant(project_name, selected_model, uploaded_files, api_base_url))
+                        # Use current provider from session (reactive section above)
+                        provider_for_init = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
+                        asyncio.run(self._initialize_assistant(project_name, provider_for_init, uploaded_files, api_base_url))
                     except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
                         SessionManager.set_error(f"API Error: {str(api_err)}")
                         SessionManager.set_status("Initialization failed.")
@@ -732,7 +819,9 @@ class SidebarUI:
                     st.sidebar.markdown("---")
                     st.sidebar.write("**Project Details:**")
                     st.sidebar.write(f"- **Name:** {SessionManager.get('project_name')}")
-                    st.sidebar.write(f"- **Model:** {SessionManager.get('selected_model')}")
+                    sel_provider = SessionManager.get('selected_model')
+                    sel_specific = SessionManager.get('specific_model') or 'default'
+                    st.sidebar.write(f"- **Model:** {sel_provider} / {sel_specific}")
                     st.sidebar.write("**Processed Files:**")
                     hashes = SessionManager.get('processed_file_hashes', {})
                     if hashes:
@@ -743,6 +832,32 @@ class SidebarUI:
 
                 else:
                     st.sidebar.info(status_message)
+
+            # Cost tracking summary
+            cost_summary = SessionManager.get('cost_summary')
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("**💰 Cost Tracking**")
+            if cost_summary:
+                total_cost = cost_summary.get('total_cost', 0.0)
+                total_tokens = cost_summary.get('total_tokens', 0)
+                total_calls = cost_summary.get('total_calls', 0)
+
+                st.sidebar.metric("Total Cost", f"${total_cost:.4f}")
+                st.sidebar.write(f"Tokens: {total_tokens:,}")
+                st.sidebar.write(f"LLM Calls: {total_calls}")
+
+                by_stage = cost_summary.get('by_stage') or {}
+                if by_stage:
+                    with st.sidebar.expander("Stage Breakdown", expanded=False):
+                        for stage_name, data in by_stage.items():
+                            stage_cost = data.get('cost', 0.0)
+                            stage_tokens = data.get('tokens', 0)
+                            st.markdown(
+                                f"- **{stage_name.replace('_', ' ').title()}**: ${stage_cost:.4f}"
+                                f" ({stage_tokens:,} tokens)"
+                            )
+            else:
+                st.sidebar.caption("No cost data yet. Generate content to see usage.")
 
     def _check_api_health(self, base_url):
         """Checks the API health and updates the sidebar."""
@@ -798,6 +913,7 @@ class SidebarUI:
         SessionManager.set_status("Assistant Initialized Successfully!")
         SessionManager.set('is_initialized', True)
         SessionManager.clear_error()
+        SessionManager.set('cost_summary', None)
         logger.info(f"Initialization complete for project '{project_name}' with model '{model_name}'.")
 
 
@@ -917,6 +1033,7 @@ class OutlineGeneratorUI:
                     SessionManager.set('generated_sections', {}) # Clear old sections
                     SessionManager.set('final_draft', None) # Clear old draft
                     SessionManager.set('social_content', None) # Clear old social content
+                    SessionManager.set('cost_summary', result.get('cost_summary'))
                     SessionManager.set_status("Outline generated successfully.")
                     logger.info(f"Outline generated for job ID: {result.get('job_id')}")
                     
@@ -1105,9 +1222,12 @@ class BlogDraftUI:
                     new_sections[current_section_index] = {
                         "title": section_title_raw,
                         "raw_content": section_content_raw, # Store original API response
-                        "formatted_content": formatted_content # Store formatted version
+                        "formatted_content": formatted_content, # Store formatted version
+                        "cost_delta": result.get("section_cost"),
+                        "token_delta": result.get("section_tokens")
                     }
                     SessionManager.set('generated_sections', new_sections)
+                    SessionManager.set('cost_summary', result.get('cost_summary'))
                     SessionManager.set('current_section_index', current_section_index + 1)
                     SessionManager.set_status(status_msg) # Use the dynamic status message
                     st.rerun() # Rerun to update progress and show generated section
@@ -1235,6 +1355,13 @@ class BlogDraftUI:
                         # For any other type, display as string in a text area
                         st.text_area("Raw Data", str(raw_content_display), height=100, key=f"raw_other_{index}")
                     st.markdown("---") # Visual separator
+
+                    section_cost = section_data.get('cost_delta')
+                    section_tokens = section_data.get('token_delta')
+                    if section_cost is not None or section_tokens is not None:
+                        cost_str = f"${section_cost:.4f}" if isinstance(section_cost, (int, float)) else "N/A"
+                        tokens_str = f"{section_tokens:,}" if isinstance(section_tokens, (int, float)) else "N/A"
+                        st.caption(f"Section cost (incremental): {cost_str} | Tokens: {tokens_str}")
                     
                     # Feedback Form
                     with st.form(key=f"feedback_form_{index}"):
@@ -1272,8 +1399,11 @@ class BlogDraftUI:
                             if index in current_sections_state:
                                 current_sections_state[index]['raw_content'] = section_content_raw # Update raw content
                                 current_sections_state[index]['formatted_content'] = format_section_content_as_markdown(section_content_raw) # Update formatted content
+                                current_sections_state[index]['cost_delta'] = result.get("section_cost")
+                                current_sections_state[index]['token_delta'] = result.get("section_tokens")
                                 # Note: Title is assumed unchanged during regeneration, but could be updated if API returns it
                                 SessionManager.set('generated_sections', current_sections_state) # Save updated state
+                                SessionManager.set('cost_summary', result.get('cost_summary'))
                                 SessionManager.set_status(f"Section {index + 1} regenerated.")
                                 st.rerun() # Update UI
                             else:
@@ -1377,17 +1507,20 @@ class RefinementUI:
                             ))
                         else:
                             # Use standalone refinement for uploaded drafts without job state
-                            selected_model = SessionManager.get('selected_model', 'claude')  # Get model from session or fallback to claude
+                            selected_model = SessionManager.get('selected_model', 'claude')  # Provider key
+                            specific_model = SessionManager.get('specific_model')
                             result = asyncio.run(api_client.refine_standalone(
                                 project_name=project_name,
                                 compiled_draft=compiled_draft_content,
-                                model_name=selected_model,  # Use the model selected during initialization
+                                model_name=selected_model,  # Provider key
+                                specific_model=specific_model,  # Specific model id if available
                                 base_url=SessionManager.get('api_base_url')
                             ))
                     # Store the results from the API response
                     SessionManager.set('refined_draft', result.get('refined_draft')) # This should be the final text
                     SessionManager.set('summary', result.get('summary'))
                     SessionManager.set('title_options', result.get('title_options')) # Expecting a list of dicts
+                    SessionManager.set('cost_summary', result.get('cost_summary'))
                     SessionManager.set_status("Blog refined successfully.")
                     logger.info(f"Blog refined for job ID: {job_id}")
                     
@@ -1579,6 +1712,7 @@ class SocialPostsUI:
                             project_name=project_name,
                             refined_blog_content=refined_content,
                             model_name=selected_model,
+                            specific_model=SessionManager.get('specific_model'),
                             base_url=SessionManager.get('api_base_url')
                         ))
                 SessionManager.set('social_content', result.get('social_content'))
