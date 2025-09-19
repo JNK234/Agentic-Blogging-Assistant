@@ -6,6 +6,7 @@ from root.backend.services.vector_store_service import VectorStoreService
 from root.backend.utils.serialization import to_json, model_to_dict, serialize_object
 from dataclasses import asdict
 import json
+from root.backend.agents.cost_tracking_state import CostTrackingMixin
 
 class ContentAnalysis(BaseModel):
     main_topics: List[str]
@@ -59,10 +60,10 @@ class FinalOutline(BaseModel):
     #     """Make the object JSON serializable by returning a dictionary representation."""
     #     return model_to_dict(self)
 
-class OutlineState(BaseModel):
+class OutlineState(CostTrackingMixin, BaseModel):
     # Input state
-    notebook_content: Optional[ContentStructure] = Field(description="Parsed notebook content") # Updated type hint
-    markdown_content: Optional[ContentStructure] = Field(description="Parsed markdown content") # Updated type hint
+    notebook_content: Optional[ContentStructure] = Field(default=None, description="Parsed notebook content")
+    markdown_content: Optional[ContentStructure] = Field(default=None, description="Parsed markdown content")
     model: Any = Field(description="LLM model instance")
     user_guidelines: Optional[str] = Field(default=None, description="Optional user-provided guidelines for outline generation")
     length_preference: Optional[str] = Field(default=None, description="User's preferred blog length category")
@@ -77,6 +78,21 @@ class OutlineState(BaseModel):
 
     # Final state
     final_outline: Optional[FinalOutline] = None
+
+    # Project metadata for cost tracking
+    project_name: Optional[str] = Field(default=None)
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.current_agent_name = "OutlineGeneratorAgent"
+        self.current_stage = data.get("current_stage", "outline_generation")
+        if not self.project_id:
+            self.project_id = data.get("project_id") or self.project_name
+        self.ensure_cost_aggregator(project_id=self.project_id)
+        if self.cost_aggregator and self.project_id:
+            # Ensure workflow started only once
+            if not self.cost_aggregator.current_workflow.get("start_time"):
+                self.cost_aggregator.start_workflow(project_id=self.project_id)
 
     # # Metadata
     # status: Dict[str, str] = Field(default_factory=dict)
