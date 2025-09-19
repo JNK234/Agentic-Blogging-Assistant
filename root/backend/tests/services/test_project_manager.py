@@ -74,7 +74,7 @@ def project_manager(temp_project_dir: Path) -> ProjectManager:
 def sample_metadata() -> dict:
     """Provides sample project metadata."""
     return {
-        "model_name": "claude-3",
+        "model_name": "claude-sonnet-4",
         "persona": "expert_developer",
         "created_by": "test_user"
     }
@@ -367,7 +367,7 @@ class TestMilestoneManagement:
             "sections": [{"title": "Intro", "content": "..."}],
             "difficulty": "intermediate"
         }
-        metadata = {"model_used": "claude-3", "generation_time": 12.5}
+        metadata = {"model_used": "claude-sonnet-4", "generation_time": 12.5}
         
         # Act
         success = project_manager.save_milestone(
@@ -1040,7 +1040,7 @@ class TestProjectWorkflowIntegration:
         # Create project
         project_id = project_manager.create_project(
             "Integration Test Project",
-            metadata={"model": "claude-3", "user": "test_user"}
+            metadata={"model": "claude-sonnet-4", "user": "test_user"}
         )
         
         # Add files uploaded milestone

@@ -7,7 +7,7 @@ import json
 from typing import Dict, Any, List, Optional
 from pydantic import ValidationError, BaseModel
 
-# Assuming BaseModel is correctly imported where needed or defined in state
+from root.backend.agents.cost_tracking_decorator import track_node_costs
 from root.backend.agents.blog_refinement.state import BlogRefinementState, TitleOption
 from root.backend.agents.blog_refinement.prompts import (
     GENERATE_INTRODUCTION_PROMPT,
@@ -23,15 +23,19 @@ logger = logging.getLogger(__name__)
 # --- Node Functions ---
 
 # Corrected: Expect BlogRefinementState, use attribute access
-async def generate_introduction_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+@track_node_costs("generate_introduction", agent_name="BlogRefinementAgent", stage="refinement")
+async def generate_introduction_node(state: BlogRefinementState) -> Dict[str, Any]:
     """Node to generate the blog introduction."""
     logger.info("Node: generate_introduction_node")
     # Access Pydantic model fields directly
     if state.error: return {"error": state.error}
 
     try:
+        if not state.model:
+            raise ValueError("Refinement state is missing model reference")
+
         prompt = GENERATE_INTRODUCTION_PROMPT.format(blog_draft=state.original_draft)
-        response = await model.ainvoke(prompt)
+        response = await state.model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Introduction generated successfully.")
             return {"introduction": response.strip()}
@@ -46,15 +50,19 @@ async def generate_introduction_node(state: BlogRefinementState, model: BaseMode
         return {"error": error_message}
 
 # Corrected: Expect BlogRefinementState, use attribute access
-async def generate_conclusion_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+@track_node_costs("generate_conclusion", agent_name="BlogRefinementAgent", stage="refinement")
+async def generate_conclusion_node(state: BlogRefinementState) -> Dict[str, Any]:
     """Node to generate the blog conclusion."""
     logger.info("Node: generate_conclusion_node")
     # Access Pydantic model fields directly
     if state.error: return {"error": state.error}
 
     try:
+        if not state.model:
+            raise ValueError("Refinement state is missing model reference")
+
         prompt = GENERATE_CONCLUSION_PROMPT.format(blog_draft=state.original_draft)
-        response = await model.ainvoke(prompt)
+        response = await state.model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Conclusion generated successfully.")
             return {"conclusion": response.strip()}
@@ -66,15 +74,19 @@ async def generate_conclusion_node(state: BlogRefinementState, model: BaseModel)
         return {"error": f"Conclusion generation failed: {str(e)}"}
 
 # Corrected: Expect BlogRefinementState, use attribute access
-async def generate_summary_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+@track_node_costs("generate_summary", agent_name="BlogRefinementAgent", stage="refinement")
+async def generate_summary_node(state: BlogRefinementState) -> Dict[str, Any]:
     """Node to generate the blog summary."""
     logger.info("Node: generate_summary_node")
     # Access Pydantic model fields directly
     if state.error: return {"error": state.error}
 
     try:
+        if not state.model:
+            raise ValueError("Refinement state is missing model reference")
+
         prompt = GENERATE_SUMMARY_PROMPT.format(blog_draft=state.original_draft)
-        response = await model.ainvoke(prompt)
+        response = await state.model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Summary generated successfully.")
             return {"summary": response.strip()}
@@ -86,19 +98,23 @@ async def generate_summary_node(state: BlogRefinementState, model: BaseModel) ->
         return {"error": f"Summary generation failed: {str(e)}"}
 
 # Corrected: Expect BlogRefinementState, use attribute access
-async def generate_titles_node(state: BlogRefinementState, model: BaseModel, persona_service=None) -> Dict[str, Any]:
+@track_node_costs("generate_titles", agent_name="BlogRefinementAgent", stage="refinement")
+async def generate_titles_node(state: BlogRefinementState) -> Dict[str, Any]:
     """Node to generate title and subtitle options."""
     logger.info("Node: generate_titles_node")
     # Access Pydantic model fields directly
     if state.error: return {"error": state.error}
 
     try:
+        if not state.model:
+            raise ValueError("Refinement state is missing model reference")
+
         prompt = GENERATE_TITLES_PROMPT.format(
             blog_draft=state.original_draft
         )
-        
+
         logger.info(f"Generated prompt length: {len(prompt)}")
-        response = await model.ainvoke(prompt)
+        response = await state.model.ainvoke(prompt)
 
         # Clean and parse JSON
         cleaned_response = response.strip()
@@ -197,7 +213,8 @@ async def generate_titles_node(state: BlogRefinementState, model: BaseModel, per
         return {"error": f"Title generation failed: {str(e)}"}
 
 
-async def suggest_clarity_flow_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+@track_node_costs("suggest_clarity_flow", agent_name="BlogRefinementAgent", stage="refinement")
+async def suggest_clarity_flow_node(state: BlogRefinementState) -> Dict[str, Any]:
     """Node to suggest clarity and flow improvements."""
     logger.info("Node: suggest_clarity_flow_node")
     # Access Pydantic model fields directly
@@ -209,8 +226,11 @@ async def suggest_clarity_flow_node(state: BlogRefinementState, model: BaseModel
             logger.error("Refined draft not found in state for clarity/flow suggestions.")
             return {"error": "Refined draft is missing, cannot generate clarity/flow suggestions."}
 
+        if not state.model:
+            raise ValueError("Refinement state is missing model reference")
+
         prompt = SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT.format(blog_draft=state.refined_draft)
-        response = await model.ainvoke(prompt)
+        response = await state.model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Clarity/flow suggestions generated successfully.")
             # Store the suggestions as a single string (bulleted list)
@@ -225,7 +245,8 @@ async def suggest_clarity_flow_node(state: BlogRefinementState, model: BaseModel
         return {"error": f"Clarity/flow suggestion generation failed: {str(e)}"}
 
 
-async def reduce_redundancy_node(state: BlogRefinementState, model: BaseModel) -> Dict[str, Any]:
+@track_node_costs("reduce_redundancy", agent_name="BlogRefinementAgent", stage="refinement")
+async def reduce_redundancy_node(state: BlogRefinementState) -> Dict[str, Any]:
     """Node to reduce redundancy in the blog content."""
     logger.info("Node: reduce_redundancy_node")
     # Access Pydantic model fields directly
@@ -239,8 +260,11 @@ async def reduce_redundancy_node(state: BlogRefinementState, model: BaseModel) -
             logger.error("No draft found in state for redundancy reduction.")
             return {"error": "No draft available for redundancy reduction."}
 
+        if not state.model:
+            raise ValueError("Refinement state is missing model reference")
+
         prompt = REDUCE_REDUNDANCY_PROMPT.format(blog_draft=draft_to_refine)
-        response = await model.ainvoke(prompt)
+        response = await state.model.ainvoke(prompt)
         
         if isinstance(response, str) and response.strip():
             logger.info("Redundancy reduction completed successfully.")

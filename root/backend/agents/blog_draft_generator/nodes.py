@@ -22,6 +22,7 @@ from root.backend.agents.blog_draft_generator.utils import (
     determine_content_category
 )
 from root.backend.services.vector_store_service import VectorStoreService
+from root.backend.agents.cost_tracking_decorator import track_node_costs, track_iteration_costs
 
 logging.basicConfig(level=logging.INFO)
 
@@ -76,6 +77,7 @@ def validate_and_enforce_constraints(content: str, include_code: bool, section_t
     print(f"DEBUG: validate_and_enforce_constraints - No constraints applied, returning original content")
     return content
 
+@track_node_costs("semantic_mapper", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
     """Maps content to sections using vector search for semantic matching with section headers."""
     logging.info("Executing node: semantic_content_mapper")
@@ -338,6 +340,7 @@ async def semantic_content_mapper(state: BlogDraftState) -> BlogDraftState:
 
 # --- New HyDE Nodes ---
 
+@track_node_costs("generate_hypothetical_document", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def generate_hypothetical_document(state: BlogDraftState) -> BlogDraftState:
     """Generates a hypothetical document/answer for the current section to improve retrieval."""
     logging.info("Executing node: generate_hypothetical_document")
@@ -386,6 +389,7 @@ async def generate_hypothetical_document(state: BlogDraftState) -> BlogDraftStat
 
     return state
 
+@track_node_costs("retrieve_context_with_hyde", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def retrieve_context_with_hyde(state: BlogDraftState) -> BlogDraftState:
     """Retrieves context from vector store using the generated hypothetical document."""
     logging.info("Executing node: retrieve_context_with_hyde")
@@ -430,6 +434,7 @@ async def retrieve_context_with_hyde(state: BlogDraftState) -> BlogDraftState:
 # --- End New HyDE Nodes ---
 
 
+@track_node_costs("generator", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def section_generator(state: BlogDraftState) -> BlogDraftState:
     """Generates content for current section using retrieved HyDE context."""
     logging.info("Executing node: section_generator")
@@ -677,6 +682,7 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
     
     return state
 
+@track_node_costs("enhancer", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
     """Enhances section content while maintaining original document structure."""
     logging.info("Executing node: content_enhancer")
@@ -831,6 +837,7 @@ async def content_enhancer(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+@track_node_costs("code_extractor", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def code_example_extractor(state: BlogDraftState) -> BlogDraftState:
     """Extracts and improves code examples from the section content."""
     logging.info("Executing node: code_example_extractor")
@@ -910,6 +917,7 @@ async def code_example_extractor(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+@track_node_costs("image_placeholder", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def image_placeholder_generator(state: BlogDraftState) -> BlogDraftState:
     """Generates strategic image placeholders for enhanced content visualization."""
     logging.info("Executing node: image_placeholder_generator")
@@ -992,6 +1000,8 @@ async def image_placeholder_generator(state: BlogDraftState) -> BlogDraftState:
         
     return state
 
+@track_node_costs("validator", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
+@track_iteration_costs
 async def quality_validator(state: BlogDraftState) -> BlogDraftState:
     """Validates the quality of the current section."""
     logging.info("Executing node: quality_validator")
@@ -1132,6 +1142,7 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+@track_node_costs("auto_feedback", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
     """Generates automatic feedback for the current section."""
     logging.info("Executing node: auto_feedback_generator")
@@ -1186,6 +1197,7 @@ async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+@track_node_costs("feedback_inc", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     """Incorporates feedback into the section content while maintaining original document structure."""
     logging.info("Executing node: feedback_incorporator")
@@ -1357,6 +1369,7 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+@track_node_costs("finalizer", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
     """Finalizes the current section."""
     logging.info("Executing node: section_finalizer")
@@ -1396,6 +1409,7 @@ async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
     
     return state
 
+@track_node_costs("transition_gen", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def transition_generator(state: BlogDraftState) -> BlogDraftState:
     """Generates transitions between sections."""
     logging.info("Executing node: transition_generator")
@@ -1506,6 +1520,7 @@ Purpose: {placeholder.purpose}
     
     return '\n\n'.join(content_parts)
 
+@track_node_costs("compiler", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
     """Compiles the final blog post while maintaining original document structure."""
     logging.info("Executing node: blog_compiler")

@@ -6,7 +6,7 @@ class ClaudeModel:
     def __init__(self, model_settings):
         try:
             self.llm = ChatAnthropic(
-                model_name=model_settings.model_name,
+                model=model_settings.model_name,
                 api_key=model_settings.api_key,
                 temperature=0.2,
                 max_tokens=4096

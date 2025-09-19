@@ -52,7 +52,7 @@ class BlogRefinementAgent(BaseGraphAgent):
 
         try:
             # Create the graph, passing the model instance and persona service
-            self.graph = await create_refinement_graph(self.model, self.persona_service)
+            self.graph = await create_refinement_graph()
             self._initialized = True
             logger.info("BlogRefinementAgent initialized successfully with graph.")
         except Exception as e:
@@ -61,7 +61,12 @@ class BlogRefinementAgent(BaseGraphAgent):
             # Optionally re-raise or handle initialization failure
             raise RuntimeError(f"BlogRefinementAgent initialization failed: {e}") from e
 
-    async def refine_blog_with_graph(self, blog_draft: str) -> Optional[RefinementResult]:
+    async def refine_blog_with_graph(
+        self,
+        blog_draft: str,
+        cost_aggregator=None,
+        project_id: Optional[str] = None
+    ) -> Optional[RefinementResult]:
         """
         Runs the blog refinement process using the compiled LangGraph.
 
@@ -83,20 +88,30 @@ class BlogRefinementAgent(BaseGraphAgent):
         logger.info("Starting blog refinement process via graph...")
 
         # Prepare the initial state for the graph as a Pydantic object
-        initial_state = BlogRefinementState(original_draft=blog_draft)
-        # Convert Pydantic model to dict for LangGraph input
-        initial_state_dict = initial_state.model_dump()
+        initial_state = BlogRefinementState(
+            original_draft=blog_draft,
+            model=self.model,
+            persona_service=self.persona_service,
+            cost_aggregator=cost_aggregator,
+            project_id=project_id,
+            current_stage="refinement"
+        )
 
         try:
             # Execute the graph with the initial state
             # The run_graph method is inherited from BaseGraphAgent
-            final_state_dict = await self.run_graph(initial_state_dict)
+            final_state = await self.run_graph(initial_state)
 
             # --- Enhanced Logging ---
-            logger.info(f"Blog refinement graph execution completed. Final state dictionary: {final_state_dict}")
+            logger.info(f"Blog refinement graph execution completed. Final state: {final_state}")
             # --- End Enhanced Logging ---
 
             # Process the final state
+            if isinstance(final_state, dict):
+                final_state_dict = final_state
+            else:
+                final_state_dict = final_state.model_dump()
+
             current_error = final_state_dict.get('error')
             if current_error:
                 logger.error(f"Blog refinement graph finished with an error explicitly set in state: {current_error}")

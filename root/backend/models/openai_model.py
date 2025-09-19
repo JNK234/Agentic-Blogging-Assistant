@@ -12,7 +12,7 @@ class OpenAIModel:
         """
         try:
             self.llm = ChatOpenAI(
-                model_name=settings.model_name,
+                model=settings.model_name,
                 openai_api_key=settings.api_key,
                 temperature=settings.temperature,
                 max_tokens=settings.max_tokens

@@ -369,6 +369,7 @@ async def refine_standalone(
     project_name: str,
     compiled_draft: str,
     model_name: str = "gemini",
+    specific_model: Optional[str] = None,
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -386,7 +387,8 @@ async def refine_standalone(
     api_url = _get_api_url(f"/refine_standalone/{project_name}", base_url)
     data = {
         "compiled_draft": compiled_draft,
-        "model_name": model_name
+        "model_name": model_name,
+        "specific_model": specific_model or ""
     }
 
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
@@ -432,6 +434,7 @@ async def generate_social_content_standalone(
     project_name: str,
     refined_blog_content: str,
     model_name: str = "claude",
+    specific_model: Optional[str] = None,
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -449,7 +452,8 @@ async def generate_social_content_standalone(
     api_url = _get_api_url(f"/generate_social_content_standalone/{project_name}", base_url)
     data = {
         "refined_blog_content": refined_blog_content,
-        "model_name": model_name
+        "model_name": model_name,
+        "specific_model": specific_model or ""
     }
 
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for generation

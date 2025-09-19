@@ -28,6 +28,7 @@ from root.backend.models.model_factory import ModelFactory
 from root.backend.services.vector_store_service import VectorStoreService # Added
 from root.backend.services.persona_service import PersonaService # Added
 from root.backend.services.project_manager import ProjectManager, MilestoneType, ProjectStatus # Added
+from root.backend.services.cost_aggregator import CostAggregator
 
 # Configure logging
 logging.basicConfig(
@@ -343,8 +344,13 @@ async def generate_outline(
             )
 
         # Get or create agents
-        agents = await get_or_create_agents(model_name)
+        agents = await get_or_create_agents(model_name, specific_model)
         outline_agent = agents["outline_agent"]
+
+        # Initialize cost tracking for this workflow
+        job_id = str(uuid.uuid4())
+        cost_aggregator = CostAggregator()
+        cost_aggregator.start_workflow(project_id=job_id)
 
         # Generate outline - returns a dict (outline or error), content, content, cached_status
         outline_result, notebook_content, markdown_content, was_cached = await outline_agent.generate_outline(
@@ -354,7 +360,9 @@ async def generate_outline(
             user_guidelines=user_guidelines, # Pass guidelines to agent
             length_preference=length_preference, # Pass length preference
             custom_length=custom_length, # Pass custom length
-            writing_style=writing_style # Pass writing style
+            writing_style=writing_style, # Pass writing style
+            cost_aggregator=cost_aggregator,
+            project_id=job_id
         )
 
         # Check if the agent returned an error dictionary
@@ -378,13 +386,13 @@ async def generate_outline(
         # We now have the validated outline data directly
         outline_data = outline_result
 
-        # Generate a unique job ID
-        job_id = str(uuid.uuid4())
-        
         # Generate outline hash for caching/tracking
         import hashlib
         outline_str = json.dumps(outline_data, sort_keys=True)
         outline_hash = hashlib.sha256(outline_str.encode()).hexdigest()[:16]
+
+        cost_summary = cost_aggregator.get_workflow_summary()
+        cost_call_history = list(cost_aggregator.call_history)
 
         # Store the state in the cache (still use in-memory cache for job state)
         state_cache[job_id] = {
@@ -394,8 +402,12 @@ async def generate_outline(
             "markdown_content": markdown_content,
             "project_name": project_name,
             "model_name": model_name,
-            "persona": writing_style  # Store persona/writing style
-            # Remove "generated_sections": {} - no longer needed here
+            "persona": writing_style,  # Store persona/writing style
+            "specific_model": specific_model,
+            "cost_aggregator": cost_aggregator,
+            "cost_summary": cost_summary,
+            "cost_call_history": cost_call_history,
+            "job_id": job_id
         }
         logger.info(f"Stored initial state for job_id: {job_id}")
         
@@ -415,29 +427,41 @@ async def generate_outline(
                 "outline_hash": outline_hash,
                 "job_id": job_id,
                 "model_name": model_name,
+                "specific_model": specific_model,
                 "persona": writing_style,
                 "user_guidelines": user_guidelines,
                 "length_preference": length_preference,
                 "custom_length": custom_length,
                 "was_cached": was_cached
             }
-            
+            milestone_metadata = {
+                "cost_summary": cost_summary,
+                "cost_call_history": cost_call_history
+            }
+
             project_manager.save_milestone(
                 project_id,
                 MilestoneType.OUTLINE_GENERATED,
-                milestone_data
+                milestone_data,
+                metadata=milestone_metadata
             )
             
             # Update project metadata
             project_manager.update_metadata(project_id, {
                 "model_name": model_name,
+                "specific_model": specific_model,
                 "persona": writing_style,
-                "latest_job_id": job_id
+                "latest_job_id": job_id,
+                "cost_summary": cost_summary,
+                "cost_call_history": cost_call_history
             })
             
             # Add project_id to state cache
             state_cache[job_id]["project_id"] = project_id
-            
+            cost_aggregator.current_workflow["project_id"] = project_id
+            state_cache[job_id]["cost_summary"] = cost_summary
+            state_cache[job_id]["cost_call_history"] = cost_call_history
+
             logger.info(f"Saved outline milestone for project {project_id}")
 
         # Return the job ID and the outline itself (for immediate display)
@@ -445,7 +469,8 @@ async def generate_outline(
             content=serialize_object({
                 "job_id": job_id,
                 "project_id": project_id,
-                "outline": outline_data # Return the parsed outline data
+                "outline": outline_data, # Return the parsed outline data
+                "cost_summary": cost_summary
             })
         )
 
@@ -504,7 +529,9 @@ async def get_job_status(job_id: str) -> JSONResponse:
             "summary": job_state.get('summary'),
             "title_options": job_state.get('title_options'),
             "social_content": job_state.get('social_content'),
-            "generated_sections": job_state.get('generated_sections', {})
+            "generated_sections": job_state.get('generated_sections', {}),
+            "cost_summary": job_state.get('cost_summary'),
+            "cost_call_history": job_state.get('cost_call_history', [])
         })
     except Exception as e:
         logger.exception(f"Error getting job status: {str(e)}")
@@ -541,13 +568,19 @@ async def generate_draft(
         agents = await get_or_create_agents(model_name)
         draft_agent = agents["draft_agent"]
 
+        cost_aggregator = CostAggregator()
+        workflow_id = f"adhoc-{uuid.uuid4()}"
+        cost_aggregator.start_workflow(project_id=workflow_id)
+
         # Generate blog draft
         outline_obj = FinalOutline.model_validate(outline_data)
         draft = await draft_agent.generate_draft(
             project_name=project_name,
             outline=outline_obj,
             notebook_content=notebook_data,
-            markdown_content=markdown_data
+            markdown_content=markdown_data,
+            cost_aggregator=cost_aggregator,
+            project_id=workflow_id
         )
 
         if not draft:
@@ -558,7 +591,8 @@ async def generate_draft(
 
         return JSONResponse(
             content=serialize_object({
-                "draft": draft
+                "draft": draft,
+                "cost_summary": cost_aggregator.get_workflow_summary()
             })
         )
 
@@ -690,11 +724,43 @@ async def generate_section(
                 status_code=404
             )
 
+        # Ensure cost tracking is available and rehydrate if needed
+        cost_aggregator = job_state.get("cost_aggregator")
+        if not cost_aggregator:
+            cost_aggregator = CostAggregator()
+            target_project = job_state.get("project_id", job_id)
+            cost_aggregator.start_workflow(project_id=target_project)
+
+            existing_history = job_state.get("cost_call_history") or []
+            if not existing_history and job_state.get("project_id"):
+                project_record = project_manager.get_project(job_state["project_id"])
+                if project_record:
+                    existing_history = project_record.get("metadata", {}).get("cost_call_history", [])
+
+            if existing_history:
+                for call in existing_history:
+                    try:
+                        cost_aggregator.record_cost(call)
+                    except Exception as err:
+                        logger.warning(f"Failed to replay cost record during section resume: {err}")
+
+            job_state["cost_aggregator"] = cost_aggregator
+            job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
+            job_state["cost_call_history"] = list(cost_aggregator.call_history)
+
+        if job_state.get("project_id"):
+            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
+
+        previous_summary = job_state.get("cost_summary")
+        previous_total_cost = previous_summary.get("total_cost", 0.0) if previous_summary else 0.0
+        previous_total_tokens = previous_summary.get("total_tokens", 0) if previous_summary else 0
+
         # Extract data from state
         outline_data = job_state["outline"]
         notebook_data = job_state.get("notebook_content")
         markdown_data = job_state.get("markdown_content")
         model_name = job_state["model_name"]
+        specific_model = job_state.get("specific_model")
 
         # Validate section index
         if section_index < 0 or section_index >= len(outline_data.get("sections", [])):
@@ -723,7 +789,7 @@ async def generate_section(
             )
 
         # Generate new section
-        agents = await get_or_create_agents(model_name)
+        agents = await get_or_create_agents(model_name, specific_model)
         draft_agent = agents["draft_agent"]
 
         # Generate section content
@@ -736,7 +802,9 @@ async def generate_section(
             current_section_index=section_index,
             max_iterations=max_iterations,
             quality_threshold=quality_threshold,
-            use_cache=True
+            use_cache=True,
+            cost_aggregator=cost_aggregator,
+            project_id=job_state.get("project_id", job_id)
         )
 
         if section_content is None:
@@ -754,7 +822,26 @@ async def generate_section(
             "content": section_content,
             "generated_at": datetime.now().isoformat()
         }
-        
+
+        updated_summary = cost_aggregator.get_workflow_summary()
+        updated_history = list(cost_aggregator.call_history)
+        job_state["cost_summary"] = updated_summary
+        job_state["cost_call_history"] = updated_history
+
+        section_cost_delta = updated_summary.get("total_cost", 0.0) - previous_total_cost
+        section_tokens_delta = updated_summary.get("total_tokens", 0) - previous_total_tokens
+        job_state['generated_sections'][section_index]["cost_delta"] = section_cost_delta
+        job_state['generated_sections'][section_index]["token_delta"] = section_tokens_delta
+        job_state['generated_sections'][section_index]["cost_snapshot"] = updated_summary
+
+        project_id_in_state = job_state.get("project_id")
+        if project_id_in_state:
+            project_manager.update_metadata(project_id_in_state, {
+                "cost_summary": updated_summary,
+                "cost_call_history": updated_history,
+                "latest_job_id": job_id
+            })
+
         logger.info(f"Stored section {section_index} in job state for job_id: {job_id}")
 
         return JSONResponse(
@@ -763,7 +850,10 @@ async def generate_section(
                 "section_title": section_title,
                 "section_content": section_content,
                 "section_index": section_index,
-                "was_cached": was_cached
+                "was_cached": was_cached,
+                "cost_summary": updated_summary,
+                "section_cost": section_cost_delta,
+                "section_tokens": section_tokens_delta
             }
         )
 
@@ -886,6 +976,37 @@ async def regenerate_section(
                 status_code=404
             )
 
+        # Ensure cost tracking is available
+        cost_aggregator = job_state.get("cost_aggregator")
+        if not cost_aggregator:
+            cost_aggregator = CostAggregator()
+            target_project = job_state.get("project_id", job_id)
+            cost_aggregator.start_workflow(project_id=target_project)
+
+            existing_history = job_state.get("cost_call_history") or []
+            if not existing_history and job_state.get("project_id"):
+                project_record = project_manager.get_project(job_state["project_id"])
+                if project_record:
+                    existing_history = project_record.get("metadata", {}).get("cost_call_history", [])
+
+            if existing_history:
+                for call in existing_history:
+                    try:
+                        cost_aggregator.record_cost(call)
+                    except Exception as err:
+                        logger.warning(f"Failed to replay cost record during section resume: {err}")
+
+            job_state["cost_aggregator"] = cost_aggregator
+            job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
+            job_state["cost_call_history"] = list(cost_aggregator.call_history)
+
+        if job_state.get("project_id"):
+            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
+
+        previous_summary = job_state.get("cost_summary")
+        previous_total_cost = previous_summary.get("total_cost", 0.0) if previous_summary else 0.0
+        previous_total_tokens = previous_summary.get("total_tokens", 0) if previous_summary else 0
+
         # Extract data from state
         outline_data = job_state["outline"]
         notebook_data = job_state.get("notebook_content")
@@ -916,7 +1037,9 @@ async def regenerate_section(
             markdown_content=markdown_data,
             feedback=feedback,
             max_iterations=max_iterations,
-            quality_threshold=quality_threshold
+            quality_threshold=quality_threshold,
+            cost_aggregator=cost_aggregator,
+            project_id=job_state.get("project_id", job_id)
         )
 
         if not new_content:
@@ -935,6 +1058,25 @@ async def regenerate_section(
             "regenerated_at": datetime.now().isoformat(),
             "feedback_provided": feedback[:100] + "..." if len(feedback) > 100 else feedback
         }
+
+        updated_summary = cost_aggregator.get_workflow_summary()
+        updated_history = list(cost_aggregator.call_history)
+        job_state["cost_summary"] = updated_summary
+        job_state["cost_call_history"] = updated_history
+
+        section_cost_delta = updated_summary.get("total_cost", 0.0) - previous_total_cost
+        section_tokens_delta = updated_summary.get("total_tokens", 0) - previous_total_tokens
+        job_state['generated_sections'][section_index]["cost_delta"] = section_cost_delta
+        job_state['generated_sections'][section_index]["token_delta"] = section_tokens_delta
+        job_state['generated_sections'][section_index]["cost_snapshot"] = updated_summary
+
+        project_id_in_state = job_state.get("project_id")
+        if project_id_in_state:
+            project_manager.update_metadata(project_id_in_state, {
+                "cost_summary": updated_summary,
+                "cost_call_history": updated_history,
+                "latest_job_id": job_id
+            })
         
         logger.info(f"Updated section {section_index} in job state with feedback")
 
@@ -944,7 +1086,10 @@ async def regenerate_section(
                 "section_title": section_title,
                 "section_content": new_content,
                 "section_index": section_index,
-                "feedback_addressed": True
+                "feedback_addressed": True,
+                "cost_summary": updated_summary,
+                "section_cost": section_cost_delta,
+                "section_tokens": section_tokens_delta
             }
         )
 
@@ -1363,6 +1508,26 @@ async def compile_draft(
                 status_code=400
             )
 
+        # Ensure cost tracking is present for final snapshots
+        cost_aggregator = job_state.get("cost_aggregator")
+        if not cost_aggregator:
+            cost_aggregator = CostAggregator()
+            target_project = job_state.get("project_id", job_id)
+            cost_aggregator.start_workflow(project_id=target_project)
+            historical = job_state.get("cost_call_history") or []
+            if not historical and job_state.get("project_id"):
+                project_record = project_manager.get_project(job_state["project_id"])
+                if project_record:
+                    historical = project_record.get("metadata", {}).get("cost_call_history", [])
+            for call in historical:
+                try:
+                    cost_aggregator.record_cost(call)
+                except Exception as err:
+                    logger.warning(f"Failed to replay cost record during compile resume: {err}")
+            job_state["cost_aggregator"] = cost_aggregator
+        if job_state.get("project_id"):
+            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
+
         # Compile blog draft
         blog_parts = []
         
@@ -1424,6 +1589,8 @@ async def compile_draft(
         # Store in job state
         job_state["final_draft"] = final_draft
         job_state["compiled_at"] = datetime.now().isoformat()
+        job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
+        job_state["cost_call_history"] = list(cost_aggregator.call_history)
         
         logger.info(f"Successfully compiled draft for job_id: {job_id}")
 
@@ -1462,13 +1629,24 @@ async def compile_draft(
                 "word_count": len(final_draft.split()),
                 "outline_hash": job_state.get("outline_hash")
             }
-            
+            milestone_metadata = {
+                "cost_summary": job_state.get("cost_summary"),
+                "cost_call_history": job_state.get("cost_call_history")
+            }
+
             project_manager.save_milestone(
                 project_id,
                 MilestoneType.DRAFT_COMPLETED,
-                milestone_data
+                milestone_data,
+                metadata=milestone_metadata
             )
-            
+
+            project_manager.update_metadata(project_id, {
+                "cost_summary": job_state.get("cost_summary"),
+                "cost_call_history": job_state.get("cost_call_history"),
+                "latest_job_id": job_id
+            })
+
             logger.info(f"Saved draft milestone for project {project_id}")
 
         return JSONResponse(content={
@@ -1476,7 +1654,8 @@ async def compile_draft(
             "project_id": project_id,
             "draft": final_draft,
             "draft_saved": draft_saved_to_file,
-            "sections_compiled": num_outline_sections
+            "sections_compiled": num_outline_sections,
+            "cost_summary": job_state.get("cost_summary")
         })
 
     except Exception as e:
@@ -1524,13 +1703,14 @@ async def refine_blog(
 
         # Get model and agents
         model_name = job_state.get("model_name")
+        specific_model = job_state.get("specific_model")
         if not model_name:
             return JSONResponse(
                 content={"error": "Model name missing from job state."},
                 status_code=500
             )
 
-        agents = await get_or_create_agents(model_name)
+        agents = await get_or_create_agents(model_name, specific_model)
         refinement_agent = agents.get("refinement_agent")
 
         if not refinement_agent:
@@ -1539,10 +1719,20 @@ async def refine_blog(
                 status_code=500
             )
 
+        cost_aggregator = job_state.get("cost_aggregator")
+        if not cost_aggregator:
+            cost_aggregator = CostAggregator()
+            cost_aggregator.start_workflow(project_id=job_id)
+            job_state["cost_aggregator"] = cost_aggregator
+        if job_state.get("project_id"):
+            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
+
         # Run refinement
         logger.info(f"Refining blog draft for job_id: {job_id}")
         refinement_result = await refinement_agent.refine_blog_with_graph(
-            blog_draft=compiled_draft
+            blog_draft=compiled_draft,
+            cost_aggregator=cost_aggregator,
+            project_id=job_state.get("project_id", job_id)
         )
 
         if not refinement_result:
@@ -1556,6 +1746,8 @@ async def refine_blog(
         job_state["summary"] = refinement_result.summary
         job_state["title_options"] = [option.model_dump() for option in refinement_result.title_options]
         job_state["refined_at"] = datetime.now().isoformat()
+        job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
+        job_state["cost_call_history"] = cost_aggregator.call_history
         
         logger.info(f"Successfully refined blog for job_id: {job_id}")
         
@@ -1576,15 +1768,27 @@ async def refine_blog(
                 "title_options": job_state["title_options"],
                 "job_id": job_id,
                 "refined_at": datetime.now().isoformat(),
-                "word_count": len(refinement_result.refined_draft.split())
+                "word_count": len(refinement_result.refined_draft.split()),
+                "cost_summary": job_state.get("cost_summary")
             }
-            
+            milestone_metadata = {
+                "cost_summary": job_state.get("cost_summary"),
+                "cost_call_history": job_state.get("cost_call_history")
+            }
+
             project_manager.save_milestone(
                 project_id,
                 MilestoneType.BLOG_REFINED,
-                milestone_data
+                milestone_data,
+                metadata=milestone_metadata
             )
-            
+
+            project_manager.update_metadata(project_id, {
+                "cost_summary": job_state.get("cost_summary"),
+                "cost_call_history": job_state.get("cost_call_history"),
+                "latest_job_id": job_id
+            })
+
             logger.info(f"Saved refined blog milestone for project {project_id}")
 
         return JSONResponse(
@@ -1593,7 +1797,8 @@ async def refine_blog(
                 "project_id": project_id,
                 "refined_draft": refinement_result.refined_draft,
                 "summary": refinement_result.summary,
-                "title_options": job_state["title_options"]
+                "title_options": job_state["title_options"],
+                "cost_summary": job_state["cost_summary"]
             }
         )
 
@@ -1612,14 +1817,15 @@ async def refine_blog(
 async def refine_standalone(
     project_name: str,
     compiled_draft: str = Form(...),
-    model_name: str = Form("gemini")
+    model_name: str = Form("gemini"),
+    specific_model: Optional[str] = Form(None)
 ) -> JSONResponse:
     """Refine a blog draft without requiring job state - for resuming after expiry."""
     try:
         logger.info(f"Standalone refinement for project: {project_name}")
         
         # Get or create agents using provided model name
-        agents = await get_or_create_agents(model_name)
+        agents = await get_or_create_agents(model_name, specific_model)
         refinement_agent = agents["refinement_agent"]
 
         # Run refinement directly without job state
@@ -1699,7 +1905,8 @@ async def generate_social_content(
 
         # Get model and agents
         model_name = job_state.get("model_name")
-        agents = await get_or_create_agents(model_name)
+        specific_model = job_state.get("specific_model")
+        agents = await get_or_create_agents(model_name, specific_model)
         social_agent = agents.get("social_agent")
 
         if not social_agent:
@@ -1779,14 +1986,15 @@ async def generate_social_content(
 async def generate_social_content_standalone(
     project_name: str,
     refined_blog_content: str = Form(...),
-    model_name: str = Form(...)
+    model_name: str = Form(...),
+    specific_model: Optional[str] = Form(None)
 ) -> JSONResponse:
     """Generate social media content from refined blog content without requiring job state."""
     try:
         logger.info(f"Generating standalone social content for project: {project_name}")
         
         # Get or create agents using the provided model
-        agents = await get_or_create_agents(model_name)
+        agents = await get_or_create_agents(model_name, specific_model)
         social_agent = agents.get("social_agent")
 
         if not social_agent:
@@ -2162,7 +2370,9 @@ async def resume_project(project_id: str) -> JSONResponse:
                 "next_step": next_step,
                 "has_outline": bool(job_state.get("outline")),
                 "has_draft": bool(job_state.get("final_draft")),
-                "has_refined": bool(job_state.get("refined_draft"))
+                "has_refined": bool(job_state.get("refined_draft")),
+                "cost_summary": job_state.get("cost_summary"),
+                "cost_call_history": job_state.get("cost_call_history", [])
             }
         )
         
@@ -2341,40 +2551,39 @@ async def get_available_models():
             "openai": {
                 "name": "OpenAI",
                 "models": [
-                    {"id": "gpt-4o", "name": "GPT-4O", "description": "Most capable model for complex tasks"},
-                    {"id": "gpt-4-turbo", "name": "GPT-4 Turbo", "description": "Fast and capable for most tasks"},
-                    {"id": "gpt-3.5-turbo", "name": "GPT-3.5 Turbo", "description": "Fast and cost-effective"}
+                    {"id": "gpt-5", "name": "GPT-5", "description": "Latest flagship GPT model"},
+                    {"id": "gpt-4.1", "name": "GPT-4.1", "description": "High context reasoning with faster latency"},
+                    {"id": "gpt-4o", "name": "GPT-4o", "description": "Multimodal 4o general availability"}
                 ]
             },
             "claude": {
                 "name": "Anthropic Claude",
                 "models": [
-                    {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "description": "Best for analysis and writing"},
-                    {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "description": "Fast and efficient"},
-                    {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "description": "Most capable for complex tasks"}
+                    {"id": "claude-opus-4.1", "name": "Claude Opus 4.1", "description": "Most capable Claude for complex tasks"},
+                    {"id": "claude-sonnet-4", "name": "Claude Sonnet 4", "description": "Balanced capability and speed"}
                 ]
             },
             "gemini": {
                 "name": "Google Gemini",
                 "models": [
-                    {"id": "gemini-2.0-flash-001", "name": "Gemini 2.0 Flash", "description": "Latest fast model"},
-                    {"id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "description": "Advanced reasoning capabilities"},
-                    {"id": "gemini-pro", "name": "Gemini Pro", "description": "Standard high-performance model"}
+                    {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "description": "Advanced reasoning and multimodal"},
+                    {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "description": "Fast, cost-efficient content generation"}
                 ]
             },
             "deepseek": {
                 "name": "DeepSeek",
                 "models": [
-                    {"id": "deepseek-chat", "name": "DeepSeek Chat", "description": "Optimized for conversational tasks"},
-                    {"id": "deepseek-coder", "name": "DeepSeek Coder", "description": "Specialized for coding tasks"}
+                    {"id": "deepseek-reasoner", "name": "DeepSeek R1", "description": "Reasoning-optimized (R1)"},
+                    {"id": "deepseek-chat", "name": "DeepSeek Chat", "description": "General assistant tuned for dialogue"}
                 ]
             },
             "openrouter": {
                 "name": "OpenRouter",
                 "models": [
-                    {"id": "openrouter/auto", "name": "Auto (Best Available)", "description": "Automatically selects best model"},
-                    {"id": "anthropic/claude-3.5-sonnet", "name": "Claude 3.5 Sonnet (via OpenRouter)", "description": "Claude via OpenRouter"},
-                    {"id": "openai/gpt-4-turbo", "name": "GPT-4 Turbo (via OpenRouter)", "description": "OpenAI via OpenRouter"}
+                    {"id": "x-ai/grok-4", "name": "Grok-4 (via OpenRouter)", "description": "xAI Grok flagship through OpenRouter"},
+                    {"id": "openai/gpt-oss-120b", "name": "GPT-OSS 120B (via OpenRouter)", "description": "OpenAI OSS 120B via OpenRouter"},
+                    {"id": "qwen/qwen-2.5-72b-instruct", "name": "Qwen 2.5 72B Instruct", "description": "Alibaba Qwen through OpenRouter"},
+                    {"id": "qwen/qwen3-next-80b-a3b-thinking", "name": "Qwen3 Next 80B A3B Thinking", "description": "Extended reasoning Qwen via OpenRouter"}
                 ]
             }
         }

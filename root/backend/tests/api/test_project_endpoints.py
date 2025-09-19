@@ -46,12 +46,12 @@ def sample_project_data(temp_project_manager):
     """Create a sample project for testing."""
     project_id = temp_project_manager.create_project(
         "Test Project",
-        metadata={"model_name": "claude-3", "persona": "expert"}
+        metadata={"model_name": "claude-sonnet-4", "persona": "expert"}
     )
     return {
         "id": project_id,
         "name": "Test Project",
-        "metadata": {"model_name": "claude-3", "persona": "expert"}
+        "metadata": {"model_name": "claude-sonnet-4", "persona": "expert"}
     }
 
 
@@ -397,7 +397,7 @@ class TestProjectUploadEndpoint:
         
         project_name = "Upload Test Project"
         data = {
-            "model_name": "claude-3",
+            "model_name": "claude-sonnet-4",
             "persona": "expert"
         }
         
@@ -416,7 +416,7 @@ class TestProjectUploadEndpoint:
         project_data = temp_project_manager.get_project(project_id)
         assert project_data is not None
         assert project_data["name"] == project_name
-        assert project_data["metadata"]["model_name"] == "claude-3"
+        assert project_data["metadata"]["model_name"] == "claude-sonnet-4"
         assert project_data["metadata"]["persona"] == "expert"
         
         # Verify FILES_UPLOADED milestone was created
@@ -626,7 +626,7 @@ class TestProjectManagementWorkflowIntegration:
         upload_response = client.post(
             f"/upload/{project_name}",
             files=test_files,
-            data={"model_name": "claude-3", "persona": "data_scientist"}
+            data={"model_name": "claude-sonnet-4", "persona": "data_scientist"}
         )
         
         assert upload_response.status_code == 200

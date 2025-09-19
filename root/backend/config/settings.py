@@ -16,7 +16,7 @@ class ModelSettings:
 
 @dataclass
 class OpenAISettings(ModelSettings):
-    model_name: str = "gpt-3.5-turbo"
+    model_name: str = "gpt-5"
     temperature: float = 0.7
     max_tokens: Optional[int] = 1000
 
@@ -36,7 +36,7 @@ class AzureSettings(ModelSettings):
     
 @dataclass
 class AnthropicSettings(ModelSettings):
-    model_name: str = "claude-2"
+    model_name: str = "claude-opus-4.1"
     temperature: float = 0.7
     max_tokens: Optional[int] = 1000
 
@@ -49,14 +49,14 @@ class DeepseekSettings(ModelSettings):
 @dataclass
 class GeminiSettings(ModelSettings):
     """Settings specific to Google Gemini models."""
-    model_name: Optional[str] = "gemini-pro" # Default model
+    model_name: Optional[str] = "gemini-2.5-pro" # Default model
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = 2048 # Gemini often has different token limits
 
 @dataclass
 class OpenRouterSettings(ModelSettings):
     base_url: str = " https://openrouter.ai/api/v1/chat/completions"
-    model_name: str = "openrouter/auto"
+    model_name: str = "x-ai/grok-4"
     headers: dict = field(default_factory=lambda: {
         "HTTP-Referer": os.getenv('OPENROUTER_REFERER_URL'),
         "X-Title": os.getenv('OPENROUTER_APP_NAME')
@@ -77,7 +77,7 @@ class Settings:
         # OpenAI settings
         self.openai = OpenAISettings(
             api_key=os.getenv('OPENAI_API_KEY'),
-            model_name=os.getenv('OPENAI_MODEL_NAME', 'gpt-3.5-turbo'),
+            model_name=os.getenv('OPENAI_MODEL_NAME', 'gpt-5'),
             max_tokens=os.getenv('OPENAI_MAX_TOKENS', 4096)
         )
         
@@ -95,29 +95,29 @@ class Settings:
         # Anthropic settings
         self.anthropic = AnthropicSettings(
             api_key=os.getenv('ANTHROPIC_API_KEY'),
-            model_name=os.getenv('ANTHROPIC_MODEL_NAME', 'claude-3-haiku-20240307'),
+            model_name=os.getenv('ANTHROPIC_MODEL_NAME', 'claude-opus-4.1'),
             max_tokens=os.getenv('ANTHROPIC_MAX_TOKENS', 4096)
         )
         
         # Deepseek settings
         self.deepseek = DeepseekSettings(
             api_key=os.getenv('DEEPSEEK_API_KEY'),
-            model_name=os.getenv('DEEPSEEK_MODEL_NAME', 'deepseek-chat'),
+            model_name=os.getenv('DEEPSEEK_MODEL_NAME', 'deepseek-reasoner'),
             max_tokens=os.getenv('DEEPSEEK_MAX_TOKENS', 4096)
         )
 
         # OpenRouter settings
         self.openrouter = OpenRouterSettings(
             api_key=os.getenv('OPENROUTER_API_KEY'),
-            model_name=os.getenv('OPENROUTER_MODEL_NAME', 'openrouter/auto'),
+            model_name=os.getenv('OPENROUTER_MODEL_NAME', 'x-ai/grok-4'),
             max_tokens=os.getenv('OPENROUTER_MAX_TOKENS', 4096)
         )
 
         # Gemini settings
         self.gemini = GeminiSettings(
             api_key=os.getenv('GEMINI_API_KEY'),
-            model_name=os.getenv('GEMINI_MODEL_NAME', 'gemini-2.0-flash-001'), # gemini-2.5-pro-exp-03-25
-            max_tokens=os.getenv('GEMINI_MAX_TOKENS', 8192) # Use a reasonable default
+            model_name=os.getenv('GEMINI_MODEL_NAME', 'gemini-2.5-pro'),
+            max_tokens=os.getenv('GEMINI_MAX_TOKENS', 8192)
         )
 
         # --- Embedding Provider Settings ---

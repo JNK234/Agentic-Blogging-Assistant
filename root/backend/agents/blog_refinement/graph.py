@@ -4,21 +4,16 @@ LangGraph definition for the Blog Refinement Agent.
 Imports node functions from nodes.py and defines the graph structure.
 """
 import logging
-from functools import partial
-from pydantic import BaseModel
 from langgraph.graph import StateGraph, END
 
-
-# Assuming BaseModel is correctly imported where needed
 from root.backend.agents.blog_refinement.state import BlogRefinementState
-# Import node functions from nodes.py
 from root.backend.agents.blog_refinement.nodes import (
     generate_introduction_node,
     generate_conclusion_node,
     generate_summary_node,
     generate_titles_node,
-    suggest_clarity_flow_node, # Import the new node function
-    reduce_redundancy_node,  # Import the redundancy reduction node
+    suggest_clarity_flow_node,
+    reduce_redundancy_node,
     assemble_refined_draft_node
 )
 
@@ -26,29 +21,16 @@ logger = logging.getLogger(__name__)
 
 # --- Graph Creation ---
 
-async def create_refinement_graph(model: BaseModel, persona_service=None) -> StateGraph:
-    """
-    Creates the LangGraph StateGraph for the blog refinement process.
-
-    Args:
-        model: An instance of the language model to be used by the nodes.
-        persona_service: Optional PersonaService instance for voice consistency.
-
-    Returns:
-        A compiled LangGraph application (StateGraph).
-    """
-
+async def create_refinement_graph() -> StateGraph:
+    """Creates the LangGraph StateGraph for the blog refinement process."""
     graph = StateGraph(BlogRefinementState)
 
-    # Add nodes, binding the model instance to nodes that require it using partial
-    # This ensures the model is available when the node function is called by LangGraph
-    graph.add_node("generate_introduction", partial(generate_introduction_node, model=model))
-    graph.add_node("generate_conclusion", partial(generate_conclusion_node, model=model))
-    graph.add_node("generate_summary", partial(generate_summary_node, model=model))
-    graph.add_node("generate_titles", partial(generate_titles_node, model=model, persona_service=persona_service))
-    graph.add_node("suggest_clarity_flow", partial(suggest_clarity_flow_node, model=model)) # Add the new node
-    graph.add_node("reduce_redundancy", partial(reduce_redundancy_node, model=model))  # Add redundancy reduction node
-    # This node doesn't need the model, so no binding is necessary
+    graph.add_node("generate_introduction", generate_introduction_node)
+    graph.add_node("generate_conclusion", generate_conclusion_node)
+    graph.add_node("generate_summary", generate_summary_node)
+    graph.add_node("generate_titles", generate_titles_node)
+    graph.add_node("suggest_clarity_flow", suggest_clarity_flow_node)
+    graph.add_node("reduce_redundancy", reduce_redundancy_node)
     graph.add_node("assemble_draft", assemble_refined_draft_node)
 
     # --- Define Conditional Logic ---

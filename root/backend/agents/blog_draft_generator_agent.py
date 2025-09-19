@@ -83,7 +83,15 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             logging.warning(f"Could not extract intelligent length from outline: {e}. Using default.")
             return 1500  # Safe default
 
-    async def generate_draft(self, project_name: str, outline, notebook_content, markdown_content): # Added project_name parameter
+    async def generate_draft(
+        self,
+        project_name: str,
+        outline,
+        notebook_content,
+        markdown_content,
+        cost_aggregator=None,
+        project_id: Optional[str] = None
+    ): # Added project_name parameter
         """Generates a blog draft section by section using LangGraph."""
         logging.info(f"Generating draft for outline: {outline['title']} (Project: {project_name})")
 
@@ -98,14 +106,24 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             markdown_content=markdown_content,
             model=self.llm,
             target_total_length=intelligent_length,  # Use intelligent length
-            remaining_length_budget=intelligent_length  # Initialize budget
+            remaining_length_budget=intelligent_length,  # Initialize budget
+            cost_aggregator=cost_aggregator,
+            project_id=project_id,
+            current_stage="draft_generation"
         )
+
+        self.current_state = initial_state
 
         # Execute graph
         try:
             logging.info("Executing draft generation graph...")
             final_state = await self.run_graph(initial_state)
             logging.info("Draft generation graph completed successfully.")
+
+            if hasattr(final_state, 'update_cost_summary'):
+                final_state.update_cost_summary()
+
+            self.current_state = final_state
 
             # Return complete blog post
             if hasattr(final_state, 'final_blog_post') and final_state.final_blog_post:
@@ -228,7 +246,9 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         current_section_index: int,
         max_iterations=3,
         quality_threshold=0.8,
-        use_cache: bool = True 
+        use_cache: bool = True,
+        cost_aggregator=None,
+        project_id: Optional[str] = None
     ) -> Tuple[Optional[str], bool]:
         """Generates a single section of the blog draft, using persistent cache based on outline content."""
         section_title = section.get('title', f'Section {current_section_index + 1}')
@@ -281,9 +301,14 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             current_section=draft_section,
             max_iterations=max_iterations,
             quality_threshold=quality_threshold,
-            current_section_index=current_section_index
+            current_section_index=current_section_index,
+            cost_aggregator=cost_aggregator,
+            project_id=project_id,
+            current_stage="draft_generation"
             # job_id is not part of BlogDraftState, but available via project_name/index
         )
+
+        self.current_state = section_state
 
         # Execute nodes directly in sequence
         try:
@@ -315,6 +340,9 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
 
             state = await section_finalizer(state)
             logging.info(f"Section generation completed for: {section_title}")
+
+            if hasattr(state, 'update_cost_summary'):
+                state.update_cost_summary()
 
             generated_content = state.current_section.content if state.current_section else None
 
@@ -355,7 +383,9 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         markdown_content: Optional[ContentStructure],
         feedback: str,
         max_iterations=3,
-        quality_threshold=0.8
+        quality_threshold=0.8,
+        cost_aggregator=None,
+        project_id: Optional[str] = None
     ) -> Optional[str]: # Return only content (cache status not relevant for direct regen call)
         """Regenerates a section with user feedback, updating the cache."""
         section_title = section.get('title', 'Unknown Section')
@@ -411,9 +441,14 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             current_section=draft_section,
             current_section_index=section_index,
             max_iterations=max_iterations,
-            quality_threshold=quality_threshold
+            quality_threshold=quality_threshold,
+            cost_aggregator=cost_aggregator,
+            project_id=project_id,
+            current_stage="draft_generation"
         )
         initial_state.user_feedback_provided = True
+
+        self.current_state = initial_state
 
         # Execute nodes directly in sequence
         try:
@@ -446,6 +481,9 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
 
             state = await section_finalizer(state)
             logging.info(f"Section regeneration completed for: {section_title}")
+
+            if hasattr(state, 'update_cost_summary'):
+                state.update_cost_summary()
 
             regenerated_content = state.current_section.content if state.current_section else None
 

@@ -49,7 +49,7 @@ def mock_datetime():
 def sample_project_metadata():
     """Standard project metadata for testing."""
     return {
-        "model_name": "claude-3-sonnet",
+        "model_name": "claude-sonnet-4",
         "persona": "technical_writer",
         "difficulty_level": "intermediate",
         "target_audience": "developers"

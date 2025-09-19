@@ -213,6 +213,7 @@ class ProjectManagerUI:
                 job_id = resume_data.get('job_id')
                 if job_id:
                     self.session_manager.set('job_id', job_id)
+                    self.session_manager.set('cost_summary', resume_data.get('cost_summary'))
                     
                     # Now fetch the actual job state content
                     try:
@@ -441,6 +442,10 @@ class ProjectManagerUI:
             # Set current section index based on progress
             current_section_index = job_status.get('current_section_index', 0)
             self.session_manager.set('current_section_index', current_section_index)
+
+            cost_summary = job_status.get('cost_summary')
+            if cost_summary:
+                self.session_manager.set('cost_summary', cost_summary)
                 
         except Exception as e:
             logger.error(f"Error restoring content from job state: {e}")

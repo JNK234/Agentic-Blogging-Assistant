@@ -8,6 +8,7 @@ from root.backend.utils.file_parser import ParsedContent
 from root.backend.agents.outline_generator.state import OutlineState
 from root.backend.agents.outline_generator.prompts import PROMPT_CONFIGS
 from root.backend.services.persona_service import PersonaService
+from root.backend.agents.cost_tracking_decorator import track_node_costs
 
 logging.basicConfig(level=logging.INFO)
 
@@ -101,6 +102,7 @@ def safe_parse_with_fallback(parser, response: str, operation_name: str):
         logging.error(f"Response content: {response[:500] if response else 'None'}...")
         raise
 
+@track_node_costs("analyze_content", agent_name="OutlineGeneratorAgent", stage="outline_generation")
 async def analyze_content(state: OutlineState) -> OutlineState:
     """Analyzes the content using LLM to extract key information."""
     logging.info("Executing node: analyze_content")
@@ -155,6 +157,7 @@ async def analyze_content(state: OutlineState) -> OutlineState:
     
     return state
 
+@track_node_costs("difficulty_assessor", agent_name="OutlineGeneratorAgent", stage="outline_generation")
 async def difficulty_assessor(state: OutlineState) -> OutlineState:
     """Assesses the difficulty level of the content."""
     logging.info("Executing node: difficulty_assessor")
@@ -190,6 +193,7 @@ async def difficulty_assessor(state: OutlineState) -> OutlineState:
     
     return state
 
+@track_node_costs("prerequisite_identifier", agent_name="OutlineGeneratorAgent", stage="outline_generation")
 async def prerequisite_identifier(state: OutlineState) -> OutlineState:
     """Identifies prerequisites needed to understand the content."""
     logging.info("Executing node: prerequisite_identifier")
@@ -242,6 +246,7 @@ async def prerequisite_identifier(state: OutlineState) -> OutlineState:
     
     return state
 
+@track_node_costs("outline_structurer", agent_name="OutlineGeneratorAgent", stage="outline_generation")
 async def outline_structurer(state: OutlineState) -> OutlineState:
     """Structures the outline based on analysis and prerequisites."""
     logging.info("Executing node: outline_structurer")
@@ -348,6 +353,7 @@ def _calculate_intelligent_length(state: OutlineState) -> int:
     
     return base_length
 
+@track_node_costs("final_generator", agent_name="OutlineGeneratorAgent", stage="outline_generation")
 async def final_generator(state: OutlineState) -> OutlineState:
     """Generates the final outline in markdown format."""
     logging.info("Executing node: final_generator")

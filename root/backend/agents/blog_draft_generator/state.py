@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any, Set
 from root.backend.parsers import ContentStructure
 from root.backend.agents.outline_generator.state import FinalOutline
+from root.backend.agents.cost_tracking_state import CostTrackingMixin
 
 class CodeExample(BaseModel):
     """Represents a code example in a blog section."""
@@ -62,7 +63,7 @@ class ContentReference(BaseModel):
         description="Stores header relationships and context from original document structure"
     )
 
-class BlogDraftState(BaseModel):
+class BlogDraftState(CostTrackingMixin, BaseModel):
     """State for the blog draft generation process."""
     # Input state
     project_name: str = Field(description="Name of the project for context filtering") # Added project_name
@@ -107,3 +108,15 @@ class BlogDraftState(BaseModel):
     section_length_targets: Dict[str, int] = Field(default_factory=dict, description="Target length for each section")
     current_total_length: int = Field(default=0, description="Current total blog length in words")
     remaining_length_budget: int = Field(default=1500, description="Remaining length budget for upcoming sections")
+
+    project_id: Optional[str] = Field(default=None)
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        self.current_agent_name = "BlogDraftGeneratorAgent"
+        self.current_stage = data.get("current_stage", "draft_generation")
+        if not self.project_id:
+            self.project_id = data.get("project_id") or self.project_name
+        self.ensure_cost_aggregator(project_id=self.project_id)
+        if self.cost_aggregator and self.project_id and not self.cost_aggregator.current_workflow.get("start_time"):
+            self.cost_aggregator.start_workflow(project_id=self.project_id)
