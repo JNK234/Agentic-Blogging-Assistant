@@ -248,7 +248,8 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         quality_threshold=0.8,
         use_cache: bool = True,
         cost_aggregator=None,
-        project_id: Optional[str] = None
+        project_id: Optional[str] = None,
+        persona: str = "neuraforge"  # Add persona parameter with default
     ) -> Tuple[Optional[str], bool]:
         """Generates a single section of the blog draft, using persistent cache based on outline content."""
         section_title = section.get('title', f'Section {current_section_index + 1}')
@@ -270,7 +271,11 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                 try:
                     cached_data = json.loads(cached_section_json)
                     logging.info(f"Cache hit for section {current_section_index} (OutlineHash: {outline_hash})")
-                    return cached_data.get("content"), True
+                    # Return the full cached data including image placeholders
+                    return {
+                        "content": cached_data.get("content"),
+                        "image_placeholders": cached_data.get("image_placeholders", [])
+                    }, True
                 except json.JSONDecodeError:
                     logging.warning(f"Failed to parse cached JSON for section {current_section_index} (OutlineHash: {outline_hash}). Regenerating.")
         # --- End Cache Check ---
@@ -304,7 +309,8 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             current_section_index=current_section_index,
             cost_aggregator=cost_aggregator,
             project_id=project_id,
-            current_stage="draft_generation"
+            current_stage="draft_generation",
+            persona=persona  # Pass the persona to the state
             # job_id is not part of BlogDraftState, but available via project_name/index
         )
 
@@ -345,13 +351,25 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                 state.update_cost_summary()
 
             generated_content = state.current_section.content if state.current_section else None
+            image_placeholders = state.current_section.image_placeholders if state.current_section else []
 
             if generated_content:
                 # --- Store in Cache ---
                 if use_cache:
                     section_data_to_cache = {
                         "title": section_title,
-                        "content": generated_content
+                        "content": generated_content,
+                        "image_placeholders": [
+                            {
+                                "type": p.type,
+                                "description": p.description,
+                                "alt_text": p.alt_text,
+                                "placement": p.placement,
+                                "purpose": p.purpose,
+                                "section_context": p.section_context,
+                                "source_reference": p.source_reference
+                            } for p in image_placeholders
+                        ] if image_placeholders else []
                     }
                     section_json = json.dumps(section_data_to_cache)
                     self.vector_store.store_section_cache(
@@ -362,7 +380,11 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                     section_index=current_section_index
                 )
                 # --- End Store in Cache ---
-                return generated_content, False # Return content and False for was_cached
+                # Return content and image placeholders data
+                return {
+                    "content": generated_content,
+                    "image_placeholders": section_data_to_cache.get("image_placeholders", [])
+                }, False # Return dict with content and placeholders, and False for was_cached
             else:
                 logging.error(f"Generation resulted in empty content for section {current_section_index}")
                 return None, False # Return None and False for was_cached

@@ -25,6 +25,7 @@ from root.backend.services.vector_store_service import VectorStoreService
 from root.backend.agents.cost_tracking_decorator import track_node_costs, track_iteration_costs
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def validate_and_enforce_constraints(content: str, include_code: bool, section_title: str) -> str:
     """
@@ -567,9 +568,12 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
 
     # Initialize persona service and get persona instructions
     persona_service = PersonaService()
-    # Use Sebastian Raschka persona by default, with fallback to neuraforge
-    persona_name = "sebastian_raschka" if "sebastian_raschka" in persona_service.list_personas() else "neuraforge"
+    # Get persona from state, with fallback to neuraforge
+    persona_name = getattr(state, 'persona', 'neuraforge')
     persona_instructions = persona_service.get_persona_prompt(persona_name)
+
+    # Log which persona is being used
+    logger.info(f"Using persona: {persona_name} for section generation")
     
     # Extract blog narrative context
     blog_narrative_context = extract_blog_narrative_context(state)
@@ -1431,7 +1435,10 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
         
         # Initialize persona service
         persona_service = PersonaService()
-        persona_instructions = persona_service.get_persona_prompt("neuraforge")
+        # Get persona from state, with fallback to neuraforge
+        persona_name = getattr(state, 'persona', 'neuraforge')
+        persona_instructions = persona_service.get_persona_prompt(persona_name)
+        logger.info(f"Using persona: {persona_name} for transition generation")
         
         # Prepare input variables for the prompt
         input_variables = {
@@ -1569,7 +1576,10 @@ async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
     
     # Initialize persona service
     persona_service = PersonaService()
-    persona_instructions = persona_service.get_persona_prompt("neuraforge")
+    # Get persona from state, with fallback to neuraforge
+    persona_name = getattr(state, 'persona', 'neuraforge')
+    persona_instructions = persona_service.get_persona_prompt(persona_name)
+    logger.info(f"Using persona: {persona_name} for blog compilation")
     
     # Prepare input variables for the prompt
     input_variables = {

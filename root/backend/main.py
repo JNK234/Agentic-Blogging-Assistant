@@ -402,7 +402,8 @@ async def generate_outline(
             "markdown_content": markdown_content,
             "project_name": project_name,
             "model_name": model_name,
-            "persona": writing_style,  # Store persona/writing style
+            "persona": persona_style,  # Store persona style selected by user
+            "writing_style": writing_style,  # Keep for backward compatibility
             "specific_model": specific_model,
             "cost_aggregator": cost_aggregator,
             "cost_summary": cost_summary,
@@ -793,7 +794,7 @@ async def generate_section(
         draft_agent = agents["draft_agent"]
 
         # Generate section content
-        section_content, was_cached = await draft_agent.generate_section(
+        section_result, was_cached = await draft_agent.generate_section(
             project_name=project_name,
             section=section,
             outline=outline_data,
@@ -804,22 +805,33 @@ async def generate_section(
             quality_threshold=quality_threshold,
             use_cache=True,
             cost_aggregator=cost_aggregator,
-            project_id=job_state.get("project_id", job_id)
+            project_id=job_state.get("project_id", job_id),
+            persona=job_state.get("persona", "neuraforge")  # Pass persona from job state
         )
 
-        if section_content is None:
+        if section_result is None:
             return JSONResponse(
                 content={"error": f"Failed to generate section: {section_title}"},
                 status_code=500
             )
 
+        # Extract content and image placeholders from result
+        if isinstance(section_result, dict):
+            section_content = section_result.get("content")
+            image_placeholders = section_result.get("image_placeholders", [])
+        else:
+            # Backward compatibility for old cache format
+            section_content = section_result
+            image_placeholders = []
+
         # Store in job state immediately
         if 'generated_sections' not in job_state:
             job_state['generated_sections'] = {}
-        
+
         job_state['generated_sections'][section_index] = {
             "title": section_title,
             "content": section_content,
+            "image_placeholders": image_placeholders,  # Include image placeholders
             "generated_at": datetime.now().isoformat()
         }
 
@@ -849,6 +861,7 @@ async def generate_section(
                 "job_id": job_id,
                 "section_title": section_title,
                 "section_content": section_content,
+                "image_placeholders": image_placeholders,  # Include image placeholders in response
                 "section_index": section_index,
                 "was_cached": was_cached,
                 "cost_summary": updated_summary,
@@ -1920,7 +1933,7 @@ async def generate_social_content(
         social_content = await social_agent.generate_comprehensive_content(
             blog_content=refined_draft,
             blog_title=blog_title,
-            persona=""  # No persona - use natural model voice
+            persona=job_state.get("persona", "neuraforge")  # Use persona from job state
         )
 
         if not social_content:
@@ -1987,7 +2000,8 @@ async def generate_social_content_standalone(
     project_name: str,
     refined_blog_content: str = Form(...),
     model_name: str = Form(...),
-    specific_model: Optional[str] = Form(None)
+    specific_model: Optional[str] = Form(None),
+    persona: Optional[str] = Form("neuraforge")  # Add persona parameter
 ) -> JSONResponse:
     """Generate social media content from refined blog content without requiring job state."""
     try:
@@ -2020,7 +2034,7 @@ async def generate_social_content_standalone(
         social_content = await social_agent.generate_comprehensive_content(
             blog_content=refined_blog_content,
             blog_title=blog_title,
-            persona=""  # No persona - use natural model voice
+            persona=persona  # Use persona parameter
         )
 
         if not social_content:

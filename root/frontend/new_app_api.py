@@ -318,7 +318,22 @@ def format_section_content_as_markdown(content_data: Any) -> str:
                     processed_main_content = processed_main_content[3:-3].strip()
             
             current_section_markdown_parts = [processed_main_content]
-            
+
+            # Add image placeholders if present
+            image_placeholders = data.get("image_placeholders")
+            if image_placeholders and isinstance(image_placeholders, list):
+                for placeholder in image_placeholders:
+                    if isinstance(placeholder, dict):
+                        placeholder_md = f"\n\n**[Image Placeholder: {placeholder.get('type', 'Unknown')}]**"
+                        placeholder_md += f"\n- **Description:** {placeholder.get('description', 'No description')}"
+                        placeholder_md += f"\n- **Alt Text:** {placeholder.get('alt_text', 'No alt text')}"
+                        placeholder_md += f"\n- **Purpose:** {placeholder.get('purpose', 'No purpose specified')}"
+                        if placeholder.get('placement'):
+                            placeholder_md += f"\n- **Placement:** {placeholder.get('placement')}"
+                        if placeholder.get('section_context'):
+                            placeholder_md += f"\n- **Context:** {placeholder.get('section_context')}"
+                        current_section_markdown_parts.append(placeholder_md)
+
             examples = data.get("code_examples")
             if examples:
                 current_section_markdown_parts.append("\n\n**Code Examples:**") # Add a clear separator
@@ -1199,6 +1214,7 @@ class BlogDraftUI:
                     # Extract data from the result dictionary
                     section_content_raw = result.get("section_content")
                     section_title_raw = result.get("section_title", current_section_info.get('title', 'Untitled'))
+                    image_placeholders = result.get("image_placeholders", [])  # Extract image placeholders
                     was_cached = result.get("was_cached", False) # Get the cache status flag
 
                     # Log whether the section was cached or generated
@@ -1209,8 +1225,14 @@ class BlogDraftUI:
                         logger.info(f"Section {current_section_index + 1} ('{section_title_raw}') generated.")
                         status_msg = f"Section {current_section_index + 1} generated."
 
-                    # Validate content (no change needed here, format_section_content_as_markdown handles various inputs)
-                    formatted_content = format_section_content_as_markdown(section_content_raw)
+                    # Create a dict with content and placeholders for formatting
+                    section_data = {
+                        "content": section_content_raw,
+                        "image_placeholders": image_placeholders
+                    }
+
+                    # Validate content (format_section_content_as_markdown now handles the dict with placeholders)
+                    formatted_content = format_section_content_as_markdown(section_data)
                     if "Error:" in formatted_content and section_content_raw is None:
                          logger.warning(f"generate_section (cached={was_cached}) for job {job_id}, section {current_section_index} returned None content. Full result: {result}")
                     elif "Error:" in formatted_content:
@@ -1223,6 +1245,7 @@ class BlogDraftUI:
                         "title": section_title_raw,
                         "raw_content": section_content_raw, # Store original API response
                         "formatted_content": formatted_content, # Store formatted version
+                        "image_placeholders": image_placeholders,  # Store image placeholders
                         "cost_delta": result.get("section_cost"),
                         "token_delta": result.get("section_tokens")
                     }

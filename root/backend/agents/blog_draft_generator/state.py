@@ -72,6 +72,7 @@ class BlogDraftState(CostTrackingMixin, BaseModel):
     markdown_content: ContentStructure = Field(description="Parsed markdown content")
     current_section_index: int = 0
     model: Any = Field(description="LLM model instance")
+    persona: str = Field(default="neuraforge", description="Selected persona for content generation")
 
     # Content state
     sections: List[DraftSection] = Field(default_factory=list)
