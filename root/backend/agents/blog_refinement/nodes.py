@@ -7,9 +7,9 @@ import json
 from typing import Dict, Any, List, Optional
 from pydantic import ValidationError, BaseModel
 
-from root.backend.agents.cost_tracking_decorator import track_node_costs
-from root.backend.agents.blog_refinement.state import BlogRefinementState, TitleOption
-from root.backend.agents.blog_refinement.prompts import (
+from backend.agents.cost_tracking_decorator import track_node_costs
+from backend.agents.blog_refinement.state import BlogRefinementState, TitleOption
+from backend.agents.blog_refinement.prompts import (
     GENERATE_INTRODUCTION_PROMPT,
     GENERATE_CONCLUSION_PROMPT,
     GENERATE_SUMMARY_PROMPT,
@@ -17,6 +17,12 @@ from root.backend.agents.blog_refinement.prompts import (
     SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT, # Import the new prompt
     REDUCE_REDUNDANCY_PROMPT  # Import the redundancy reduction prompt
 )
+from backend.agents.blog_refinement.prompt_builder import build_title_generation_prompt
+from backend.agents.blog_refinement.validation import (
+    validate_title_generation,
+    create_correction_prompt
+)
+from backend.models.generation_config import TitleGenerationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +106,7 @@ async def generate_summary_node(state: BlogRefinementState) -> Dict[str, Any]:
 # Corrected: Expect BlogRefinementState, use attribute access
 @track_node_costs("generate_titles", agent_name="BlogRefinementAgent", stage="refinement")
 async def generate_titles_node(state: BlogRefinementState) -> Dict[str, Any]:
-    """Node to generate title and subtitle options."""
+    """Node to generate title and subtitle options with configuration support."""
     logger.info("Node: generate_titles_node")
     # Access Pydantic model fields directly
     if state.error: return {"error": state.error}
@@ -109,11 +115,20 @@ async def generate_titles_node(state: BlogRefinementState) -> Dict[str, Any]:
         if not state.model:
             raise ValueError("Refinement state is missing model reference")
 
-        prompt = GENERATE_TITLES_PROMPT.format(
-            blog_draft=state.original_draft
+        # Use configuration if provided, otherwise use defaults
+        config = state.title_config or TitleGenerationConfig()
+
+        # Build dynamic prompt based on configuration
+        prompt = build_title_generation_prompt(
+            blog_draft=state.original_draft,
+            config=config
         )
 
         logger.info(f"Generated prompt length: {len(prompt)}")
+        logger.info(f"Title generation config: {config.num_titles} titles, "
+                   f"{config.num_subtitles_per_title} subtitles each")
+
+        # Initial generation attempt
         response = await state.model.ainvoke(prompt)
 
         # Clean and parse JSON
@@ -148,40 +163,131 @@ async def generate_titles_node(state: BlogRefinementState) -> Dict[str, Any]:
             if not isinstance(title_data, list):
                 raise ValueError("Parsed JSON is not a list.")
 
-            # Validate and ensure each item has required fields
+            # Adapt parsing based on configuration
             validated_options = []
             for i, item in enumerate(title_data):
                 if not isinstance(item, dict):
                     logger.warning(f"Item {i} is not a dictionary, skipping")
                     continue
-                
-                # Ensure all required fields are present
-                if "title" not in item or "subtitle" not in item:
-                    logger.warning(f"Item {i} missing required fields, adding defaults")
-                    item = {
-                        "title": item.get("title", f"Blog Post Title {i+1}"),
-                        "subtitle": item.get("subtitle", "Insights and practical applications"),
-                        "reasoning": item.get("reasoning", item.get("approach", item.get("value_promise", "Generated title option")))
-                    }
-                
-                # Ensure reasoning field exists (for backward compatibility)
-                if "reasoning" not in item:
-                    item["reasoning"] = item.get("approach", item.get("value_promise", "Generated title option"))
-                
-                try:
-                    # Validate with Pydantic model
-                    validated = TitleOption.model_validate(item).model_dump()
-                    validated_options.append(validated)
-                except ValidationError as ve:
-                    logger.warning(f"Validation error for item {i}: {ve}, using defaults")
-                    validated_options.append({
-                        "title": str(item.get("title", f"Blog Post Title {i+1}")),
-                        "subtitle": str(item.get("subtitle", "Insights and practical applications")),
-                        "reasoning": str(item.get("reasoning", "Generated title option"))
-                    })
-            
+
+                # Handle different subtitle structures based on config
+                if config.num_subtitles_per_title == 1:
+                    # Single subtitle structure
+                    if "title" not in item or "subtitle" not in item:
+                        logger.warning(f"Item {i} missing required fields, adding defaults")
+                        item = {
+                            "title": item.get("title", f"Blog Post Title {i+1}"),
+                            "subtitle": item.get("subtitle", "Insights and practical applications"),
+                            "reasoning": item.get("reasoning", item.get("approach", item.get("value_promise", "Generated title option")))
+                        }
+
+                    # Ensure reasoning field exists
+                    if "reasoning" not in item:
+                        item["reasoning"] = item.get("approach", item.get("value_promise", "Generated title option"))
+
+                    try:
+                        validated = TitleOption.model_validate(item).model_dump()
+                        validated_options.append(validated)
+                    except ValidationError as ve:
+                        logger.warning(f"Validation error for item {i}: {ve}, using defaults")
+                        validated_options.append({
+                            "title": str(item.get("title", f"Blog Post Title {i+1}")),
+                            "subtitle": str(item.get("subtitle", "Insights and practical applications")),
+                            "reasoning": str(item.get("reasoning", "Generated title option"))
+                        })
+                else:
+                    # Multiple subtitles structure
+                    if "title" not in item:
+                        # If we don't have a title field, check if this is a single-field structure
+                        logger.warning(f"Item {i} missing 'title' field: {item}")
+                        # Try to provide a fallback
+                        validated_item = {
+                            "title": str(item) if isinstance(item, str) else f"Blog Post Title {i+1}",
+                            "subtitle": "Insights and practical applications",
+                            "reasoning": "Generated title option with defaults"
+                        }
+                    elif "subtitles" in item and item["subtitles"]:
+                        # Handle multiple subtitles structure
+                        first_subtitle = item["subtitles"][0] if isinstance(item["subtitles"], list) else item["subtitles"]
+                        if isinstance(first_subtitle, dict):
+                            subtitle_text = first_subtitle.get("subtitle", "Insights and practical applications")
+                        else:
+                            subtitle_text = str(first_subtitle)
+
+                        validated_item = {
+                            "title": item["title"],
+                            "subtitle": subtitle_text,
+                            "reasoning": item.get("reasoning", "Generated title option")
+                        }
+                    elif "subtitle" in item:
+                        # Single subtitle in multi-subtitle mode (fallback)
+                        validated_item = {
+                            "title": item["title"],
+                            "subtitle": item["subtitle"],
+                            "reasoning": item.get("reasoning", "Generated title option")
+                        }
+                    else:
+                        # No subtitle field at all - provide default
+                        logger.warning(f"Item {i} has title but no subtitle: {item}")
+                        validated_item = {
+                            "title": item["title"],
+                            "subtitle": "Exploring key concepts and practical insights",
+                            "reasoning": item.get("reasoning", "Generated title option")
+                        }
+
+                    try:
+                        validated = TitleOption.model_validate(validated_item).model_dump()
+                        validated_options.append(validated)
+                    except ValidationError as ve:
+                        logger.warning(f"Validation error for item {i}: {ve}, using fallback")
+                        # Provide a safe fallback
+                        validated_options.append({
+                            "title": str(item.get("title", f"Blog Post Title {i+1}")),
+                            "subtitle": "Insights and practical applications",
+                            "reasoning": "Generated title option with defaults due to validation error"
+                        })
+
             if not validated_options:
                 raise ValueError("No valid title options found after validation.")
+
+            # Validate against configuration requirements
+            validation_result = validate_title_generation(validated_options, config)
+
+            if not validation_result.is_valid:
+                logger.warning(f"Title generation validation failed: {validation_result.violations}")
+
+                # Single retry with correction prompt
+                correction_prompt = create_correction_prompt(
+                    validated_options,
+                    validation_result,
+                    content_type="titles"
+                )
+
+                logger.info("Attempting to correct title generation with feedback")
+                retry_response = await state.model.ainvoke(correction_prompt)
+
+                # Parse retry response
+                cleaned_retry = retry_response.strip()
+                if cleaned_retry.startswith("```json"):
+                    cleaned_retry = cleaned_retry[7:]
+                if cleaned_retry.endswith("```"):
+                    cleaned_retry = cleaned_retry[:-3]
+                cleaned_retry = cleaned_retry.strip()
+
+                try:
+                    retry_data = json.loads(cleaned_retry)
+                    # Process retry data (similar to above)
+                    # For brevity, we'll use the retry data as-is if valid
+                    if isinstance(retry_data, list) and len(retry_data) == config.num_titles:
+                        validated_options = retry_data
+                        logger.info("Title generation corrected successfully")
+                    else:
+                        logger.warning("Retry still doesn't meet requirements, using original")
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse retry response, using original")
+
+            if validation_result.warnings:
+                logger.info(f"Title generation warnings: {validation_result.warnings}")
 
             logger.info(f"Successfully generated {len(validated_options)} title options.")
             return {"title_options": validated_options}

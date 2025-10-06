@@ -358,9 +358,11 @@ async def final_generator(state: OutlineState) -> OutlineState:
     """Generates the final outline in markdown format."""
     logging.info("Executing node: final_generator")
     try:
-        # Initialize persona service
+        # Initialize persona service and get persona from state
         persona_service = PersonaService()
-        persona_instructions = persona_service.get_persona_prompt("neuraforge")
+        persona_name = getattr(state, 'persona', 'neuraforge')
+        persona_instructions = persona_service.get_persona_prompt(persona_name)
+        logger.info(f"Using persona: {persona_name} for outline generation")
         
         # Calculate intelligent target length based on content analysis and user preferences
         intelligent_length = _calculate_intelligent_length(state)

@@ -8,11 +8,12 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 # Import BaseGraphAgent and necessary components
-from root.backend.agents.base_agent import BaseGraphAgent
-from root.backend.agents.blog_refinement.state import BlogRefinementState, RefinementResult, TitleOption
-from root.backend.agents.blog_refinement.graph import create_refinement_graph
-from root.backend.services.persona_service import PersonaService
-from root.backend.utils.serialization import serialize_object # For potential result serialization if needed
+from backend.agents.base_agent import BaseGraphAgent
+from backend.agents.blog_refinement.state import BlogRefinementState, RefinementResult, TitleOption
+from backend.agents.blog_refinement.graph import create_refinement_graph
+from backend.services.persona_service import PersonaService
+from backend.utils.serialization import serialize_object # For potential result serialization if needed
+from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -65,7 +66,9 @@ class BlogRefinementAgent(BaseGraphAgent):
         self,
         blog_draft: str,
         cost_aggregator=None,
-        project_id: Optional[str] = None
+        project_id: Optional[str] = None,
+        title_config: Optional[TitleGenerationConfig] = None,
+        social_config: Optional[SocialMediaConfig] = None
     ) -> Optional[RefinementResult]:
         """
         Runs the blog refinement process using the compiled LangGraph.
@@ -94,7 +97,9 @@ class BlogRefinementAgent(BaseGraphAgent):
             persona_service=self.persona_service,
             cost_aggregator=cost_aggregator,
             project_id=project_id,
-            current_stage="refinement"
+            current_stage="refinement",
+            title_config=title_config,
+            social_config=social_config
         )
 
         try:

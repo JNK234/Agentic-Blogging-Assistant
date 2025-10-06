@@ -1,33 +1,40 @@
 """
 FastAPI application for blog content processing, outline generation, and blog draft generation.
 """
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
 import os
 import json
 import sys
 import logging
-from typing import List, Optional, Dict, Any
 from pathlib import Path
+
+# Configure Python path for absolute imports from root
+backend_dir = Path(__file__).parent
+root_dir = backend_dir.parent
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
+    print(f"Added to Python path: {root_dir}")
+
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import JSONResponse
+from typing import List, Optional, Dict, Any
 import uuid # For generating unique job IDs
 from cachetools import TTLCache # For simple in-memory state cache
 from datetime import datetime
- 
-current_file_path = Path(".")
-sys.path.append("")
+from pydantic import ValidationError
 
-from root.backend.agents.outline_generator_agent import OutlineGeneratorAgent
-from root.backend.agents.content_parsing_agent import ContentParsingAgent
-from root.backend.agents.blog_draft_generator_agent import BlogDraftGeneratorAgent
-from root.backend.agents.social_media_agent import SocialMediaAgent
-from root.backend.agents.blog_refinement_agent import BlogRefinementAgent # Updated import path
-from root.backend.agents.outline_generator.state import FinalOutline
-from root.backend.agents.blog_refinement.state import RefinementResult, TitleOption # Combined import
-from root.backend.utils.serialization import serialize_object
-from root.backend.models.model_factory import ModelFactory
-from root.backend.services.vector_store_service import VectorStoreService # Added
-from root.backend.services.persona_service import PersonaService # Added
-from root.backend.services.project_manager import ProjectManager, MilestoneType, ProjectStatus # Added
+from backend.agents.outline_generator_agent import OutlineGeneratorAgent
+from backend.agents.content_parsing_agent import ContentParsingAgent
+from backend.agents.blog_draft_generator_agent import BlogDraftGeneratorAgent
+from backend.agents.social_media_agent import SocialMediaAgent
+from backend.agents.blog_refinement_agent import BlogRefinementAgent # Updated import path
+from backend.agents.outline_generator.state import FinalOutline
+from backend.agents.blog_refinement.state import RefinementResult, TitleOption # Combined import
+from backend.utils.serialization import serialize_object
+from backend.models.model_factory import ModelFactory
+from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig # Added
+from backend.services.vector_store_service import VectorStoreService # Added
+from backend.services.persona_service import PersonaService # Added
+from backend.services.project_manager import ProjectManager, MilestoneType, ProjectStatus # Added
 from root.backend.services.cost_aggregator import CostAggregator
 
 # Configure logging
@@ -361,6 +368,7 @@ async def generate_outline(
             length_preference=length_preference, # Pass length preference
             custom_length=custom_length, # Pass custom length
             writing_style=writing_style, # Pass writing style
+            persona=persona_style, # Pass persona selection
             cost_aggregator=cost_aggregator,
             project_id=job_id
         )
@@ -1640,7 +1648,9 @@ async def compile_draft(
                 "compiled_at": datetime.now().isoformat(),
                 "sections_count": num_outline_sections,
                 "word_count": len(final_draft.split()),
-                "outline_hash": job_state.get("outline_hash")
+                "outline_hash": job_state.get("outline_hash"),
+                # Include individual sections for resume/navigation
+                "sections": job_state.get("generated_sections", {})
             }
             milestone_metadata = {
                 "cost_summary": job_state.get("cost_summary"),
@@ -1686,9 +1696,11 @@ async def compile_draft(
 async def refine_blog(
     project_name: str,
     job_id: str = Form(...),
-    compiled_draft: str = Form(...)
+    compiled_draft: str = Form(...),
+    title_config: Optional[str] = Form(None),  # JSON string for title configuration
+    social_config: Optional[str] = Form(None)  # JSON string for social media configuration
 ) -> JSONResponse:
-    """Refine a compiled blog draft using the BlogRefinementAgent."""
+    """Refine a compiled blog draft using the BlogRefinementAgent with optional configuration."""
     try:
         # Retrieve job state and refresh cache TTL
         job_state = refresh_job_cache(job_id)
@@ -1740,12 +1752,34 @@ async def refine_blog(
         if job_state.get("project_id"):
             cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
 
-        # Run refinement
+        # Parse configuration if provided
+        title_generation_config = None
+        social_media_config = None
+
+        if title_config:
+            try:
+                title_config_dict = json.loads(title_config)
+                title_generation_config = TitleGenerationConfig(**title_config_dict)
+                logger.info(f"Using custom title config: {title_generation_config.num_titles} titles")
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.warning(f"Failed to parse title config: {e}")
+
+        if social_config:
+            try:
+                social_config_dict = json.loads(social_config)
+                social_media_config = SocialMediaConfig(**social_config_dict)
+                logger.info(f"Using custom social media config")
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.warning(f"Failed to parse social config: {e}")
+
+        # Run refinement with configuration
         logger.info(f"Refining blog draft for job_id: {job_id}")
         refinement_result = await refinement_agent.refine_blog_with_graph(
             blog_draft=compiled_draft,
             cost_aggregator=cost_aggregator,
-            project_id=job_state.get("project_id", job_id)
+            project_id=job_state.get("project_id", job_id),
+            title_config=title_generation_config,
+            social_config=social_media_config
         )
 
         if not refinement_result:
@@ -2355,13 +2389,18 @@ async def resume_project(project_id: str) -> JSONResponse:
         outline_milestone = project_manager.load_milestone(project_id, MilestoneType.OUTLINE_GENERATED)
         if outline_milestone:
             outline_data = outline_milestone.get("data", {})
-            job_state["outline"] = outline_data  # The outline data is directly in the data field
-            job_state["outline_hash"] = outline_milestone.get("metadata", {}).get("outline_hash")
+            # Extract the actual outline object (not the wrapper)
+            job_state["outline"] = outline_data.get("outline")
+            # Get outline_hash from data, not metadata
+            job_state["outline_hash"] = outline_data.get("outline_hash")
         
         # Load draft if available
         draft_milestone = project_manager.load_milestone(project_id, MilestoneType.DRAFT_COMPLETED)
         if draft_milestone:
-            job_state["final_draft"] = draft_milestone.get("data", {}).get("compiled_blog")
+            draft_data = draft_milestone.get("data", {})
+            job_state["final_draft"] = draft_data.get("compiled_blog")
+            # Restore individual section drafts for UI navigation
+            job_state["generated_sections"] = draft_data.get("sections", {})
         
         # Load refined blog if available
         refined_milestone = project_manager.load_milestone(project_id, MilestoneType.BLOG_REFINED)
@@ -2610,3 +2649,28 @@ async def get_available_models():
             content={"error": f"Failed to get model configurations: {str(e)}"},
             status_code=500
         )
+
+# Include v2 API routes
+import sys
+from pathlib import Path
+
+# Add project root to path for absolute imports
+project_root = Path(__file__).parent.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+    logger.info(f"Added to Python path for v2 API: {project_root}")
+
+try:
+    # Import v2 API router using absolute import
+    from backend.api_v2 import router as api_v2_router
+    app.include_router(api_v2_router)
+    logger.info(f"API v2 routes loaded successfully! Routes: {len(api_v2_router.routes)}")
+    logger.info(f"V2 API prefix: {api_v2_router.prefix}")
+except Exception as e:
+    logger.error(f"CRITICAL: Could not load API v2 routes: {e}")
+    logger.error(f"Python path: {sys.path[:3]}")
+    logger.error(f"Current dir: {Path.cwd()}")
+    logger.error(f"API v2 file exists: {Path(__file__).parent / 'api_v2.py'} - {(Path(__file__).parent / 'api_v2.py').exists()}")
+    import traceback
+    traceback.print_exc()
+    # Continue without v2 routes for backward compatibility

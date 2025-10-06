@@ -48,7 +48,21 @@ class DraftSection(BaseModel):
     code_examples: List[CodeExample] = Field(default_factory=list)
     key_concepts: List[str] = Field(default_factory=list)
     technical_terms: List[str] = Field(default_factory=list)
+
+    # ENHANCED: Comprehensive quality metrics
     quality_metrics: Dict[str, float] = Field(default_factory=dict)  # e.g., {"clarity": 0.8, "technical_depth": 0.7}
+
+    # NEW: Detailed scoring breakdowns
+    content_quality_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    persona_compliance_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    structural_compliance_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+    # NEW: Issue tracking
+    content_issues: List[str] = Field(default_factory=list)
+    persona_violations: List[str] = Field(default_factory=list)
+    structural_violations: List[str] = Field(default_factory=list)
+
+    # Existing image placeholders field
     image_placeholders: List[ImagePlaceholder] = Field(default_factory=list, description="Suggested image placeholders for visual enhancement")
 
 class ContentReference(BaseModel):
@@ -83,7 +97,19 @@ class BlogDraftState(CostTrackingMixin, BaseModel):
     generation_stage: str = "planning"  # "planning", "drafting", "enhancing", "finalizing"
     iteration_count: int = 0
     max_iterations: int = 3
-    quality_threshold: float = 0.8 # Added quality threshold
+    quality_threshold: float = 0.8  # Added quality threshold
+
+    # NEW: Quality dimension weights
+    quality_weights: Dict[str, float] = Field(
+        default_factory=lambda: {
+            'content': 0.4,    # 40% weight on content quality
+            'persona': 0.3,    # 30% weight on persona compliance
+            'structure': 0.3   # 30% weight on structural compliance
+        }
+    )
+
+    # NEW: Post type for structural rules
+    post_type: str = Field(default="default", description="Type of blog post for structural rules")
 
     # Reference mapping
     content_mapping: Dict[str, List[ContentReference]] = Field(default_factory=dict)  # Maps sections to relevant content (Original RAG)

@@ -69,6 +69,7 @@ class OutlineState(CostTrackingMixin, BaseModel):
     length_preference: Optional[str] = Field(default=None, description="User's preferred blog length category")
     custom_length: Optional[int] = Field(default=None, description="Custom target word count if specified")
     writing_style: Optional[str] = Field(default=None, description="User's preferred writing style")
+    persona: str = Field(default="neuraforge", description="Selected persona for content generation")
 
     # Intermediate states
     analysis_result: Optional[ContentAnalysis] = None

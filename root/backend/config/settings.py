@@ -71,7 +71,7 @@ class Settings:
 
     def _load_settings(self):
         # --- Embedding Provider Selection ---
-        self.embedding_provider = os.getenv('EMBEDDING_PROVIDER', 'azure').lower() # Default to azure
+        self.embedding_provider = os.getenv('EMBEDDING_PROVIDER', 'sentence_transformer').lower() # Default to sentence_transformer
 
         # --- LLM Provider Settings ---
         # OpenAI settings

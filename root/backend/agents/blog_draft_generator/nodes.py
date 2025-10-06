@@ -952,12 +952,7 @@ async def image_placeholder_generator(state: BlogDraftState) -> BlogDraftState:
     
     # Extract main concepts from learning goals and content
     main_concepts = learning_goals[:3]  # Use first 3 learning goals as main concepts
-    
-    # Only generate image placeholders for substantial content
-    if content_length < 200:
-        logging.info(f"Section '{section_title}' is too short ({content_length} words) for image placeholders.")
-        return state
-    
+
     try:
         # Prepare input variables for the prompt
         input_variables = {
@@ -1007,32 +1002,62 @@ async def image_placeholder_generator(state: BlogDraftState) -> BlogDraftState:
 @track_node_costs("validator", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 @track_iteration_costs
 async def quality_validator(state: BlogDraftState) -> BlogDraftState:
-    """Validates the quality of the current section."""
+    """Validates the quality of the current section with comprehensive scoring."""
     logging.info("Executing node: quality_validator")
     print(f"Quality validator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
     logging.info(f"Quality validator - Current section index: {state.current_section_index}, Section: {state.current_section.title if state.current_section else 'None'}")
-    
+
     # Update generation stage
     state.generation_stage = "validating"
-    
+
     if state.current_section is None:
         logging.warning("No current section to validate.")
         return state
-    
+
     section_title = state.current_section.title
-    section_index = state.current_section_index  # Use current index directly (0-based)
+    section_index = state.current_section_index
     learning_goals = state.outline.sections[section_index].learning_goals
     section_content = state.current_section.content
-    
-    # Prepare input variables for the prompt
-    input_variables = {
-        "section_title": section_title,
-        "learning_goals": ", ".join(learning_goals),
-        "section_content": section_content
-    }
-    
-    # Format prompt and get LLM response
-    prompt = PROMPT_CONFIGS["quality_validation"]["prompt"].format(**input_variables)
+
+    # NEW: Get persona profile and structural rules
+    from root.backend.services.persona_service import PersonaService
+    from root.backend.agents.blog_draft_generator.prompts import get_structural_rules
+    persona_service = PersonaService()
+    persona_name = getattr(state, 'persona', 'neuraforge')
+    persona_profile = persona_service.get_persona_prompt(persona_name)
+
+    # NEW: Get structural rules based on post type
+    post_type = getattr(state, 'post_type', 'default')
+    structural_rules = get_structural_rules(post_type)
+
+    # NEW: Get target length for this section
+    target_length = state.section_length_targets.get(section_title, 400)
+
+    # Check if we should use comprehensive validation (when persona and structural rules are available)
+    use_comprehensive = True  # Always use comprehensive validation for better quality
+
+    if use_comprehensive:
+        # Prepare input variables for the comprehensive prompt
+        input_variables = {
+            "section_title": section_title,
+            "learning_goals": ", ".join(learning_goals),
+            "section_content": section_content,
+            "persona_name": persona_name,
+            "persona_profile": persona_profile,
+            "structural_rules": structural_rules,
+            "target_length": target_length
+        }
+
+        # Use the comprehensive validation prompt
+        prompt = PROMPT_CONFIGS["comprehensive_quality_validation"]["prompt"].format(**input_variables)
+    else:
+        # Fallback to original validation (backward compatibility)
+        input_variables = {
+            "section_title": section_title,
+            "learning_goals": ", ".join(learning_goals),
+            "section_content": section_content
+        }
+        prompt = PROMPT_CONFIGS["quality_validation"]["prompt"].format(**input_variables)
     
     try:
         response = await state.model.ainvoke(prompt)
@@ -1044,85 +1069,104 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
         
         # Parse the response
         parsed_result = parse_json_safely(response, {})
-        logging.info(f"Parsed quality validation result: {parsed_result}")
+        logging.info(f"Parsed quality validation result")
 
-        # --- Robust Quality Metric Handling ---
-        required_metrics = [
-            "completeness", "technical_accuracy", "clarity",
-            "code_quality", "engagement", "structural_consistency", "overall_score"
-        ]
-        quality_metrics = {}
-        parsing_successful = True
+        if use_comprehensive:
+            # Handle comprehensive validation response
+            if not parsed_result:
+                logging.warning(f"Comprehensive validation response was not valid JSON")
+                # Set default low scores for all metrics
+                parsed_result = {
+                    # Content quality metrics
+                    "completeness": 0.0, "technical_accuracy": 0.0, "clarity": 0.0,
+                    "code_quality": 0.0, "engagement": 0.0, "structural_consistency": 0.0,
+                    # Persona compliance metrics
+                    "voice_match": 0.0, "tone_consistency": 0.0,
+                    "audience_alignment": 0.0, "style_adherence": 0.0,
+                    # Structural compliance metrics
+                    "heading_hierarchy": 0.0, "paragraph_flow": 0.0,
+                    "length_compliance": 0.0, "list_usage": 0.0, "no_fragmentation": 0.0,
+                    # Aggregated scores
+                    "content_quality_score": 0.0,
+                    "persona_compliance_score": 0.0,
+                    "structural_compliance_score": 0.0,
+                    "overall_score": 0.0,
+                    "improvement_needed": True,
+                    "content_issues": ["Failed to parse validation response"],
+                    "persona_violations": [],
+                    "structural_violations": [],
+                    "improvement_suggestions": ["Regenerate section"]
+                }
 
-        if not parsed_result:
-            logging.warning(f"Quality validation LLM response for '{section_title}' was not valid JSON or was empty.")
-            parsing_successful = False
+            # Store all metrics
+            state.current_section.quality_metrics = {
+                k: float(v) for k, v in parsed_result.items()
+                if k not in ["improvement_needed", "content_issues",
+                            "persona_violations", "structural_violations",
+                            "improvement_suggestions"]
+            }
+
+            # Store detailed scores
+            state.current_section.content_quality_score = parsed_result.get("content_quality_score", 0.0)
+            state.current_section.persona_compliance_score = parsed_result.get("persona_compliance_score", 0.0)
+            state.current_section.structural_compliance_score = parsed_result.get("structural_compliance_score", 0.0)
+
+            # Store issues
+            state.current_section.content_issues = parsed_result.get("content_issues", [])
+            state.current_section.persona_violations = parsed_result.get("persona_violations", [])
+            state.current_section.structural_violations = parsed_result.get("structural_violations", [])
+
+            # Calculate weighted overall score if not provided
+            if "overall_score" not in parsed_result or parsed_result["overall_score"] == 0.0:
+                weights = state.quality_weights
+                overall = (
+                    weights['content'] * state.current_section.content_quality_score +
+                    weights['persona'] * state.current_section.persona_compliance_score +
+                    weights['structure'] * state.current_section.structural_compliance_score
+                )
+                state.current_section.quality_metrics["overall_score"] = overall
+            else:
+                overall = parsed_result["overall_score"]
+
+            print(f"Comprehensive Scores - Content: {state.current_section.content_quality_score:.2f}, "
+                  f"Persona: {state.current_section.persona_compliance_score:.2f}, "
+                  f"Structure: {state.current_section.structural_compliance_score:.2f}, "
+                  f"Overall: {overall:.2f}")
+
         else:
-            for metric in required_metrics:
-                if metric not in parsed_result or not isinstance(parsed_result[metric], (float, int)):
-                    logging.warning(f"Metric '{metric}' missing or invalid type in quality validation response for '{section_title}'. Response: {response}")
-                    # Assign a default low score if missing/invalid to trigger feedback
-                    quality_metrics[metric] = 0.0
-                    # We might consider parsing_successful = False here too, depending on strictness
-                else:
-                    quality_metrics[metric] = float(parsed_result[metric])
+            # Original validation handling (backward compatibility)
+            required_metrics = [
+                "completeness", "technical_accuracy", "clarity",
+                "code_quality", "engagement", "structural_consistency", "overall_score"
+            ]
+            quality_metrics = {}
+            parsing_successful = True
 
-        # If parsing failed completely, assign all defaults
-        if not parsing_successful:
-             quality_metrics = {metric: 0.0 for metric in required_metrics}
-             logging.info(f"Assigned default low scores for '{section_title}' due to parsing failure.")
+            if not parsed_result:
+                logging.warning(f"Quality validation LLM response for '{section_title}' was not valid JSON or was empty.")
+                parsing_successful = False
+            else:
+                for metric in required_metrics:
+                    if metric not in parsed_result or not isinstance(parsed_result[metric], (float, int)):
+                        logging.warning(f"Metric '{metric}' missing or invalid type in quality validation response for '{section_title}'")
+                        quality_metrics[metric] = 0.0
+                    else:
+                        quality_metrics[metric] = float(parsed_result[metric])
 
-        # Store quality metrics
-        state.current_section.quality_metrics = quality_metrics
-        # --- End of Robust Handling ---
+            # If parsing failed completely, assign all defaults
+            if not parsing_successful:
+                quality_metrics = {metric: 0.0 for metric in required_metrics}
+                logging.info(f"Assigned default low scores for '{section_title}' due to parsing failure.")
 
-        # Calculate overall score if it wasn't correctly parsed or provided (as a fallback)
-        # Note: The robust handling above already assigns 0.0 if 'overall_score' is missing/invalid
-        if "overall_score" not in quality_metrics or quality_metrics["overall_score"] == 0.0 and parsing_successful and any(quality_metrics[m] > 0.0 for m in quality_metrics if m != "overall_score"):
-            logging.warning(f"Recalculating overall_score for '{section_title}' as it was missing or potentially invalid.")
-            metrics = quality_metrics
-            valid_scores = [metrics[m] for m in required_metrics if m != "overall_score" and m in metrics]
-            overall = sum(valid_scores) / len(valid_scores) if valid_scores else 0.0
-            state.current_section.quality_metrics["overall_score"] = overall
-            print(f"Recalculated overall score: {overall}")
+            # Store quality metrics
+            state.current_section.quality_metrics = quality_metrics
+            overall = quality_metrics.get("overall_score", 0.0)
 
         # Determine if improvement is needed based on overall score
-        # Use the potentially updated overall_score
-        overall_score = state.current_section.quality_metrics.get("overall_score", 0.0)
-        # Lowered threshold slightly as semantic matching might be stricter
-        quality_threshold = state.quality_threshold # Use threshold from state
+        overall_score = state.current_section.quality_metrics.get("overall_score", overall)
+        quality_threshold = state.quality_threshold
         improvement_needed = overall_score < quality_threshold
         print(f"Overall score: {overall_score:.2f}, Quality Threshold: {quality_threshold}, Improvement needed: {improvement_needed}")
-
-        # --- The following block seems duplicated/incorrectly placed after the previous edit ---
-        # --- Removing it to fix syntax errors ---
-        # "completeness": result.get("completeness", 0.0),
-        # "technical_accuracy": result.get("technical_accuracy", 0.0),
-        # "clarity": result.get("clarity", 0.0),
-        # "code_quality": result.get("code_quality", 0.0),
-        # "engagement": result.get("engagement", 0.0),
-        # "structural_consistency": result.get("structural_consistency", 0.0),
-        # "overall_score": result.get("overall_score", 0.0)
-        # }
-        
-        # Calculate overall score if not provided (This logic is already handled above)
-        if "overall_score" not in state.current_section.quality_metrics:
-            metrics = state.current_section.quality_metrics
-            overall = sum([
-                metrics.get("completeness", 0.0),
-                metrics.get("technical_accuracy", 0.0),
-                metrics.get("clarity", 0.0),
-                metrics.get("code_quality", 0.0),
-                metrics.get("engagement", 0.0),
-                metrics.get("structural_consistency", 0.0)
-            ]) / 6.0
-            # state.current_section.quality_metrics["overall_score"] = overall # Already handled
-            # print(f"Calculated overall score: {overall}") # Already handled
-
-        # Determine if improvement is needed based on overall score (This logic is already handled above)
-        # overall_score = state.current_section.quality_metrics.get("overall_score", 0.0) # Already handled
-        # improvement_needed = overall_score < 0.85  # Set a threshold for quality # Already handled
-        # print(f"Overall score: {overall_score}, Improvement needed: {improvement_needed}") # Already handled
 
         # Increment iteration count
         state.iteration_count += 1
@@ -1148,48 +1192,99 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
 
 @track_node_costs("auto_feedback", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
-    """Generates automatic feedback for the current section."""
+    """Generates automatic feedback based on comprehensive quality metrics."""
     logging.info("Executing node: auto_feedback_generator")
     print(f"Auto feedback generator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
-    
+
     if state.current_section is None:
         logging.warning("No current section to generate feedback for.")
         print("No current section to generate feedback for.")
         return state
-    
-    # Get quality metrics if available
-    quality_metrics = getattr(state.current_section, "quality_metrics", {})
-    print(f"Quality metrics: {quality_metrics}")
-    
-    # Generate specific feedback based on quality metrics
+
     feedback_points = []
-    
-    if quality_metrics.get("completeness", 1.0) < 0.8:
-        feedback_points.append("Ensure all learning goals are thoroughly covered.")
-    
-    if quality_metrics.get("technical_accuracy", 1.0) < 0.8:
-        feedback_points.append("Verify technical accuracy and provide more precise explanations.")
-    
-    if quality_metrics.get("clarity", 1.0) < 0.8:
-        feedback_points.append("Improve clarity by breaking down complex concepts.")
-    
-    if quality_metrics.get("code_quality", 1.0) < 0.8:
-        feedback_points.append("Enhance code examples with better comments and explanations.")
-    
-    if quality_metrics.get("engagement", 1.0) < 0.8:
-        feedback_points.append("Make the content more engaging with real-world applications.")
-    
-    if quality_metrics.get("structural_consistency", 1.0) < 0.8:
-        feedback_points.append("Better align the content with the original document's structure and organization.")
-    
+
+    # Content quality feedback (using issues if available)
+    if hasattr(state.current_section, 'content_issues') and state.current_section.content_issues:
+        for issue in state.current_section.content_issues[:3]:  # Top 3 content issues
+            feedback_points.append(f"Content: {issue}")
+    else:
+        # Fallback to metrics-based feedback
+        quality_metrics = getattr(state.current_section, "quality_metrics", {})
+
+        if quality_metrics.get("completeness", 1.0) < 0.8:
+            feedback_points.append("Content: Ensure all learning goals are thoroughly covered")
+
+        if quality_metrics.get("technical_accuracy", 1.0) < 0.8:
+            feedback_points.append("Content: Verify technical accuracy and provide more precise explanations")
+
+        if quality_metrics.get("clarity", 1.0) < 0.8:
+            feedback_points.append("Content: Improve clarity by breaking down complex concepts")
+
+        if quality_metrics.get("code_quality", 1.0) < 0.8:
+            feedback_points.append("Content: Enhance code examples with better comments and explanations")
+
+        if quality_metrics.get("engagement", 1.0) < 0.8:
+            feedback_points.append("Content: Make the content more engaging with real-world applications")
+
+    # Persona compliance feedback
+    if hasattr(state.current_section, 'persona_compliance_score') and state.current_section.persona_compliance_score:
+        if state.current_section.persona_compliance_score < 0.75:
+            if hasattr(state.current_section, 'persona_violations') and state.current_section.persona_violations:
+                for violation in state.current_section.persona_violations[:2]:  # Top 2 persona violations
+                    feedback_points.append(f"Persona: {violation}")
+            else:
+                persona_name = getattr(state, 'persona', 'the selected')
+                feedback_points.append(f"Persona: Better align content with {persona_name} persona voice and style")
+
+                # Specific persona metrics feedback
+                quality_metrics = getattr(state.current_section, "quality_metrics", {})
+                if quality_metrics.get("voice_match", 1.0) < 0.7:
+                    feedback_points.append(f"Persona: Adjust voice to match {persona_name} persona's distinctive style")
+
+                if quality_metrics.get("tone_consistency", 1.0) < 0.7:
+                    feedback_points.append(f"Persona: Maintain consistent {persona_name} tone throughout the section")
+
+                if quality_metrics.get("audience_alignment", 1.0) < 0.7:
+                    feedback_points.append(f"Persona: Better target {persona_name}'s intended audience")
+
+    # Structural compliance feedback
+    if hasattr(state.current_section, 'structural_compliance_score') and state.current_section.structural_compliance_score:
+        if state.current_section.structural_compliance_score < 0.8:
+            if hasattr(state.current_section, 'structural_violations') and state.current_section.structural_violations:
+                for violation in state.current_section.structural_violations[:3]:  # Top 3 structural violations
+                    feedback_points.append(f"Structure: {violation}")
+            else:
+                # Specific structural metrics feedback
+                quality_metrics = getattr(state.current_section, "quality_metrics", {})
+
+                if quality_metrics.get("paragraph_flow", 1.0) < 0.7:
+                    feedback_points.append("Structure: Add 2-3 substantial paragraphs before introducing headings")
+
+                if quality_metrics.get("heading_hierarchy", 1.0) < 0.8:
+                    feedback_points.append("Structure: Fix heading hierarchy - use only H2 and H3 levels")
+
+                if quality_metrics.get("no_fragmentation", 1.0) < 0.7:
+                    feedback_points.append("Structure: Avoid fragmenting content - combine related short sections")
+
+                if quality_metrics.get("list_usage", 1.0) < 0.7:
+                    feedback_points.append("Structure: Use bullet/numbered lists for groups of 3+ related items")
+
+                if quality_metrics.get("length_compliance", 1.0) < 0.7:
+                    target = state.section_length_targets.get(state.current_section.title, 400)
+                    current = len(state.current_section.content.split())
+                    if current < target * 0.8:
+                        feedback_points.append(f"Structure: Expand content to reach target length (~{target} words, current: {current})")
+                    elif current > target * 1.2:
+                        feedback_points.append(f"Structure: Condense content to target length (~{target} words, current: {current})")
+
     # If no specific issues, provide general enhancement feedback
     if not feedback_points:
-        feedback_points = ["Add more technical depth and practical examples."]
-    
-    # Set the feedback
-    feedback = "Automatic feedback:\n- " + "\n- ".join(feedback_points)
-    print(f"Generated feedback: {feedback}")
-    
+        feedback_points = ["Consider adding more examples or deeper technical explanations to enhance the content"]
+
+    # Format feedback with categories
+    feedback = "Comprehensive feedback:\n• " + "\n• ".join(feedback_points)
+    print(f"Generated comprehensive feedback with {len(feedback_points)} points")
+
     # Add feedback to the section
     state.current_section.feedback.append(SectionFeedback(
         content=feedback,
@@ -1197,7 +1292,7 @@ async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
         timestamp=datetime.now().isoformat(),
         addressed=False
     ))
-    print(f"Added feedback to section '{state.current_section.title}'")
+    print(f"Added comprehensive feedback to section '{state.current_section.title}'")
     
     return state
 

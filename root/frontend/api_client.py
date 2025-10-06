@@ -335,6 +335,8 @@ async def refine_blog(
     project_name: str,
     job_id: str,
     compiled_draft: str,  # Added compiled_draft parameter
+    title_config: Optional[str] = None,  # JSON string for title configuration
+    social_config: Optional[str] = None,  # JSON string for social media configuration
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -344,6 +346,8 @@ async def refine_blog(
         project_name: The name of the project.
         job_id: The ID of the job.
         compiled_draft: The full compiled blog draft content as a string.
+        title_config: Optional JSON string for title generation configuration.
+        social_config: Optional JSON string for social media generation configuration.
         base_url: The base URL of the API.
 
     Returns:
@@ -354,6 +358,12 @@ async def refine_blog(
         "job_id": job_id,
         "compiled_draft": compiled_draft  # Include compiled_draft in the payload
     }
+
+    # Add optional configuration parameters
+    if title_config:
+        data["title_config"] = title_config
+    if social_config:
+        data["social_config"] = social_config
 
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
         try:
@@ -370,6 +380,8 @@ async def refine_standalone(
     compiled_draft: str,
     model_name: str = "gemini",
     specific_model: Optional[str] = None,
+    title_config: Optional[str] = None,  # JSON string for title configuration
+    social_config: Optional[str] = None,  # JSON string for social media configuration
     base_url: str = DEFAULT_API_BASE_URL
 ) -> Dict[str, Any]:
     """
@@ -379,6 +391,9 @@ async def refine_standalone(
         project_name: The name of the project.
         compiled_draft: The compiled blog draft content.
         model_name: The model to use for refinement (default: "gemini").
+        specific_model: The specific model ID to use (optional).
+        title_config: Optional JSON string for title generation configuration.
+        social_config: Optional JSON string for social media generation configuration.
         base_url: The base URL of the API.
 
     Returns:
@@ -390,6 +405,12 @@ async def refine_standalone(
         "model_name": model_name,
         "specific_model": specific_model or ""
     }
+
+    # Add optional configuration parameters
+    if title_config:
+        data["title_config"] = title_config
+    if social_config:
+        data["social_config"] = social_config
 
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
         try:

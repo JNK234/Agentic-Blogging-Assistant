@@ -22,7 +22,7 @@ from root.backend.agents.base_agent import BaseGraphAgent
 from root.backend.services.vector_store_service import VectorStoreService
 from root.backend.services.persona_service import PersonaService
 from root.backend.utils.serialization import serialize_object, to_json
-from ..parsers import ContentStructure
+from root.backend.parsers.base import ContentStructure
 
 logging.basicConfig(level=logging.INFO)
 
@@ -205,7 +205,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         return cached_outline, cached_outline is not None
         
     async def generate_outline(
-        self, 
+        self,
         project_name: str,
         notebook_path: Optional[str] = None,
         markdown_path: Optional[str] = None,
@@ -215,6 +215,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         length_preference: Optional[str] = None, # Added
         custom_length: Optional[int] = None, # Added
         writing_style: Optional[str] = None, # Added
+        persona: Optional[str] = None, # Added persona parameter
         model=None,  # For backward compatibility
         use_cache: bool = True,  # Whether to use cached outlines
         cost_aggregator=None,
@@ -337,6 +338,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             length_preference=length_preference,
             custom_length=custom_length,
             writing_style=writing_style,
+            persona=persona or "neuraforge",  # Pass persona with default
             project_name=project_name,
             project_id=project_id,
             cost_aggregator=cost_aggregator,

@@ -965,7 +965,11 @@ class OutlineGeneratorUI:
             with col2:
                 persona = SessionManager.get('selected_persona', 'neuraforge')
                 personas = SessionManager.get('available_personas', {})
-                persona_name = personas.get(persona, {}).get('name', persona.title()) if personas else persona.title()
+                # Handle None persona gracefully
+                if persona:
+                    persona_name = personas.get(persona, {}).get('name', persona.title()) if personas else persona.title()
+                else:
+                    persona_name = "Default"
                 st.markdown(f"**Writing Style:** {persona_name}")
 
                 if personas and persona in personas:
@@ -1505,9 +1509,17 @@ class RefinementUI:
 
         st.subheader("Generate Introduction, Conclusion, Summary, Titles & Suggestions") # Updated subheader
 
+        # Import the configuration UI component
+        from components.generation_config_ui import get_generation_configs
+
+        # Add configuration controls
+        title_config_json, social_config_json = get_generation_configs()
+
+        st.divider()
+
         # Resume from saved refined blog option
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
             if st.button("Refine Blog", key="refine_blog_btn"):
                 SessionManager.set_status("Refining blog draft...")
@@ -1526,6 +1538,8 @@ class RefinementUI:
                                 project_name=project_name,
                                 job_id=job_id,
                                 compiled_draft=compiled_draft_content, # Pass the draft content
+                                title_config=title_config_json,  # Pass configuration
+                                social_config=social_config_json,  # Pass configuration
                                 base_url=SessionManager.get('api_base_url')
                             ))
                         else:
@@ -1537,6 +1551,8 @@ class RefinementUI:
                                 compiled_draft=compiled_draft_content,
                                 model_name=selected_model,  # Provider key
                                 specific_model=specific_model,  # Specific model id if available
+                                title_config=title_config_json,  # Pass configuration
+                                social_config=social_config_json,  # Pass configuration
                                 base_url=SessionManager.get('api_base_url')
                             ))
                     # Store the results from the API response

@@ -4,12 +4,13 @@ Pydantic models for the Blog Refinement Agent state.
 """
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
-from root.backend.agents.cost_tracking_state import CostTrackingMixin
+from backend.agents.cost_tracking_state import CostTrackingMixin
+from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
 
 class TitleOption(BaseModel):
     """Represents a single generated title/subtitle option."""
     title: str = Field(..., description="The main title suggestion.")
-    subtitle: str = Field(..., description="The corresponding subtitle suggestion.")
+    subtitle: Optional[str] = Field(None, description="The corresponding subtitle suggestion.")
     reasoning: str = Field(..., description="Brief explanation of why this title/subtitle is suitable (e.g., SEO focus, catchiness).")
 
 class RefinementResult(BaseModel):
@@ -31,6 +32,16 @@ class BlogRefinementState(CostTrackingMixin, BaseModel):
     model: Optional[Any] = Field(default=None, repr=False)
     persona_service: Optional[Any] = Field(default=None, repr=False)
     project_id: Optional[str] = Field(default=None)
+
+    # Configuration fields for generation control
+    title_config: Optional[TitleGenerationConfig] = Field(
+        default=None,
+        description="Configuration for title and subtitle generation"
+    )
+    social_config: Optional[SocialMediaConfig] = Field(
+        default=None,
+        description="Configuration for social media post generation"
+    )
 
     def __init__(self, **data):
         super().__init__(**data)
