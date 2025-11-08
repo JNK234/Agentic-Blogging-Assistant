@@ -7,9 +7,9 @@ import json
 from typing import Dict, Any, List, Optional
 from pydantic import ValidationError, BaseModel
 
-from root.backend.agents.cost_tracking_decorator import track_node_costs
-from root.backend.agents.blog_refinement.state import BlogRefinementState, TitleOption
-from root.backend.agents.blog_refinement.prompts import (
+from backend.agents.cost_tracking_decorator import track_node_costs
+from backend.agents.blog_refinement.state import BlogRefinementState, TitleOption
+from backend.agents.blog_refinement.prompts import (
     GENERATE_INTRODUCTION_PROMPT,
     GENERATE_CONCLUSION_PROMPT,
     GENERATE_SUMMARY_PROMPT,
@@ -17,13 +17,13 @@ from root.backend.agents.blog_refinement.prompts import (
     SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT, # Import the new prompt
     REDUCE_REDUNDANCY_PROMPT  # Import the redundancy reduction prompt
 )
-from root.backend.agents.blog_refinement.prompt_builder import build_title_generation_prompt
-from root.backend.agents.blog_refinement.validation import (
+from backend.agents.blog_refinement.prompt_builder import build_title_generation_prompt
+from backend.agents.blog_refinement.validation import (
     validate_title_generation,
     create_correction_prompt
 )
-from root.backend.models.generation_config import TitleGenerationConfig
-from root.backend.services.sql_project_manager import MilestoneType
+from backend.models.generation_config import TitleGenerationConfig
+from backend.services.sql_project_manager import MilestoneType
 
 logger = logging.getLogger(__name__)
 

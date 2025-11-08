@@ -2,7 +2,7 @@
 # ABOUTME: Provides compliance checking with retry feedback generation
 
 from typing import List, Dict, Any, Optional
-from root.backend.models.generation_config import (
+from backend.models.generation_config import (
     TitleGenerationConfig,
     SocialMediaConfig,
     GenerationValidationResult

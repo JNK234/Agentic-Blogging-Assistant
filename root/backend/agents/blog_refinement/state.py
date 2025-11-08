@@ -2,8 +2,8 @@
 # ABOUTME: It includes state classes for title generation, SEO optimization, and social media content creation.
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
-from root.backend.agents.cost_tracking_state import CostTrackingMixin
-from root.backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
+from backend.agents.cost_tracking_state import CostTrackingMixin
+from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
 
 class TitleOption(BaseModel):
     """Represents a single generated title/subtitle option."""
