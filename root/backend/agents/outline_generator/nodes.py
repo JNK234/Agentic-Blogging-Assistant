@@ -9,6 +9,7 @@ from root.backend.agents.outline_generator.state import OutlineState
 from root.backend.agents.outline_generator.prompts import PROMPT_CONFIGS
 from root.backend.services.persona_service import PersonaService
 from root.backend.agents.cost_tracking_decorator import track_node_costs
+from backend.services.sql_project_manager import MilestoneType
 
 logging.basicConfig(level=logging.INFO)
 
@@ -408,9 +409,39 @@ async def final_generator(state: OutlineState) -> OutlineState:
         # Store the final outline
         state.final_outline = parsed_outline
         logging.info("Final outline generation completed")
-        
+
+        # NEW: Save milestone to SQL if sql_project_manager is available
+        if hasattr(state, 'sql_project_manager') and state.sql_project_manager and hasattr(state, 'project_id') and state.project_id:
+            try:
+                milestone_data = {
+                    "title": parsed_outline.title if parsed_outline else "",
+                    "difficulty": state.difficulty_level.level if state.difficulty_level else "",
+                    "prerequisites": {
+                        "required_knowledge": state.prerequisites.required_knowledge if state.prerequisites else [],
+                        "recommended_tools": state.prerequisites.recommended_tools if state.prerequisites else [],
+                        "setup_instructions": state.prerequisites.setup_instructions if state.prerequisites else ""
+                    },
+                    "sections": [
+                        {
+                            "title": section.title,
+                            "subsections": section.subsections,
+                            "learning_goals": section.learning_goals,
+                            "estimated_time": section.estimated_time
+                        } for section in (parsed_outline.sections if parsed_outline else [])
+                    ]
+                }
+                await state.sql_project_manager.save_milestone(
+                    project_id=state.project_id,
+                    milestone_type=MilestoneType.OUTLINE_GENERATED,
+                    data=milestone_data
+                )
+                logging.info(f"Saved OUTLINE_GENERATED milestone for project {state.project_id}")
+            except Exception as e:
+                logging.error(f"Failed to save outline milestone: {e}")
+                # Don't fail the workflow for SQL errors
+
     except Exception as e:
         logging.error(f"Error in final_generator: {str(e)}")
         raise
-    
+
     return state

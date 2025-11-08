@@ -17,7 +17,7 @@ sys.path.append('/Users/jnk789/Developer/Agentic Blogging Assistant/Agentic-Blog
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
-from root.backend.main import app, project_manager, state_cache
+from root.backend.main import app, project_manager
 from root.backend.services.project_manager import ProjectManager, ProjectStatus, MilestoneType
 
 

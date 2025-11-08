@@ -32,7 +32,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
     """Agent responsible for generating blog drafts section by section."""
 
     # Updated __init__ to accept vector_store and persona_service
-    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None):
+    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None, sql_project_manager=None):
         super().__init__(
             llm=model,
             tools=[],
@@ -42,6 +42,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         self.content_parser = content_parser
         self.vector_store = vector_store # Store the passed instance
         self.persona_service = persona_service or PersonaService() # Initialize persona service
+        self.sql_project_manager = sql_project_manager  # SQL project manager for persistence
         self._initialized = False
         self.current_state = None
 
@@ -109,7 +110,8 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             remaining_length_budget=intelligent_length,  # Initialize budget
             cost_aggregator=cost_aggregator,
             project_id=project_id,
-            current_stage="draft_generation"
+            current_stage="draft_generation",
+            sql_project_manager=self.sql_project_manager  # Pass SQL manager for persistence
         )
 
         self.current_state = initial_state
@@ -310,7 +312,8 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             cost_aggregator=cost_aggregator,
             project_id=project_id,
             current_stage="draft_generation",
-            persona=persona  # Pass the persona to the state
+            persona=persona,  # Pass the persona to the state
+            sql_project_manager=self.sql_project_manager  # Pass SQL manager for persistence
             # job_id is not part of BlogDraftState, but available via project_name/index
         )
 
@@ -466,7 +469,8 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             quality_threshold=quality_threshold,
             cost_aggregator=cost_aggregator,
             project_id=project_id,
-            current_stage="draft_generation"
+            current_stage="draft_generation",
+            sql_project_manager=self.sql_project_manager  # Pass SQL manager for persistence
         )
         initial_state.user_feedback_provided = True
 

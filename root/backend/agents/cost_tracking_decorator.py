@@ -74,9 +74,16 @@ def track_node_costs(node_name: str, agent_name: str = None, stage: str = None):
                 # Inject tracking context into the model
                 if hasattr(state.model, 'configure_tracking'):
                     context_supplier = getattr(state, 'get_tracking_context', None)
+                    sql_pm = getattr(state, 'sql_project_manager', None)
+                    proj_id = getattr(state, 'project_id', None)
+                    current_agent = getattr(state, 'current_agent_name', agent_name or 'unknown')
+
                     state.model.configure_tracking(
                         cost_aggregator=getattr(state, 'cost_aggregator', None),
-                        context_supplier=context_supplier
+                        context_supplier=context_supplier,
+                        sql_project_manager=sql_pm,
+                        project_id=proj_id,
+                        agent_name=current_agent
                     )
                 else:
                     if hasattr(state.model, 'cost_aggregator'):

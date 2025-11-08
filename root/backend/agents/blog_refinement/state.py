@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
-"""
-Pydantic models for the Blog Refinement Agent state.
-"""
+# ABOUTME: This file defines the state management models for the blog refinement agent.
+# ABOUTME: It includes state classes for title generation, SEO optimization, and social media content creation.
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
-from backend.agents.cost_tracking_state import CostTrackingMixin
-from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
+from root.backend.agents.cost_tracking_state import CostTrackingMixin
+from root.backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
 
 class TitleOption(BaseModel):
     """Represents a single generated title/subtitle option."""
@@ -42,6 +40,9 @@ class BlogRefinementState(CostTrackingMixin, BaseModel):
         default=None,
         description="Configuration for social media post generation"
     )
+
+    # SQL persistence (optional)
+    sql_project_manager: Optional[Any] = Field(default=None, description="SQL project manager for milestone persistence")
 
     def __init__(self, **data):
         super().__init__(**data)

@@ -27,7 +27,7 @@ from root.backend.parsers.base import ContentStructure
 logging.basicConfig(level=logging.INFO)
 
 class OutlineGeneratorAgent(BaseGraphAgent):
-    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None): # Added persona_service parameter
+    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None, sql_project_manager=None): # Added sql_project_manager parameter
         super().__init__(
             llm=model,
             tools=[],  # Add any needed tools
@@ -38,6 +38,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         self.content_parser = content_parser  # Use the passed content parser
         self.vector_store = vector_store  # Use the passed vector_store instance
         self.persona_service = persona_service or PersonaService() # Initialize persona service
+        self.sql_project_manager = sql_project_manager  # SQL project manager for persistence
         self._initialized = False
         
     async def initialize(self):
@@ -342,7 +343,8 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             project_name=project_name,
             project_id=project_id,
             cost_aggregator=cost_aggregator,
-            current_stage="outline_generation"
+            current_stage="outline_generation",
+            sql_project_manager=self.sql_project_manager  # Pass SQL manager for persistence
         )
 
         # Execute graph

@@ -7,9 +7,9 @@ import json
 from typing import Dict, Any, List, Optional
 from pydantic import ValidationError, BaseModel
 
-from backend.agents.cost_tracking_decorator import track_node_costs
-from backend.agents.blog_refinement.state import BlogRefinementState, TitleOption
-from backend.agents.blog_refinement.prompts import (
+from root.backend.agents.cost_tracking_decorator import track_node_costs
+from root.backend.agents.blog_refinement.state import BlogRefinementState, TitleOption
+from root.backend.agents.blog_refinement.prompts import (
     GENERATE_INTRODUCTION_PROMPT,
     GENERATE_CONCLUSION_PROMPT,
     GENERATE_SUMMARY_PROMPT,
@@ -17,12 +17,13 @@ from backend.agents.blog_refinement.prompts import (
     SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT, # Import the new prompt
     REDUCE_REDUNDANCY_PROMPT  # Import the redundancy reduction prompt
 )
-from backend.agents.blog_refinement.prompt_builder import build_title_generation_prompt
-from backend.agents.blog_refinement.validation import (
+from root.backend.agents.blog_refinement.prompt_builder import build_title_generation_prompt
+from root.backend.agents.blog_refinement.validation import (
     validate_title_generation,
     create_correction_prompt
 )
-from backend.models.generation_config import TitleGenerationConfig
+from root.backend.models.generation_config import TitleGenerationConfig
+from root.backend.services.sql_project_manager import MilestoneType
 
 logger = logging.getLogger(__name__)
 
@@ -339,8 +340,36 @@ async def suggest_clarity_flow_node(state: BlogRefinementState) -> Dict[str, Any
         response = await state.model.ainvoke(prompt)
         if isinstance(response, str) and response.strip():
             logger.info("Clarity/flow suggestions generated successfully.")
+            clarity_suggestions = response.strip()
+
+            # NEW: Save BLOG_REFINED milestone to SQL if sql_project_manager is available
+            if hasattr(state, 'sql_project_manager') and state.sql_project_manager and hasattr(state, 'project_id') and state.project_id:
+                try:
+                    milestone_data = {
+                        "refined_draft": state.refined_draft or "",
+                        "summary": state.summary or "",
+                        "title_options": [
+                            {
+                                "title": opt.title if hasattr(opt, 'title') else opt.get('title', ''),
+                                "subtitle": opt.subtitle if hasattr(opt, 'subtitle') else opt.get('subtitle', ''),
+                                "reasoning": opt.reasoning if hasattr(opt, 'reasoning') else opt.get('reasoning', '')
+                            } for opt in (state.title_options or [])
+                        ],
+                        "clarity_flow_suggestions": clarity_suggestions,
+                        "iteration_count": getattr(state, 'iteration_count', 0)
+                    }
+                    await state.sql_project_manager.save_milestone(
+                        project_id=state.project_id,
+                        milestone_type=MilestoneType.BLOG_REFINED,
+                        data=milestone_data
+                    )
+                    logger.info(f"Saved BLOG_REFINED milestone for project {state.project_id}")
+                except Exception as e:
+                    logger.error(f"Failed to save refinement milestone: {e}")
+                    # Don't fail the workflow for SQL errors
+
             # Store the suggestions as a single string (bulleted list)
-            return {"clarity_flow_suggestions": response.strip()}
+            return {"clarity_flow_suggestions": clarity_suggestions}
         else:
             logger.warning(f"Clarity/flow suggestion generation returned empty/invalid response: {response}")
             # Decide if this is an error or just means no suggestions

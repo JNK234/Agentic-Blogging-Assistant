@@ -5,10 +5,11 @@ based on a finalized blog draft.
 """
 import logging
 import re
-from typing import List
+from typing import List, Optional
 from root.backend.prompts.social_media.templates import SOCIAL_MEDIA_GENERATION_PROMPT, TWITTER_THREAD_GENERATION_PROMPT
 from root.backend.services.persona_service import PersonaService
 from root.backend.models.social_media import TwitterThread, Tweet, SocialMediaContent
+from backend.services.sql_project_manager import MilestoneType
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,16 +20,18 @@ class SocialMediaAgent:
     from a given blog post markdown content.
     """
 
-    def __init__(self, model, persona_service=None):
+    def __init__(self, model, persona_service=None, sql_project_manager=None):
         """
         Initializes the SocialMediaAgent.
 
         Args:
             model: An initialized language model instance (e.g., from ModelFactory).
             persona_service: Optional PersonaService instance for voice consistency.
+            sql_project_manager: Optional SQL project manager for milestone persistence.
         """
         self.llm = model
         self.persona_service = persona_service or PersonaService()
+        self.sql_project_manager = sql_project_manager  # SQL project manager for persistence
         self._initialized = False
         logger.info("SocialMediaAgent initialized.")
 
@@ -388,15 +391,16 @@ class SocialMediaAgent:
         
         return parsed_data
 
-    async def generate_comprehensive_content(self, blog_content: str, blog_title: str = "Blog Post", persona: str = "student_sharing") -> SocialMediaContent | None:
+    async def generate_comprehensive_content(self, blog_content: str, blog_title: str = "Blog Post", persona: str = "student_sharing", project_id: Optional[str] = None) -> SocialMediaContent | None:
         """
         Generates comprehensive social media content including all formats.
-        
+
         Args:
             blog_content: The full markdown content of the blog post.
             blog_title: The title of the blog post.
             persona: The persona to use for content generation.
-            
+            project_id: Optional project ID for SQL persistence.
+
         Returns:
             SocialMediaContent object with all content types or None if generation fails.
         """
@@ -406,25 +410,25 @@ class SocialMediaAgent:
         if not blog_content:
             logger.error("Blog content cannot be empty.")
             return None
-            
+
         logger.info(f"Generating comprehensive social content for blog titled: {blog_title}")
-        
+
         try:
             # Get persona instructions
             persona_instructions = self.persona_service.get_persona_prompt(persona)
-            
+
             # Format the comprehensive prompt
             formatted_prompt = SOCIAL_MEDIA_GENERATION_PROMPT.format(
                 persona_instructions=persona_instructions,
                 blog_content=blog_content,
                 blog_title=blog_title
             )
-            
+
             # Invoke the language model
             logger.info("Invoking LLM for comprehensive social content generation...")
             response = await self.llm.ainvoke(formatted_prompt)
             logger.info("LLM invocation complete.")
-            
+
             # Extract content from response
             response_text = ""
             if hasattr(response, 'content'):
@@ -434,19 +438,19 @@ class SocialMediaAgent:
             else:
                 logger.warning(f"Unexpected LLM response type: {type(response)}")
                 response_text = str(response)
-            
+
             if not response_text:
                 logger.error("LLM returned an empty response.")
                 return None
-            
+
             # Parse the comprehensive response
             parsed_data = self._parse_comprehensive_response(response_text)
-            
+
             # Check if we got at least some content
             if not any(parsed_data.values()):
                 logger.error("Failed to parse any content from LLM response.")
                 return None
-            
+
             # Parse thread content if available
             twitter_thread = None
             if parsed_data["x_thread"]:
@@ -459,7 +463,7 @@ class SocialMediaAgent:
                 except ValueError as ve:
                     logger.warning(f"Failed to parse thread content: {ve}")
                     # Continue without thread rather than failing completely
-            
+
             # Create comprehensive content object
             social_content = SocialMediaContent(
                 content_breakdown=parsed_data["content_breakdown"],
@@ -468,10 +472,38 @@ class SocialMediaAgent:
                 x_thread=twitter_thread,
                 newsletter_content=parsed_data["newsletter_content"]
             )
-            
+
+            # NEW: Save SOCIAL_GENERATED milestone to SQL if sql_project_manager is available
+            if self.sql_project_manager and project_id:
+                try:
+                    milestone_data = {
+                        "content_breakdown": parsed_data["content_breakdown"] or "",
+                        "linkedin_post": parsed_data["linkedin_post"] or "",
+                        "x_post": parsed_data["x_post"] or "",
+                        "x_thread": {
+                            "total_tweets": twitter_thread.total_tweets if twitter_thread else 0,
+                            "hook_tweet": twitter_thread.hook_tweet if twitter_thread else "",
+                            "conclusion_tweet": twitter_thread.conclusion_tweet if twitter_thread else "",
+                            "thread_topic": twitter_thread.thread_topic if twitter_thread else "",
+                            "learning_journey": twitter_thread.learning_journey if twitter_thread else ""
+                        } if twitter_thread else None,
+                        "newsletter_content": parsed_data["newsletter_content"] or "",
+                        "blog_title": blog_title,
+                        "persona": persona
+                    }
+                    await self.sql_project_manager.save_milestone(
+                        project_id=project_id,
+                        milestone_type=MilestoneType.SOCIAL_GENERATED,
+                        data=milestone_data
+                    )
+                    logger.info(f"Saved SOCIAL_GENERATED milestone for project {project_id}")
+                except Exception as e:
+                    logger.error(f"Failed to save social media milestone: {e}")
+                    # Don't fail the workflow for SQL errors
+
             logger.info(f"Successfully generated comprehensive social content with thread: {bool(twitter_thread)}")
             return social_content
-            
+
         except Exception as e:
             logger.exception(f"Error during comprehensive social content generation: {e}")
             return None

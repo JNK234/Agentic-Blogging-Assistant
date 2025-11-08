@@ -2,7 +2,7 @@
 # ABOUTME: Constructs prompts based on TitleGenerationConfig and SocialMediaConfig
 
 from typing import Optional
-from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
+from root.backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig
 import logging
 
 logger = logging.getLogger(__name__)

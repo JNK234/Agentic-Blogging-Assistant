@@ -1,5 +1,5 @@
 # ABOUTME: Wrapper for LLM models that automatically tracks token usage and costs
-# ABOUTME: Works with all model providers and integrates with LangGraph state
+# ABOUTME: Works with all model providers, integrates with LangGraph state and SQL tracking
 
 from typing import Any, Dict, Optional, Callable
 from datetime import datetime
@@ -13,12 +13,15 @@ logger = logging.getLogger(__name__)
 class CostTrackingModel:
     """
     Wrapper for any LLM model that tracks token usage and costs.
-    Designed to work seamlessly with LangGraph state management.
+    Designed to work seamlessly with LangGraph state management and SQL persistence.
     """
 
     def __init__(self, base_model: Any, model_name: str,
                  cost_aggregator: Optional = None,
-                 context_supplier: Optional[Callable[[], Dict[str, Any]]] = None):
+                 context_supplier: Optional[Callable[[], Dict[str, Any]]] = None,
+                 sql_project_manager: Optional = None,
+                 project_id: Optional[str] = None,
+                 agent_name: Optional[str] = None):
         """
         Initialize cost-tracking wrapper
 
@@ -26,12 +29,21 @@ class CostTrackingModel:
             base_model: The underlying LLM model (OpenAI, Claude, etc.)
             model_name: Name of the model for pricing lookup
             cost_aggregator: Optional aggregator for collecting costs
+            context_supplier: Optional function to provide tracking context
+            sql_project_manager: Optional SQL project manager for persistent tracking
+            project_id: Project ID for SQL tracking
+            agent_name: Agent name for SQL tracking
         """
         self.base_model = base_model
         self.model_name = self._normalize_model_name(model_name)
         self.token_counter = TokenCounter()
         self.cost_aggregator = cost_aggregator
         self.context_supplier = context_supplier
+
+        # SQL tracking support
+        self.sql_project_manager = sql_project_manager
+        self.project_id = project_id
+        self.agent_name = agent_name
 
         # Track costs for this model instance
         self.session_costs = {
@@ -43,12 +55,21 @@ class CostTrackingModel:
 
     def configure_tracking(self,
                             cost_aggregator: Optional = None,
-                            context_supplier: Optional[Callable[[], Dict[str, Any]]] = None) -> None:
-        """Update cost aggregator and context supplier at runtime."""
+                            context_supplier: Optional[Callable[[], Dict[str, Any]]] = None,
+                            sql_project_manager: Optional = None,
+                            project_id: Optional[str] = None,
+                            agent_name: Optional[str] = None) -> None:
+        """Update cost aggregator, context supplier, and SQL tracking at runtime."""
         if cost_aggregator is not None:
             self.cost_aggregator = cost_aggregator
         if context_supplier is not None:
             self.context_supplier = context_supplier
+        if sql_project_manager is not None:
+            self.sql_project_manager = sql_project_manager
+        if project_id is not None:
+            self.project_id = project_id
+        if agent_name is not None:
+            self.agent_name = agent_name
 
     def _normalize_model_name(self, model_name: str) -> str:
         """Normalize model name for pricing lookup"""
@@ -114,6 +135,26 @@ class CostTrackingModel:
             # Send to aggregator if available
             if self.cost_aggregator:
                 self.cost_aggregator.record_cost(call_record)
+
+            # Track in SQL database if available
+            if self.sql_project_manager and self.project_id:
+                try:
+                    await self.sql_project_manager.track_cost(
+                        project_id=self.project_id,
+                        agent_name=self.agent_name or "unknown_agent",
+                        operation=call_context.get('node_name', 'llm_call'),
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cost=total_cost,
+                        model_used=self.model_name,
+                        metadata={
+                            "latency_ms": call_record["latency_ms"],
+                            "context": call_context
+                        }
+                    )
+                except Exception as sql_error:
+                    # Log warning but don't fail the call
+                    logger.warning(f"SQL cost tracking failed: {sql_error}")
 
             # Log the cost
             logger.info(

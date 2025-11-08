@@ -1,3 +1,5 @@
+# ABOUTME: This file defines the state management models for the blog draft generation agent.
+# ABOUTME: It includes state classes for tracking section generation, quality validation, and iteration progress.
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any, Set
 from root.backend.parsers import ContentStructure
@@ -137,6 +139,9 @@ class BlogDraftState(CostTrackingMixin, BaseModel):
     remaining_length_budget: int = Field(default=1500, description="Remaining length budget for upcoming sections")
 
     project_id: Optional[str] = Field(default=None)
+
+    # SQL persistence (optional)
+    sql_project_manager: Optional[Any] = Field(default=None, description="SQL project manager for milestone and section persistence")
 
     def __init__(self, **data):
         super().__init__(**data)

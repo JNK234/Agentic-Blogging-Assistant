@@ -168,12 +168,12 @@ class SQLProjectManager:
             logger.error(f"Failed to load project by name {project_name}: {e}")
             return None
 
-    async def list_projects(self, status: Optional[ProjectStatus] = None) -> List[Dict[str, Any]]:
+    async def list_projects(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         List all projects, optionally filtered by status.
 
         Args:
-            status: Optional status filter
+            status: Optional status filter (string: "active", "archived", "deleted")
 
         Returns:
             List of project summaries
@@ -183,7 +183,9 @@ class SQLProjectManager:
                 query = session.query(Project)
 
                 if status:
-                    query = query.filter_by(status=status.value)
+                    # Support both string and enum values
+                    status_value = status if isinstance(status, str) else status.value
+                    query = query.filter_by(status=status_value)
 
                 projects = query.order_by(Project.updated_at.desc()).all()
 

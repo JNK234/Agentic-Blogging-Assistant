@@ -24,13 +24,14 @@ class BlogRefinementAgent(BaseGraphAgent):
     It generates introduction, conclusion, summary, and title options.
     """
 
-    def __init__(self, model: BaseModel, persona_service=None):
+    def __init__(self, model: BaseModel, persona_service=None, sql_project_manager=None):
         """
         Initializes the BlogRefinementAgent.
 
         Args:
             model: An instance of a language model compatible with BaseGraphAgent.
             persona_service: Optional PersonaService instance for voice consistency.
+            sql_project_manager: Optional SQL project manager for milestone persistence.
         """
         super().__init__(
             llm=model,
@@ -41,6 +42,7 @@ class BlogRefinementAgent(BaseGraphAgent):
         self._initialized = False
         self.model = model # Keep model reference for graph creation
         self.persona_service = persona_service or PersonaService()
+        self.sql_project_manager = sql_project_manager  # SQL project manager for persistence
         logger.info(f"BlogRefinementAgent instantiated with model: {type(model).__name__}")
 
     async def initialize(self):
@@ -99,7 +101,8 @@ class BlogRefinementAgent(BaseGraphAgent):
             project_id=project_id,
             current_stage="refinement",
             title_config=title_config,
-            social_config=social_config
+            social_config=social_config,
+            sql_project_manager=self.sql_project_manager  # Pass SQL manager for persistence
         )
 
         try:

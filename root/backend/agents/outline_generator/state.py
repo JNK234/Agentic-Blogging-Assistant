@@ -1,7 +1,8 @@
+# ABOUTME: This file defines the state management models for the outline generation agent.
+# ABOUTME: It includes state classes for content analysis, difficulty assessment, and outline structure creation.
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, List, Optional, Any
-#from root.backend.utils.file_parser import ParsedContent
-from root.backend.parsers.base import ContentStructure # Added import
+from root.backend.parsers.base import ContentStructure
 from root.backend.services.vector_store_service import VectorStoreService
 from root.backend.utils.serialization import to_json, model_to_dict, serialize_object
 from dataclasses import asdict
@@ -82,6 +83,9 @@ class OutlineState(CostTrackingMixin, BaseModel):
 
     # Project metadata for cost tracking
     project_name: Optional[str] = Field(default=None)
+
+    # SQL persistence (optional)
+    sql_project_manager: Optional[Any] = Field(default=None, description="SQL project manager for milestone persistence")
 
     def __init__(self, **data):
         super().__init__(**data)
