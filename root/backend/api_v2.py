@@ -484,10 +484,15 @@ async def resume_project(project_id: str) -> JSONResponse:
         if not state:
             raise HTTPException(status_code=404, detail="Project not found")
 
+        # Add milestones to project object for frontend compatibility
+        project_with_milestones = state["project"].copy()
+        project_with_milestones["milestones"] = state["milestones"]
+        logger.info(f"DEBUG: Added milestones to project. Keys in project object: {list(project_with_milestones.keys())}")
+        
         return JSONResponse(content={
             "status": "success",
             "project_id": project_id,
-            "project": state["project"],
+            "project": project_with_milestones,
             "progress": state["progress"],
             "next_step": state["next_step"],
             "cost_to_date": state["cost_summary"]["total_cost"],
