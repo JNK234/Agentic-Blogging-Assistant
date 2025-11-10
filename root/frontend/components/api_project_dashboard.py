@@ -267,27 +267,61 @@ class APIProjectDashboard:
             st.error(f"Failed to refresh projects: {str(e)}")
 
     async def _resume_project(self, project_id: str):
-        """Resume a project and restore its state."""
+        """Resume a project and restore its state using API v2."""
         try:
+            # Get resume data from API v2
             resume_data = await self.api_client.resume_project(project_id)
 
-            # Update session state with resumed project data
+            # Extract project information from API v2 response
+            project_info = resume_data.get("project", {})
+            milestones = resume_data.get("project", {}).get("milestones", {})
+            next_step = resume_data.get("next_step", "upload_files")
+
+            # Update session state with basic project data
             st.session_state.api_app_state["current_project_id"] = project_id
-            st.session_state.api_app_state["job_id"] = resume_data.get("job_id")
-            st.session_state.api_app_state["current_project_name"] = resume_data.get("project_name")
+            st.session_state.api_app_state["current_project_name"] = project_info.get("name", "Unknown Project")
+            st.session_state.api_app_state["job_id"] = project_info.get("metadata", {}).get("job_id")
+            st.session_state.api_app_state["resume_point"] = next_step
 
-            # Store resume point
-            st.session_state.api_app_state["resume_point"] = resume_data.get("next_step")
+            # Extract and store milestone data from milestones dict
+            # Milestone keys: "outline_generated", "draft_completed", "blog_refined", "social_generated"
+            if "outline_generated" in milestones:
+                outline_data = milestones["outline_generated"].get("data")
+                if outline_data:
+                    st.session_state.api_app_state["generated_outline"] = outline_data
 
-            # Store project-specific data if available
-            if "outline" in resume_data:
-                st.session_state.api_app_state["generated_outline"] = resume_data["outline"]
-            if "final_draft" in resume_data:
-                st.session_state.api_app_state["final_draft"] = resume_data["final_draft"]
-            if "refined_draft" in resume_data:
-                st.session_state.api_app_state["refined_draft"] = resume_data["refined_draft"]
+            if "draft_completed" in milestones:
+                draft_data = milestones["draft_completed"].get("data")
+                if draft_data:
+                    st.session_state.api_app_state["final_draft"] = draft_data
 
-            st.success(f"Project resumed! Next step: {resume_data.get('next_step', 'unknown')}")
+            if "blog_refined" in milestones:
+                refined_data = milestones["blog_refined"].get("data")
+                if refined_data:
+                    st.session_state.api_app_state["refined_draft"] = refined_data.get("content")
+                    st.session_state.api_app_state["summary"] = refined_data.get("summary")
+                    st.session_state.api_app_state["title_options"] = refined_data.get("title_options")
+
+            if "social_generated" in milestones:
+                social_data = milestones["social_generated"].get("data")
+                if social_data:
+                    st.session_state.api_app_state["social_content"] = social_data
+
+            # Map next_step to user-friendly tab navigation hint
+            tab_mapping = {
+                "upload_files": "File Upload",
+                "generate_outline": "Outline Generator",
+                "generate_draft": "Blog Draft",
+                "refine_blog": "Blog Draft",
+                "generate_social": "Blog Draft",
+                "completed": "Blog Draft"
+            }
+
+            recommended_tab = tab_mapping.get(next_step, "Outline Generator")
+
+            # Show success with navigation guidance
+            st.success(f"✅ Project resumed successfully!")
+            st.info(f"➡️ Navigate to the **{recommended_tab}** tab to continue")
             st.rerun()
 
         except Exception as e:

@@ -115,19 +115,19 @@ class ProjectService:
     
     async def resume_project(self, project_id: str) -> Dict[str, Any]:
         """
-        Resume a project by loading its current state.
-        
+        Resume a project by loading its current state using API v2.
+
         Args:
             project_id: Unique project identifier
-            
+
         Returns:
-            Project state data for session restoration
+            Enhanced project state with progress, milestones, and next_step guidance
         """
         self._validate_project_id(project_id)
-        
+
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.post(f"{self.base_url}/project/{project_id}/resume")
+                response = await client.post(f"{self.base_url}/api/v2/projects/{project_id}/resume")
                 response.raise_for_status()
                 return response.json()
                 
@@ -184,7 +184,7 @@ class ProjectService:
         
         try:
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.patch(
+                response = await client.post(
                     f"{self.base_url}/project/{project_id}/archive",
                     json={"archived": archive}
                 )
