@@ -17,6 +17,7 @@ import os
 
 from backend.services.sql_project_manager import SQLProjectManager, MilestoneType, ProjectStatus, SectionStatus
 from backend.services.cost_aggregator import CostAggregator
+from backend.services.cost_analytics_service import CostAnalyticsService, TimeRange
 from backend.agents.outline_generator.state import FinalOutline
 from backend.utils.serialization import serialize_object
 
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/api/v2", tags=["v2"])
 # Initialize services
 sql_manager = SQLProjectManager()
 cost_aggregator = CostAggregator()
+cost_analytics = CostAnalyticsService()
 
 # ==================== Pydantic Models ====================
 
@@ -154,16 +156,44 @@ async def get_project(project_id: str) -> JSONResponse:
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        # Add progress and cost
+        # Get complete project state
         progress = await sql_manager.get_progress(project_id)
         cost_summary = await sql_manager.get_cost_summary(project_id)
 
-        project["progress"] = progress
-        project["cost_summary"] = cost_summary
+        # Get all milestones
+        milestones = {}
+        for milestone_type in MilestoneType:
+            milestone_data = await sql_manager.load_milestone(project_id, milestone_type)
+            if milestone_data:
+                milestones[milestone_type.value] = milestone_data
+
+        # Get sections if they exist
+        sections = await sql_manager.load_sections(project_id) or []
+
+        # Determine next step based on completed milestones
+        milestone_set = set(milestones.keys())
+
+        if "social_generated" in milestone_set:
+            next_step = "completed"
+        elif "blog_refined" in milestone_set:
+            next_step = "social_generation"
+        elif "draft_completed" in milestone_set:
+            next_step = "blog_refinement"
+        elif "outline_generated" in milestone_set:
+            next_step = "blog_drafting"
+        elif "files_uploaded" in milestone_set:
+            next_step = "outline_generation"
+        else:
+            next_step = "file_upload"
 
         return JSONResponse(content={
             "status": "success",
-            "project": project
+            "project": project,
+            "progress": progress,
+            "cost_summary": cost_summary,
+            "milestones": milestones,
+            "sections": sections,
+            "next_step": next_step
         })
 
     except HTTPException:
@@ -454,24 +484,9 @@ async def resume_project(project_id: str) -> JSONResponse:
         if not state:
             raise HTTPException(status_code=404, detail="Project not found")
 
-        # Generate a job ID for cache
-        job_id = str(uuid.uuid4())
-
-        # Store in job cache for compatibility with existing workflow
-        # Import at runtime to avoid circular import
-        import main
-        main.state_cache[job_id] = {
-            "project_id": project_id,
-            "project_name": state["project"]["name"],
-            "outline": state["milestones"].get(MilestoneType.OUTLINE_GENERATED.value, {}).get("data"),
-            "sections": state["sections"],
-            "refined_draft": state["milestones"].get(MilestoneType.BLOG_REFINED.value, {}).get("data"),
-            "metadata": state["project"].get("metadata", {})
-        }
-
         return JSONResponse(content={
             "status": "success",
-            "job_id": job_id,
+            "project_id": project_id,
             "project": state["project"],
             "progress": state["progress"],
             "next_step": state["next_step"],
@@ -632,4 +647,187 @@ async def get_project_by_name(project_name: str) -> JSONResponse:
         raise
     except Exception as e:
         logger.error(f"Failed to get project by name {project_name}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Cost Analytics & Reporting Endpoints ====================
+
+@router.get("/reports/costs/weekly")
+async def get_weekly_cost_report(
+    project_ids: Optional[str] = None,
+    weeks_back: int = 0
+) -> JSONResponse:
+    """
+    Get weekly cost report for projects.
+
+    Args:
+        project_ids: Comma-separated project IDs (optional)
+        weeks_back: Number of weeks to look back (0 = current week)
+
+    Returns:
+        Weekly cost report with breakdown
+    """
+    try:
+        project_list = project_ids.split(",") if project_ids else None
+        report = await cost_analytics.get_weekly_report(
+            project_ids=project_list,
+            weeks_back=weeks_back
+        )
+        return JSONResponse(content={
+            "status": "success",
+            "report": report
+        })
+    except Exception as e:
+        logger.error(f"Failed to generate weekly cost report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/costs/monthly")
+async def get_monthly_cost_report(
+    project_ids: Optional[str] = None,
+    months_back: int = 0
+) -> JSONResponse:
+    """
+    Get monthly cost report for projects.
+
+    Args:
+        project_ids: Comma-separated project IDs (optional)
+        months_back: Number of months to look back (0 = current month)
+
+    Returns:
+        Monthly cost report with breakdown
+    """
+    try:
+        project_list = project_ids.split(",") if project_ids else None
+        report = await cost_analytics.get_monthly_report(
+            project_ids=project_list,
+            months_back=months_back
+        )
+        return JSONResponse(content={
+            "status": "success",
+            "report": report
+        })
+    except Exception as e:
+        logger.error(f"Failed to generate monthly cost report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/costs/trends")
+async def get_cost_trends(
+    project_ids: Optional[str] = None,
+    num_periods: int = 12,
+    time_range: str = "weekly"
+) -> JSONResponse:
+    """
+    Get cost trends and forecasts.
+
+    Args:
+        project_ids: Comma-separated project IDs (optional)
+        num_periods: Number of periods to analyze
+        time_range: Time range granularity (daily, weekly, monthly, yearly)
+
+    Returns:
+        Trend analysis with forecasts
+    """
+    try:
+        project_list = project_ids.split(",") if project_ids else None
+        try:
+            tr = TimeRange(time_range)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid time_range: {time_range}")
+
+        trends = await cost_analytics.get_cost_trends(
+            project_ids=project_list,
+            num_periods=num_periods,
+            time_range=tr
+        )
+        return JSONResponse(content={
+            "status": "success",
+            "trends": trends
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to calculate cost trends: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/costs/summary")
+async def get_aggregated_cost_summary(
+    project_ids: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> JSONResponse:
+    """
+    Get aggregated cost summary across multiple projects.
+
+    Args:
+        project_ids: Comma-separated project IDs (optional, all if None)
+        start_date: Start date (ISO format, optional)
+        end_date: End date (ISO format, optional)
+
+    Returns:
+        Aggregated cost summary
+    """
+    try:
+        project_list = project_ids.split(",") if project_ids else None
+        start = datetime.fromisoformat(start_date) if start_date else None
+        end = datetime.fromisoformat(end_date) if end_date else None
+
+        summary = await cost_analytics.get_multi_project_cost_summary(
+            project_ids=project_list,
+            start_date=start,
+            end_date=end
+        )
+        return JSONResponse(content={
+            "status": "success",
+            "summary": summary
+        })
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+    except Exception as e:
+        logger.error(f"Failed to get cost summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/costs/compare")
+async def compare_project_costs(
+    project_ids: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> JSONResponse:
+    """
+    Compare costs across multiple projects.
+
+    Args:
+        project_ids: Comma-separated project IDs (required)
+        start_date: Start date (ISO format, optional)
+        end_date: End date (ISO format, optional)
+
+    Returns:
+        Project cost comparison
+    """
+    try:
+        if not project_ids:
+            raise HTTPException(status_code=400, detail="project_ids parameter is required")
+
+        project_list = project_ids.split(",")
+        start = datetime.fromisoformat(start_date) if start_date else None
+        end = datetime.fromisoformat(end_date) if end_date else None
+
+        comparison = await cost_analytics.compare_projects(
+            project_ids=project_list,
+            start_date=start,
+            end_date=end
+        )
+        return JSONResponse(content={
+            "status": "success",
+            "comparison": comparison
+        })
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to compare project costs: {e}")
         raise HTTPException(status_code=500, detail=str(e))
