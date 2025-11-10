@@ -9,9 +9,9 @@ from datetime import datetime
 
 from ..parsers import ParserFactory, ContentStructure
 from ..services.vector_store_service import VectorStoreService
-from root.backend.agents.base_agent import BaseGraphAgent
-from root.backend.agents.content_parsing.state import ContentParsingState
-from root.backend.agents.content_parsing.graph import create_parsing_graph
+from backend.agents.base_agent import BaseGraphAgent
+from backend.agents.content_parsing.state import ContentParsingState
+from backend.agents.content_parsing.graph import create_parsing_graph
 
 logging.basicConfig(level=logging.INFO)
 

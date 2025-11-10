@@ -5,11 +5,11 @@ import json
 import re
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity # Added for semantic similarity
-from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback, ImagePlaceholder
-from root.backend.utils.blog_context import extract_blog_narrative_context, calculate_content_length, calculate_section_length_targets, get_length_priority
-from root.backend.services.persona_service import PersonaService
-from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS, EXPERT_WRITING_PRINCIPLES
-from root.backend.agents.blog_draft_generator.utils import (
+from backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback, ImagePlaceholder
+from backend.utils.blog_context import extract_blog_narrative_context, calculate_content_length, calculate_section_length_targets, get_length_priority
+from backend.services.persona_service import PersonaService
+from backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS, EXPERT_WRITING_PRINCIPLES
+from backend.agents.blog_draft_generator.utils import (
     extract_code_blocks,
     format_content_references,
     extract_section_metrics,
@@ -21,9 +21,9 @@ from root.backend.agents.blog_draft_generator.utils import (
     process_search_results,
     determine_content_category
 )
-from root.backend.services.vector_store_service import VectorStoreService
-from root.backend.agents.cost_tracking_decorator import track_node_costs, track_iteration_costs
-from root.backend.services.sql_project_manager import MilestoneType, SectionStatus
+from backend.services.vector_store_service import VectorStoreService
+from backend.agents.cost_tracking_decorator import track_node_costs, track_iteration_costs
+from backend.services.sql_project_manager import MilestoneType, SectionStatus
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1021,8 +1021,8 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
     section_content = state.current_section.content
 
     # NEW: Get persona profile and structural rules
-    from root.backend.services.persona_service import PersonaService
-    from root.backend.agents.blog_draft_generator.prompts import get_structural_rules
+    from backend.services.persona_service import PersonaService
+    from backend.agents.blog_draft_generator.prompts import get_structural_rules
     persona_service = PersonaService()
     persona_name = getattr(state, 'persona', 'neuraforge')
     persona_profile = persona_service.get_persona_prompt(persona_name)

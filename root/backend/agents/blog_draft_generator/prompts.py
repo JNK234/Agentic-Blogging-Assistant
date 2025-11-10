@@ -1,6 +1,6 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from root.backend.agents.blog_draft_generator.state import ContentReference, CodeExample, DraftSection, ImagePlaceholder
+from backend.agents.blog_draft_generator.state import ContentReference, CodeExample, DraftSection, ImagePlaceholder
 
 # Expert Writing Principles for contextual content generation
 EXPERT_WRITING_PRINCIPLES = """**CONTEXTUAL CONTENT GENERATION PRINCIPLES:**

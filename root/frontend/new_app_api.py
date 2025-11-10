@@ -823,9 +823,10 @@ class SidebarUI:
 
                     # Run the async initialization process
                     try:
-                        # Use current provider from session (reactive section above)
+                        # Use current provider and persona from session (reactive section above)
                         provider_for_init = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
-                        asyncio.run(self._initialize_assistant(project_name, provider_for_init, uploaded_files, api_base_url))
+                        persona_for_init = SessionManager.get('selected_persona', 'neuraforge')
+                        asyncio.run(self._initialize_assistant(project_name, provider_for_init, uploaded_files, api_base_url, persona=persona_for_init))
                     except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
                         SessionManager.set_error(f"API Error: {str(api_err)}")
                         SessionManager.set_status("Initialization failed.")
@@ -905,14 +906,15 @@ class SidebarUI:
             SessionManager.set_status("API unreachable.")
 
 
-    async def _initialize_assistant(self, project_name, model_name, uploaded_files, base_url):
+    async def _initialize_assistant(self, project_name, model_name, uploaded_files, base_url, persona=None):
         """Handles the async steps of uploading and processing files via API."""
         SessionManager.set_status("Uploading files...")
         files_to_send: List[Tuple[str, bytes, str]] = []
         for f in uploaded_files:
             files_to_send.append((f.name, f.getvalue(), f.type or "application/octet-stream"))
 
-        upload_result = await api_client.upload_files(project_name, files_to_send, base_url=base_url)
+        upload_result = await api_client.upload_files(project_name, files_to_send, base_url=base_url,
+                                                      model_name=model_name, persona=persona)
         uploaded_paths = upload_result.get("files", [])
         if not uploaded_paths:
             SessionManager.set_error("File upload failed or returned no paths.")

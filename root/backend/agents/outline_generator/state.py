@@ -2,12 +2,12 @@
 # ABOUTME: It includes state classes for content analysis, difficulty assessment, and outline structure creation.
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, List, Optional, Any
-from root.backend.parsers.base import ContentStructure
-from root.backend.services.vector_store_service import VectorStoreService
-from root.backend.utils.serialization import to_json, model_to_dict, serialize_object
+from backend.parsers.base import ContentStructure
+from backend.services.vector_store_service import VectorStoreService
+from backend.utils.serialization import to_json, model_to_dict, serialize_object
 from dataclasses import asdict
 import json
-from root.backend.agents.cost_tracking_state import CostTrackingMixin
+from backend.agents.cost_tracking_state import CostTrackingMixin
 
 class ContentAnalysis(BaseModel):
     main_topics: List[str]

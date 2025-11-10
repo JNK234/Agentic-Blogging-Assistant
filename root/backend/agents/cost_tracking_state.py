@@ -3,7 +3,7 @@
 
 from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
-from root.backend.services.cost_aggregator import CostAggregator
+from backend.services.cost_aggregator import CostAggregator
 
 class CostTrackingMixin(BaseModel):
     """Mixin to add cost tracking capabilities to any LangGraph state"""

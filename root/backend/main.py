@@ -5,6 +5,7 @@ import os
 import json
 import sys
 import logging
+import uuid
 from pathlib import Path
 
 # Configure Python path for absolute imports from root
@@ -32,9 +33,8 @@ from backend.models.model_factory import ModelFactory
 from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig # Added
 from backend.services.vector_store_service import VectorStoreService # Added
 from backend.services.persona_service import PersonaService # Added
-from backend.services.project_manager import ProjectManager, MilestoneType, ProjectStatus # Added
-from backend.services.sql_project_manager import SQLProjectManager, MilestoneType as SQLMilestoneType # SQL-based project manager
-from root.backend.services.cost_aggregator import CostAggregator
+from backend.services.sql_project_manager import SQLProjectManager, MilestoneType # SQL-based project manager
+from backend.services.cost_aggregator import CostAggregator
 
 # Configure logging
 logging.basicConfig(
@@ -57,9 +57,6 @@ os.makedirs(CACHE_DIRECTORY, exist_ok=True)
 
 # Agent cache to avoid recreating agents for each request
 agent_cache = {}
-
-# Initialize ProjectManager for persistent project tracking (legacy)
-project_manager = ProjectManager()
 
 # Initialize SQLProjectManager for SQL-based project tracking
 sql_project_manager = SQLProjectManager()
@@ -98,6 +95,14 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
         state["outline"] = m["data"]["outline"]
         state["outline_hash"] = m["data"].get("outline_hash")
 
+        # Fallback: Load model_name, specific_model, and persona from milestone data if not in project metadata
+        if not state["model_name"]:
+            state["model_name"] = m["data"].get("model_name")
+        if not state["specific_model"]:
+            state["specific_model"] = m["data"].get("specific_model")
+        if not state["persona"]:
+            state["persona"] = m["data"].get("persona")
+
     if "draft_completed" in milestones:
         m = milestones["draft_completed"]
         state["final_draft"] = m["data"].get("compiled_blog")
@@ -127,31 +132,6 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
 
     return state
 
-@app.get("/validate_project/{project_id}")
-async def validate_project(project_id: str) -> JSONResponse:
-    """Validate if a project exists in SQL database."""
-    project = await sql_project_manager.get_project(project_id)
-    if project:
-        state = await load_workflow_state(project_id)
-        return JSONResponse(
-            content={
-                "valid": True,
-                "project_id": project_id,
-                "has_outline": bool(state.get("outline")) if state else False,
-                "has_refined_draft": bool(state.get("refined_draft")) if state else False,
-                "project_name": project.get("name")
-            }
-        )
-    else:
-        return JSONResponse(
-            content={
-                "valid": False,
-                "project_id": project_id,
-                "error": "Project not found",
-                "suggestion": "Please create a new project or check the project ID."
-            },
-            status_code=404
-        )
 
 @app.post("/upload/{project_name}")
 async def upload_files(
@@ -223,9 +203,9 @@ async def upload_files(
                 status_code=400
             )
 
-        # Create project metadata
+        # Create project metadata with default model_name if not provided
         metadata = {
-            "model_name": model_name,
+            "model_name": model_name or "gpt-4",  # Default to gpt-4 if not specified
             "persona": persona,
             "upload_directory": str(project_dir),
             "uploaded_files": [os.path.basename(f) for f in uploaded_files]
@@ -247,30 +227,29 @@ async def upload_files(
             }
             await sql_project_manager.save_milestone(
                 project_id=sql_project_id,
-                milestone_type=SQLMilestoneType.FILES_UPLOADED,
+                milestone_type=MilestoneType.FILES_UPLOADED,
                 data=milestone_data
             )
 
             logger.info(f"Created SQL project {sql_project_id} with {len(uploaded_files)} uploaded files")
         except Exception as e:
             logger.warning(f"Failed to create SQL project (non-blocking): {e}")
+            # If SQL project creation fails, we still need a project ID
+            if sql_project_id is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create project in database"
+                )
 
-        # Also create project in legacy ProjectManager for backward compatibility
-        legacy_project_id = project_manager.create_project(safe_project_name, metadata)
-        project_manager.save_milestone(
-            legacy_project_id,
-            MilestoneType.FILES_UPLOADED,
-            milestone_data
-        )
-
-        logger.info(f"Created projects - SQL: {sql_project_id}, Legacy: {legacy_project_id}")
+        # Legacy duplicate project creation removed - SQL manager is now single source of truth
+        logger.info(f"Created SQL project {sql_project_id} with {len(uploaded_files)} uploaded files")
 
         return JSONResponse(
             content={
                 "message": "Files uploaded successfully",
                 "project_name": safe_project_name,
-                "project_id": sql_project_id or legacy_project_id,  # Prefer SQL ID
-                "job_id": sql_project_id or legacy_project_id,  # Alias for backward compatibility
+                "project_id": sql_project_id,
+                "job_id": sql_project_id,  # Alias for backward compatibility
                 "files": uploaded_files
             }
         )
@@ -333,27 +312,6 @@ async def get_or_create_agents(model_name: str, specific_model: Optional[str] = 
         logger.exception(f"Failed to create agents: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to create agents: {str(e)}")
     
-@app.get("/debug/project/{project_id}")
-async def debug_project(project_id: str):
-    """Debug endpoint to see project state."""
-    state = await load_workflow_state(project_id)
-    if not state:
-        return {"error": "Project not found"}
-
-    outline = state.get('outline', {})
-    sections = state.get('generated_sections', {})
-
-    return {
-        "project_id": project_id,
-        "project_name": state.get('project_name'),
-        "outline_title": outline.get('title', 'Unknown'),
-        "total_sections_expected": len(outline.get('sections', [])),
-        "sections_generated": list(sections.keys()),
-        "sections_count": len(sections),
-        "has_final_draft": 'final_draft' in state,
-        "has_refined_draft": 'refined_draft' in state,
-        "all_keys": list(state.keys())
-    }
 
 @app.post("/process_files/{project_name}")
 async def process_files(
@@ -429,13 +387,9 @@ async def generate_outline(
         # project_id will be determined from the project lookup
         cost_aggregator = CostAggregator()
 
-        # Look for existing project by name to get project_id
-        projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
-        project_id = None
-        for project in projects:
-            if project.get("name") == project_name:
-                project_id = project.get("id")
-                break
+        # Get project from SQL manager (returns dict)
+        project = await sql_project_manager.get_project_by_name(project_name)
+        project_id = project["id"] if project else None
 
         if project_id:
             cost_aggregator.start_workflow(project_id=project_id)
@@ -501,27 +455,17 @@ async def generate_outline(
                 "cost_call_history": cost_call_history
             }
 
-            # Save to legacy ProjectManager
-            project_manager.save_milestone(
-                project_id,
-                MilestoneType.OUTLINE_GENERATED,
-                milestone_data,
-                metadata=milestone_metadata
-            )
-
-            # Update project metadata
-            project_manager.update_metadata(project_id, {
+            # Update SQL project metadata (primary storage)
+            await sql_project_manager.update_metadata(project_id, {
                 "model_name": model_name,
                 "specific_model": specific_model,
-                "persona": persona_style,
-                "cost_summary": cost_summary,
-                "cost_call_history": cost_call_history
+                "persona": persona_style
             })
 
-            # Save to SQLProjectManager
+            # Save milestone to SQL database (primary storage - legacy duplicate save removed)
             await sql_project_manager.save_milestone(
                 project_id=project_id,
-                milestone_type=SQLMilestoneType.OUTLINE_GENERATED,
+                milestone_type=MilestoneType.OUTLINE_GENERATED,
                 data=milestone_data,
                 metadata=milestone_metadata
             )
@@ -670,100 +614,6 @@ async def generate_draft(
             content=serialize_object(error_detail),
             status_code=500
         )
-
-# @app.post("/generate_section/{project_name}")
-# async def generate_section(
-#     project_name: str, # Keep project_name for potential future use/logging
-#     job_id: str = Form(...), # Use job_id instead of outline/content
-#     section_index: int = Form(...),
-#     max_iterations: int = Form(3),
-#     quality_threshold: float = Form(0.8)
-# ) -> JSONResponse:
-#     """Generate a single section of a blog draft, using persistent cache via agent."""
-#     try:
-#         # Retrieve state from cache (still needed for outline, content, model)
-#         job_state = state_cache.get(job_id)
-#         if not job_state:
-#             logger.error(f"Job state not found for job_id: {job_id}")
-#             return JSONResponse(
-#                 content={"error": f"Job state not found for job_id: {job_id}. Please generate outline first."},
-#                 status_code=404
-#             )
-
-#         # Extract data from state
-#         outline_data = job_state["outline"]
-#         notebook_data = job_state.get("notebook_content") # Use .get for safety
-#         markdown_data = job_state.get("markdown_content") # Use .get for safety
-#         model_name = job_state["model_name"]
-
-#         # Validate section index against the retrieved outline
-#         if section_index < 0 or section_index >= len(outline_data.get("sections", [])):
-#             return JSONResponse(
-#                 content={"error": f"Invalid section index: {section_index}"},
-#                 status_code=400
-#             )
-
-#         # Get current section from the retrieved outline
-#         section = outline_data["sections"][section_index]
-#         section_title = section.get("title", f"Section {section_index + 1}") # Get title for response
-
-#         # Get or create agents using model_name from state
-#         agents = await get_or_create_agents(model_name)
-#         draft_agent = agents["draft_agent"]
-
-#         # Call the agent's generate_section method, which now handles caching internally
-#         # Pass the full outline dictionary for hashing, remove job_id from direct call (agent uses outline_hash)
-#         # It returns a tuple: (content, was_cached)
-#         section_content, was_cached = await draft_agent.generate_section(
-#             project_name=project_name,
-#             # job_id is not directly used by agent.generate_section for cache key anymore
-#             section=section,
-#             # job_id=job_id, # No longer passed directly for caching logic
-#             outline=outline_data, # The full outline dict for hashing
-#             notebook_content=notebook_data, # Pass potentially None content
-#             markdown_content=markdown_data, # Pass potentially None content
-#             current_section_index=section_index,
-#             max_iterations=max_iterations,
-#             quality_threshold=quality_threshold,
-#             use_cache=True # Explicitly enable cache usage in the agent
-#         )
-
-#         # Check if agent returned content
-#         if section_content is None:
-#             # Agent handles logging errors internally now
-#             return JSONResponse(
-#                 content={"error": f"Failed to generate or retrieve section: {section_title}"},
-#                 status_code=500
-#             )
-
-#         # Agent now handles storing in persistent cache if it was generated (was_cached=False)
-#         # No need to update state_cache here for section content anymore
-
-#         # Return the result from the agent
-#         return JSONResponse(
-#             content=serialize_object({
-#                 "job_id": job_id,
-#                 "section_title": section_title,
-#                 "section_content": section_content,
-#                 "section_index": section_index,
-#                 "was_cached": was_cached # Pass the flag from the agent
-#             })
-#         )
-
-#     except Exception as e:
-#         logger.exception(f"Section generation failed: {str(e)}")
-
-#         # Provide detailed error information
-#         error_detail = {
-#             "error": f"Section generation failed: {str(e)}",
-#             "type": str(type(e).__name__),
-#             "details": str(e)
-#         }
-
-#         return JSONResponse(
-#             content=serialize_object(error_detail),
-#             status_code=500
-#         )
 
 @app.post("/generate_section/{project_name}")
 async def generate_section(
@@ -917,94 +767,6 @@ async def generate_section(
             status_code=500
         )
 
-# @app.post("/regenerate_section_with_feedback/{project_name}")
-# async def regenerate_section(
-#     project_name: str, # Keep project_name for potential future use/logging
-#     job_id: str = Form(...), # Use job_id instead of outline/content/model_name
-#     section_index: int = Form(...),
-#     feedback: str = Form(...),
-#     max_iterations: int = Form(3),
-#     quality_threshold: float = Form(0.8)
-# ) -> JSONResponse:
-#     """Regenerate a section with user feedback, updating persistent cache via agent."""
-#     try:
-#         # Retrieve state from cache (still needed for outline, content, model)
-#         job_state = state_cache.get(job_id)
-#         if not job_state:
-#             logger.error(f"Job state not found for job_id: {job_id}")
-#             return JSONResponse(
-#                 content={"error": f"Job state not found for job_id: {job_id}. Please generate outline first."},
-#                 status_code=404
-#             )
-
-#         # Extract data from state
-#         outline_data = job_state["outline"]
-#         notebook_data = job_state.get("notebook_content") # Use .get
-#         markdown_data = job_state.get("markdown_content") # Use .get
-#         model_name = job_state["model_name"]
-
-#         # Validate section index against the retrieved outline
-#         if section_index < 0 or section_index >= len(outline_data.get("sections", [])):
-#             return JSONResponse(
-#                 content={"error": f"Invalid section index: {section_index}"},
-#                 status_code=400
-#             )
-
-#         # Get current section from the retrieved outline
-#         section = outline_data["sections"][section_index]
-
-#         # Get or create agents using model_name from state
-#         agents = await get_or_create_agents(model_name)
-#         draft_agent = agents["draft_agent"]
-
-#         # Regenerate section with feedback using retrieved data
-#         # job_id is not directly used by agent.regenerate_section_with_feedback for cache key
-#         new_content = await draft_agent.regenerate_section_with_feedback(
-#             project_name=project_name,
-#             section=section,
-#             outline=outline_data, # Agent will hash this
-#             notebook_content=notebook_data, # Pass potentially None
-#             markdown_content=markdown_data, # Pass potentially None
-#             feedback=feedback,
-#             max_iterations=max_iterations,
-#             quality_threshold=quality_threshold
-#         )
-
-#         if not new_content:
-#             # Agent handles logging errors internally
-#             return JSONResponse(
-#                 content={"error": f"Failed to regenerate section: {section.get('title', 'Unknown')}"},
-#                 status_code=500
-#             )
-
-#         # Agent now handles updating the persistent cache internally after regeneration
-#         # No need to update state_cache here
-
-#         return JSONResponse(
-#             content=serialize_object({
-#                 "job_id": job_id, # Return job_id
-#                 "section_title": section.get("title", "Unknown"),
-#                 "section_content": new_content,
-#                 "section_index": section_index,
-#                 "feedback_addressed": True # Indicate feedback was processed
-#             })
-#         )
-
-#     except Exception as e:
-#         logger.exception(f"Section regeneration failed: {str(e)}")
-
-#         # Provide detailed error information
-#         error_detail = {
-#             "error": f"Section regeneration failed: {str(e)}",
-#             "type": str(type(e).__name__),
-#             "details": str(e)
-#         }
-
-#         return JSONResponse(
-#             content=serialize_object(error_detail),
-#             status_code=500
-#         )
-
 @app.post("/regenerate_section_with_feedback/{project_name}")
 async def regenerate_section(
     project_name: str,
@@ -1035,7 +797,7 @@ async def regenerate_section(
 
             existing_history = job_state.get("cost_call_history") or []
             if not existing_history and job_state.get("project_id"):
-                project_record = project_manager.get_project(job_state["project_id"])
+                project_record = await sql_project_manager.get_project(job_state["project_id"])
                 if project_record:
                     existing_history = project_record.get("metadata", {}).get("cost_call_history", [])
 
@@ -1122,7 +884,7 @@ async def regenerate_section(
 
         project_id_in_state = job_state.get("project_id")
         if project_id_in_state:
-            project_manager.update_metadata(project_id_in_state, {
+            await sql_project_manager.update_metadata(project_id_in_state, {
                 "cost_summary": updated_summary,
                 "cost_call_history": updated_history,
                 "latest_job_id": job_id
@@ -1155,302 +917,36 @@ async def regenerate_section(
         )
 
 
-# @app.post("/compile_draft/{project_name}")
-# async def compile_draft(
-#     project_name: str, # Keep project_name for potential future use/logging
-#     job_id: str = Form(...) # Use job_id instead of outline/sections
-# ) -> JSONResponse:
-#     """Compile a final blog draft using cached section data."""
-#     logger.info(f"Starting draft compilation for job_id: {job_id}")
-#     try:
-#         # Retrieve state from cache (for outline, model, etc.)
-#         job_state = state_cache.get(job_id)
-#         if not job_state:
-#             logger.error(f"Job state (outline info) not found for job_id: {job_id}")
-#             return JSONResponse(
-#                 content={"error": f"Job state not found for job_id: {job_id}. Please generate outline first."},
-#                 status_code=404
-#             )
-
-#         # Extract data from state
-#         outline_data = job_state["outline"]
-#         model_name = job_state["model_name"] # Needed to get vector_store instance
-#         num_outline_sections = len(outline_data.get("sections", []))
-#         generated_sections_dict = {} # Will be populated from cache
-#         missing_sections = []
-#         all_sections_retrieved = True
-
-#         # Attempt to retrieve all sections from VectorStore cache using outline_hash
-#         try:
-#             agents = await get_or_create_agents(model_name) # Get agents to access vector_store and hashing logic
-#             vector_store = agents["vector_store"]
-#             # Need access to the agent's cache key logic or replicate it
-#             # Assuming BlogDraftGeneratorAgent has a static or accessible method for this
-#             # If not, this part needs adjustment based on how the key is generated/accessed
-            
-#             # Get the draft_agent to use its hashing and key generation methods
-#             agents = await get_or_create_agents(model_name)
-#             draft_agent = agents["draft_agent"]
-#             vector_store = agents["vector_store"] # Get the shared vector_store
-
-#             outline_hash = draft_agent._hash_outline_for_cache(outline_data)
-#             draft_agent = agents["draft_agent"] # Need agent instance for hashing method
-
-#             # Generate the outline hash needed for retrieval
-#             outline_hash = draft_agent._hash_outline_for_cache(outline_data)
-
-#             for i in range(num_outline_sections):
-#                 cache_key = draft_agent._create_section_cache_key(project_name, outline_hash, i)
-#                 # Use the agent's method to create the consistent cache key
-#                 cache_key = draft_agent._create_section_cache_key(project_name, outline_hash, i)
-#                 cached_section_json = vector_store.retrieve_section_cache(
-#                     cache_key=cache_key,
-#                     project_name=project_name,
-#                     outline_hash=outline_hash, # Use outline_hash for retrieval
-#                     section_index=i
-#                 )
-#                 if cached_section_json:
-#                     try:
-#                         cached_data = json.loads(cached_section_json)
-#                         generated_sections_dict[i] = cached_data # Populate dict from persistent cache
-#                     except json.JSONDecodeError:
-#                         logger.warning(f"Failed to parse cached JSON for section {i} during compilation. Marking as missing.")
-#                         missing_sections.append(i)
-#                         all_sections_retrieved = False
-#                 else:
-#                     logger.warning(f"Section {i} not found in persistent cache for outline {outline_hash}.")
-#                     missing_sections.append(i)
-#                     all_sections_retrieved = False
-#         except Exception as retrieval_err:
-#              logger.exception(f"Error retrieving sections from VectorStore during compilation: {retrieval_err}") # Use logger.exception
-#              return JSONResponse(
-#                 content={"error": "Failed to retrieve section data for compilation."},
-#                 status_code=500
-#             )
-
-#         # Validate all sections were retrieved
-#         if not all_sections_retrieved:
-#             logger.error(f"Missing generated content (in VectorStore) for sections {missing_sections} for outline {outline_hash}")
-#             return JSONResponse(
-#                 content={"error": f"Missing content (in VectorStore) for sections: {', '.join(map(str, missing_sections))}. Please ensure all sections were generated."},
-#                 status_code=400
-#             )
-
-#         # Prepare sections_data in the correct order from the populated dict
-#         sections_data = [generated_sections_dict[i] for i in range(num_outline_sections)]
-
-
-#         # Compile blog draft (logic remains the same)
-#         blog_parts = [
-#             f"# {outline_data['title']}\n",
-#             f"**Difficulty Level**: {outline_data['difficulty_level']}\n",
-#             "\n## Prerequisites\n"
-#         ]
-#         if isinstance(outline_data["prerequisites"], dict):
-#             if "required_knowledge" in outline_data["prerequisites"]:
-#                 blog_parts.append("\n### Required Knowledge\n")
-#                 for item in outline_data["prerequisites"]["required_knowledge"]:
-#                     blog_parts.append(f"- {item}\n")
-#             if "recommended_tools" in outline_data["prerequisites"]:
-#                 blog_parts.append("\n### Recommended Tools\n")
-#                 for tool in outline_data["prerequisites"]["recommended_tools"]:
-#                     blog_parts.append(f"- {tool}\n")
-#             if "setup_instructions" in outline_data["prerequisites"]:
-#                 blog_parts.append("\n### Setup Instructions\n")
-#                 for instruction in outline_data["prerequisites"]["setup_instructions"]:
-#                     blog_parts.append(f"- {instruction}\n")
-#         else:
-#             blog_parts.append(f"{outline_data['prerequisites']}\n")
-
-#         blog_parts.append("\n## Table of Contents\n")
-#         for i, section_data in enumerate(sections_data):
-#             title = section_data.get("title", outline_data["sections"][i].get("title", f"Section {i+1}"))
-#             blog_parts.append(f"{i+1}. [{title}](#section-{i+1})\n")
-
-#         blog_parts.append("\n")
-
-#         for i, section_data in enumerate(sections_data):
-#             title = section_data.get("title", outline_data["sections"][i].get("title", f"Section {i+1}"))
-#             content = section_data.get("content", "*Error: Content not found*")
-#             blog_parts.extend([
-#                 f"<a id='section-{i+1}'></a>\n",
-#                 f"## {title}\n",
-#                 f"{content}\n\n"
-#             ])
-
-#         if 'conclusion' in outline_data and outline_data['conclusion']:
-#             blog_parts.extend([
-#                 "## Conclusion\n",
-#                 f"{outline_data['conclusion']}\n\n"
-#             ])
-
-#         final_draft = "\n".join(blog_parts)
-#         logger.info(f"Successfully assembled final_draft content for job_id: {job_id}.")
-
-#         # Store final draft in state_cache and save to file (existing logic)
-#         draft_saved_to_file = False
-#         try:
-#             if job_id in state_cache:
-#                 # REMOVED: # REMOVED: state_cache[job_id]["final_draft"] = final_draft
-#                 logger.info(f"Stored final draft in state_cache for job_id: {job_id}")
-
-#                 project_dir = Path(UPLOAD_DIRECTORY) / project_name
-#                 project_dir.mkdir(parents=True, exist_ok=True)
-#                 safe_project_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in project_name)
-#                 draft_filename = f"{safe_project_name}_compiled_draft.md"
-#                 draft_filepath = project_dir / draft_filename
-#                 try:
-#                     with open(draft_filepath, "w", encoding="utf-8") as f:
-#                         f.write(final_draft)
-#                     logger.info(f"Saved compiled draft to: {draft_filepath}")
-#                     draft_saved_to_file = True
-#                 except IOError as io_err:
-#                     logger.error(f"Failed to save compiled draft to file {draft_filepath}: {io_err}")
-
-#             else:
-#                 logger.warning(f"Job state for {job_id} expired before final draft could be stored or saved.")
-#         except Exception as cache_update_err:
-#             logger.error(f"Failed to update state_cache/save file for job {job_id}: {cache_update_err}")
-
-#         response_content = {
-#             "job_id": job_id,
-#             "draft": final_draft,
-#             "draft_saved": draft_saved_to_file
-#         }
-#         return JSONResponse(content=serialize_object(response_content))
-
-#     except Exception as e:
-#         logger.exception(f"Draft compilation failed: {str(e)}")
-#         error_detail = {
-#             "error": f"Draft compilation failed: {str(e)}",
-#             "type": str(type(e).__name__),
-#             "details": str(e)
-#         }
-#         return JSONResponse(
-#             content=serialize_object(error_detail),
-#             status_code=500
-#         )
-
-
-# @app.post("/refine_blog/{project_name}")
-# async def refine_blog(
-#     project_name: str, # Keep project_name for potential future use/logging
-#     job_id: str = Form(...), # Still needed to get model_name from job_state
-#     compiled_draft: str = Form(...) # Add compiled_draft directly to the request
-# ) -> JSONResponse:
-#     """Refine a compiled blog draft using the BlogRefinementAgent."""
-#     try:
-#         # Retrieve state from cache (still needed for model_name)
-#         job_state = state_cache.get(job_id)
-#         if not job_state:
-#             logger.error(f"Job state not found for job_id: {job_id}")
-#             return JSONResponse(
-#                 content={"error": f"Job state not found for job_id: {job_id}. Outline/model info missing."},
-#                 status_code=404
-#             )
-
-#         # The 'compiled_draft' parameter from the Form(...) is used directly.
-#         # No need to check job_state.get("final_draft") anymore.
-#         if not compiled_draft: # This check is for the Form parameter itself.
-#             logger.error(f"Compiled draft not provided in the request for job_id: {job_id}")
-#             return JSONResponse(
-#                 content={"error": "Compiled draft must be provided in the request."},
-#                 status_code=400 
-#             )
-
-#         # Extract model name from state
-#         model_name = job_state.get("model_name")
-#         if not model_name:
-#              logger.error(f"Model name not found in cache for job_id: {job_id}")
-#              return JSONResponse(
-#                 content={"error": "Model name missing from job state."},
-#                 status_code=500
-#             )
-
-#         # Get or create agents using model_name from state
-#         agents = await get_or_create_agents(model_name)
-#         refinement_agent = agents.get("refinement_agent")
-
-#         if not refinement_agent:
-#             logger.error(f"BlogRefinementAgent not found for model {model_name}")
-#             return JSONResponse(
-#                 content={"error": "Blog refinement agent could not be initialized."},
-#                 status_code=500
-#             )
-
-#         # Run the refinement process using the graph
-#         logger.info(f"Refining blog draft for job_id: {job_id} using graph...")
-#         # Call the graph execution method instead of the old 'refine'
-#         refinement_result: Optional[RefinementResult] = await refinement_agent.refine_blog_with_graph(
-#             blog_draft=compiled_draft
-#         )
-
-#         if not refinement_result:
-#             logger.error(f"Failed to refine blog draft for job_id: {job_id}")
-#             return JSONResponse(
-#                 content={"error": "Failed to refine blog draft."},
-#                 status_code=500
-#             )
-
-#         # --- Enhancement: Store refinement results in cache ---
-#         try:
-#             if job_id in state_cache:
-#                 state_cache[job_id]["refined_draft"] = refinement_result.refined_draft
-#                 state_cache[job_id]["summary"] = refinement_result.summary
-#                 state_cache[job_id]["title_options"] = refinement_result.title_options
-#                 logger.info(f"Stored refinement results in cache for job_id: {job_id}")
-#             else:
-#                 logger.warning(f"Job state for {job_id} expired before refinement results could be stored.")
-#         except Exception as cache_update_err:
-#             logger.error(f"Failed to update cache with refinement results for job {job_id}: {cache_update_err}")
-#         # --- End Enhancement ---
-
-#         # Return the refinement results
-#         return JSONResponse(
-#             content=serialize_object({
-#                 "job_id": job_id,
-#                 "refined_draft": refinement_result.refined_draft,
-#                 "summary": refinement_result.summary,
-#                 "title_options": refinement_result.title_options
-#             })
-#         )
-
-#     except Exception as e:
-#         logger.exception(f"Blog refinement failed: {str(e)}")
-#         error_detail = {
-#             "error": f"Blog refinement failed: {str(e)}",
-#             "type": str(type(e).__name__),
-#             "details": str(e)
-#         }
-#         return JSONResponse(
-#             content=serialize_object(error_detail),
-#             status_code=500
-#         )
-
-
 @app.post("/compile_draft/{project_name}")
 async def compile_draft(
     project_name: str,
     job_id: str = Form(...)
 ) -> JSONResponse:
-    """Compile final blog draft from sections stored in job state."""
-    logger.info(f"Starting draft compilation for job_id: {job_id}")
+    """Compile final blog draft from sections stored in SQL project manager."""
+    logger.info(f"Starting draft compilation for job_id (project_id): {job_id}")
     try:
-        # Retrieve job state and refresh cache TTL
-        job_state = refresh_job_cache(job_id)
+        # Load project data from SQL project manager
+        job_state = await load_workflow_state(job_id)
         if not job_state:
-            logger.error(f"Job state not found for job_id: {job_id}")
+            logger.error(f"Project not found: {job_id}")
             return JSONResponse(
                 content={
-                    "error": f"Job state not found for job_id: {job_id}",
-                    "details": "Job state may have expired. Please regenerate the outline and draft.",
+                    "error": f"Project not found for job_id: {job_id}",
+                    "details": "Project may not exist. Please regenerate the outline and draft.",
                     "suggestion": "Try generating a new outline to restart the workflow."
                 },
                 status_code=404
             )
 
         # Extract data from state
-        outline_data = job_state["outline"]
+        outline_data = job_state.get("outline")
+        if not outline_data:
+            logger.error(f"No outline found for project: {job_id}")
+            return JSONResponse(
+                content={"error": "Outline not found. Please generate an outline first."},
+                status_code=400
+            )
+
         generated_sections = job_state.get('generated_sections', {})
         
         # Validate all sections are generated
@@ -1473,25 +969,17 @@ async def compile_draft(
                 status_code=400
             )
 
-        # Ensure cost tracking is present for final snapshots
-        cost_aggregator = job_state.get("cost_aggregator")
-        if not cost_aggregator:
-            cost_aggregator = CostAggregator()
-            target_project = job_state.get("project_id", job_id)
-            cost_aggregator.start_workflow(project_id=target_project)
-            historical = job_state.get("cost_call_history") or []
-            if not historical and job_state.get("project_id"):
-                project_record = project_manager.get_project(job_state["project_id"])
-                if project_record:
-                    historical = project_record.get("metadata", {}).get("cost_call_history", [])
-            for call in historical:
-                try:
-                    cost_aggregator.record_cost(call)
-                except Exception as err:
-                    logger.warning(f"Failed to replay cost record during compile resume: {err}")
-            job_state["cost_aggregator"] = cost_aggregator
-        if job_state.get("project_id"):
-            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
+        # Initialize cost tracking for compilation
+        cost_aggregator = CostAggregator()
+        cost_aggregator.start_workflow(project_id=job_id)
+
+        # Load existing cost history if available
+        existing_cost_history = job_state.get("cost_call_history") or []
+        for call in existing_cost_history:
+            try:
+                cost_aggregator.record_cost(call)
+            except Exception as err:
+                logger.warning(f"Failed to replay cost record during compile: {err}")
 
         # Compile blog draft
         blog_parts = []
@@ -1550,14 +1038,8 @@ async def compile_draft(
             ])
 
         final_draft = "".join(blog_parts)
-        
-        # Store in job state
-        job_state["final_draft"] = final_draft
-        job_state["compiled_at"] = datetime.now().isoformat()
-        job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
-        job_state["cost_call_history"] = list(cost_aggregator.call_history)
-        
-        logger.info(f"Successfully compiled draft for job_id: {job_id}")
+
+        logger.info(f"Successfully compiled draft for job_id: {job_id} (length: {len(final_draft)} chars)")
 
         # Save to file
         draft_saved_to_file = False
@@ -1575,54 +1057,42 @@ async def compile_draft(
         except IOError as io_err:
             logger.error(f"Failed to save compiled draft to file: {io_err}")
         
-        # Save draft milestone if project exists
-        project_id = job_state.get("project_id")
-        if not project_id:
-            # Try to find project by name
-            projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
-            for project in projects:
-                if project.get("name") == project_name:
-                    project_id = project.get("id")
-                    break
-        
-        if project_id:
-            milestone_data = {
-                "compiled_blog": final_draft,
-                "job_id": job_id,
-                "compiled_at": datetime.now().isoformat(),
-                "sections_count": num_outline_sections,
-                "word_count": len(final_draft.split()),
-                "outline_hash": job_state.get("outline_hash"),
-                # Include individual sections for resume/navigation
-                "sections": job_state.get("generated_sections", {})
-            }
-            milestone_metadata = {
-                "cost_summary": job_state.get("cost_summary"),
-                "cost_call_history": job_state.get("cost_call_history")
-            }
+        # Save draft milestone to SQL project manager
+        cost_summary = cost_aggregator.get_workflow_summary()
+        cost_call_history = list(cost_aggregator.call_history)
 
-            project_manager.save_milestone(
-                project_id,
-                MilestoneType.DRAFT_COMPLETED,
-                milestone_data,
+        milestone_data = {
+            "compiled_blog": final_draft,
+            "job_id": job_id,
+            "compiled_at": datetime.now().isoformat(),
+            "sections_count": num_outline_sections,
+            "word_count": len(final_draft.split()),
+            "outline_hash": job_state.get("outline_hash"),
+            "sections": generated_sections
+        }
+        milestone_metadata = {
+            "cost_summary": cost_summary,
+            "cost_call_history": cost_call_history
+        }
+
+        try:
+            await sql_project_manager.save_milestone(
+                project_id=job_id,
+                milestone_type=MilestoneType.DRAFT_COMPLETED,
+                data=milestone_data,
                 metadata=milestone_metadata
             )
-
-            project_manager.update_metadata(project_id, {
-                "cost_summary": job_state.get("cost_summary"),
-                "cost_call_history": job_state.get("cost_call_history"),
-                "latest_job_id": job_id
-            })
-
-            logger.info(f"Saved draft milestone for project {project_id}")
+            logger.info(f"Saved draft milestone for project {job_id}")
+        except Exception as save_err:
+            logger.warning(f"Failed to save draft milestone: {save_err}")
 
         return JSONResponse(content={
             "job_id": job_id,
-            "project_id": project_id,
+            "project_id": job_id,
             "draft": final_draft,
             "draft_saved": draft_saved_to_file,
             "sections_compiled": num_outline_sections,
-            "cost_summary": job_state.get("cost_summary")
+            "cost_summary": cost_summary
         })
 
     except Exception as e:
@@ -1649,56 +1119,39 @@ async def refine_blog(
         # DEBUG: Log incoming request details
         logger.info(f"=== REFINE BLOG REQUEST ===")
         logger.info(f"Project name: {project_name}")
-        logger.info(f"Job ID received: {job_id}")
-        logger.info(f"Job ID type: {type(job_id)}")
+        logger.info(f"Job ID (project_id): {job_id}")
         logger.info(f"Compiled draft length: {len(compiled_draft) if compiled_draft else 0}")
-        # REMOVED: Cache debug logging (no longer using cache)
-        # logger.info(f"Current cache keys: {list(state_cache.keys())}")
-        # logger.info(f"Cache size: {len(state_cache)}")
-
-        # Retrieve job state and refresh cache TTL
-        job_state = refresh_job_cache(job_id)
-        if not job_state:
-            logger.error(f"=== JOB STATE NOT FOUND ===")
-            logger.error(f"Requested job_id: {job_id}")
-            # REMOVED: Cache debug logging (no longer using cache)
-            # logger.error(f"Available cache keys: {list(state_cache.keys())}")
-            # logger.error(f"Cache entries: {[(k, type(v)) for k, v in state_cache.items()]}")
-            return JSONResponse(
-                content={
-                    "error": f"Job state not found for job_id: {job_id}",
-                    "details": "Job state may have expired. Please regenerate the outline and draft.",
-                    "suggestion": "Try generating a new outline to restart the workflow."
-                    # REMOVED: Cache debug info (no longer using cache)
-                    # "debug_info": {
-                    #     "requested_job_id": job_id,
-                    #     "available_cache_keys": list(state_cache.keys()),
-                    #     "cache_size": len(state_cache)
-                    # }
-                },
-                status_code=404
-            )
 
         # Check for compiled draft from request
         if not compiled_draft:
-            logger.error(f"Compiled draft not provided in request for job_id: {job_id}")
+            logger.error(f"Compiled draft not provided in request for project: {job_id}")
             return JSONResponse(
                 content={
-                    "error": f"No compiled draft provided in request for job_id: {job_id}.",
+                    "error": f"No compiled draft provided in request.",
                     "note": "Frontend should send compiled_draft in request body"
                 },
                 status_code=400
             )
 
-        # Get model and agents
-        model_name = job_state.get("model_name")
-        specific_model = job_state.get("specific_model")
-        if not model_name:
+        # Load project data from SQL project manager to get model info
+        project_data = await sql_project_manager.resume_project(job_id)
+        if not project_data:
+            logger.error(f"Project not found: {job_id}")
             return JSONResponse(
-                content={"error": "Model name missing from job state."},
-                status_code=500
+                content={
+                    "error": f"Project not found for job_id: {job_id}",
+                    "details": "Please ensure the project exists."
+                },
+                status_code=404
             )
 
+        # Extract model info from project metadata
+        model_name = project_data["project"]["metadata"].get("model_name", "gemini")
+        specific_model = project_data["project"]["metadata"].get("specific_model")
+
+        logger.info(f"Using model: {model_name}, specific_model: {specific_model}")
+
+        # Get or create agents
         agents = await get_or_create_agents(model_name, specific_model)
         refinement_agent = agents.get("refinement_agent")
 
@@ -1708,13 +1161,9 @@ async def refine_blog(
                 status_code=500
             )
 
-        cost_aggregator = job_state.get("cost_aggregator")
-        if not cost_aggregator:
-            cost_aggregator = CostAggregator()
-            cost_aggregator.start_workflow(project_id=job_id)
-            job_state["cost_aggregator"] = cost_aggregator
-        if job_state.get("project_id"):
-            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
+        # Initialize cost aggregator for this refinement
+        cost_aggregator = CostAggregator()
+        cost_aggregator.start_workflow(project_id=job_id)
 
         # Parse configuration if provided
         title_generation_config = None
@@ -1741,7 +1190,7 @@ async def refine_blog(
         refinement_result = await refinement_agent.refine_blog_with_graph(
             blog_draft=compiled_draft,
             cost_aggregator=cost_aggregator,
-            project_id=job_state.get("project_id", job_id),
+            project_id=job_id,  # Use job_id as project_id
             title_config=title_generation_config,
             social_config=social_media_config
         )
@@ -1752,64 +1201,49 @@ async def refine_blog(
                 status_code=500
             )
 
-        # Store results in job state
-        job_state["refined_draft"] = refinement_result.refined_draft
-        job_state["summary"] = refinement_result.summary
-        job_state["title_options"] = [option.model_dump() for option in refinement_result.title_options]
-        job_state["refined_at"] = datetime.now().isoformat()
-        job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
-        job_state["cost_call_history"] = cost_aggregator.call_history
-        
+        # Get cost summary after refinement
+        cost_summary = cost_aggregator.get_workflow_summary()
+        cost_call_history = list(cost_aggregator.call_history)
+        title_options_list = [option.model_dump() for option in refinement_result.title_options]
+
         logger.info(f"Successfully refined blog for job_id: {job_id}")
-        
-        # Save refined blog milestone if project exists
-        project_id = job_state.get("project_id")
-        if not project_id:
-            # Try to find project by name
-            projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
-            for project in projects:
-                if project.get("name") == project_name:
-                    project_id = project.get("id")
-                    break
-        
-        if project_id:
+
+        # Save refined blog milestone to SQL project manager
+        try:
             milestone_data = {
                 "refined_content": refinement_result.refined_draft,
                 "summary": refinement_result.summary,
-                "title_options": job_state["title_options"],
+                "title_options": title_options_list,
                 "job_id": job_id,
                 "refined_at": datetime.now().isoformat(),
                 "word_count": len(refinement_result.refined_draft.split()),
-                "cost_summary": job_state.get("cost_summary")
+                "cost_summary": cost_summary
             }
             milestone_metadata = {
-                "cost_summary": job_state.get("cost_summary"),
-                "cost_call_history": job_state.get("cost_call_history")
+                "cost_summary": cost_summary,
+                "cost_call_history": cost_call_history
             }
 
-            project_manager.save_milestone(
-                project_id,
-                MilestoneType.BLOG_REFINED,
-                milestone_data,
+            # Save to SQL project manager
+            await sql_project_manager.save_milestone(
+                project_id=job_id,
+                milestone_type=MilestoneType.BLOG_REFINED,
+                data=milestone_data,
                 metadata=milestone_metadata
             )
 
-            project_manager.update_metadata(project_id, {
-                "cost_summary": job_state.get("cost_summary"),
-                "cost_call_history": job_state.get("cost_call_history"),
-                "latest_job_id": job_id
-            })
-
-            logger.info(f"Saved refined blog milestone for project {project_id}")
+            logger.info(f"Saved refined blog milestone for project {job_id}")
+        except Exception as milestone_err:
+            logger.warning(f"Failed to save milestone: {milestone_err}")
 
         return JSONResponse(
             content={
                 "job_id": job_id,
-                "project_id": project_id,
+                "project_id": job_id,
                 "refined_draft": refinement_result.refined_draft,
                 "summary": refinement_result.summary,
-                "title_options": job_state["title_options"],
-                "cost_summary": job_state["cost_summary"]
+                "title_options": title_options_list,
+                "cost_summary": cost_summary
             }
         )
 
@@ -1880,13 +1314,9 @@ async def generate_social_content(
 ) -> JSONResponse:
     """Generate social media content from refined draft."""
     try:
-        # Find project_id from project_name
-        projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
-        project_id = None
-        for project in projects:
-            if project.get("name") == project_name:
-                project_id = project.get("id")
-                break
+        # Find project_id from project_name using SQL project manager
+        project = await sql_project_manager.get_project_by_name(project_name)
+        project_id = project.get("id") if project else None
 
         if not project_id:
             logger.error(f"Project not found: {project_name}")
@@ -2070,12 +1500,8 @@ async def generate_twitter_thread(
     """Generate Twitter/X thread from refined draft."""
     try:
         # Find project_id from project_name
-        projects = project_manager.list_projects(status=ProjectStatus.ACTIVE)
-        project_id = None
-        for project in projects:
-            if project.get("name") == project_name:
-                project_id = project.get("id")
-                break
+        project = await sql_project_manager.get_project_by_name(project_name)
+        project_id = project.get("id") if project else None
 
         if not project_id:
             logger.error(f"Project not found: {project_name}")
@@ -2159,75 +1585,6 @@ async def generate_twitter_thread(
                 "type": str(type(e).__name__),
                 "details": str(e)
             },
-            status_code=500
-        )
-
-@app.delete("/project/{project_name}")
-async def delete_project(project_name: str) -> JSONResponse:
-    """Delete a project and its associated content."""
-    try:
-        project_dir = Path(UPLOAD_DIRECTORY) / project_name
-        if project_dir.exists():
-            import shutil
-            shutil.rmtree(project_dir)
-
-            # REMOVED: Clear related job states from cache on project deletion
-            # No longer needed - using SQL-only persistence
-            # keys_to_delete = [
-            #     job_id for job_id, state in state_cache.items()
-            #     if state.get("project_name") == project_name
-            # ]
-            # for key in keys_to_delete:
-            #     try:
-            #         del state_cache[key]
-            #         logger.info(f"Cleared cached job state {key} during deletion of project {project_name}")
-            #     except KeyError:
-            #         pass # Already gone, ignore
-
-            # --- Clear Vector Store Caches ---
-            try:
-                # Get vector store instance (assuming it might be cached or create new)
-                # This assumes get_or_create_agents might have cached it, or we create one
-                # A better approach might be a singleton VectorStoreService instance
-                vector_store = VectorStoreService()
-                vector_store.clear_outline_cache(project_name)
-                vector_store.clear_section_cache(project_name) # Clear section cache too
-                # Also clear content chunks associated with the project
-                # This requires content_parser to have a method like clear_project_content
-                # Assuming content_parser is accessible or re-instantiated if needed
-                # This part depends on how agents/services are managed.
-                # For simplicity, let's assume we can get it from the cache if populated
-                # This might need refinement based on actual agent/service lifecycle mgmt.
-                # Check if agent_cache has been populated for any model
-                parser_cleared = False
-                for agent_set in agent_cache.values():
-                    if "content_parser" in agent_set:
-                         # Need a method on ContentParsingAgent to clear by project
-                         # Assuming such a method exists or can be added:
-                         # await agent_set["content_parser"].clear_project_data(project_name)
-                         logger.warning(f"Vector store content chunk clearing for project {project_name} not fully implemented in delete endpoint.")
-                         parser_cleared = True
-                         break # Assume one parser per model type is enough
-                if not parser_cleared:
-                    logger.warning(f"Could not find ContentParsingAgent in cache to clear chunks for project {project_name}.")
-
-            except Exception as vs_clear_err:
-                 logger.error(f"Error clearing vector store caches for project {project_name}: {vs_clear_err}")
-            # --- End Clear Vector Store Caches ---
-
-
-            return JSONResponse(
-                content={"message": f"Project '{project_name}' deleted successfully"}
-            )
-        else:
-            return JSONResponse(
-                content={"error": f"Project '{project_name}' not found"},
-                status_code=404
-            )
-    except Exception as e:
-        logger.exception(f"Project deletion failed: {str(e)}")
-        return JSONResponse(
-            content={"error": f"Project deletion failed: {str(e)}"},
             status_code=500
         )
 
@@ -2418,23 +1775,6 @@ async def resume_project(project_id: str) -> JSONResponse:
         )
 
 
-@app.get("/debug/projects")
-async def debug_projects() -> JSONResponse:
-    """
-    Debug endpoint to list active projects.
-
-    Returns:
-        List of active projects from SQL database
-    """
-    try:
-        projects = await sql_project_manager.list_projects(status="active")
-        return JSONResponse(content={"status": "success", "projects": projects})
-    except Exception as e:
-        logger.error(f"Failed to list projects: {e}")
-        return JSONResponse(
-            content={"error": f"Failed to list projects: {str(e)}"},
-            status_code=500
-        )
 
 
 @app.delete("/project/{project_id}/permanent")
@@ -2449,21 +1789,21 @@ async def delete_project_permanent(project_id: str) -> JSONResponse:
         Success status
     """
     try:
-        success = project_manager.delete_project(project_id, permanent=True)
-        
+        success = await sql_project_manager.delete_project(project_id, permanent=True)
+
         if not success:
             return JSONResponse(
                 content={"error": f"Failed to delete project {project_id}"},
                 status_code=500
             )
-        
+
         return JSONResponse(
             content={
                 "status": "success",
                 "message": f"Project {project_id} permanently deleted"
             }
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to delete project {project_id}: {e}")
         return JSONResponse(
@@ -2476,29 +1816,29 @@ async def delete_project_permanent(project_id: str) -> JSONResponse:
 async def archive_project(project_id: str) -> JSONResponse:
     """
     Archive a project (soft delete).
-    
+
     Args:
         project_id: Project UUID
-    
+
     Returns:
         Success status
     """
     try:
-        success = project_manager.archive_project(project_id)
-        
+        success = await sql_project_manager.archive_project(project_id)
+
         if not success:
             return JSONResponse(
                 content={"error": f"Failed to archive project {project_id}"},
                 status_code=404
             )
-        
+
         return JSONResponse(
             content={
                 "status": "success",
                 "message": f"Project {project_id} archived"
             }
         )
-        
+
     except Exception as e:
         logger.error(f"Failed to archive project {project_id}: {e}")
         return JSONResponse(
@@ -2514,19 +1854,19 @@ async def export_project(
 ) -> Any:
     """
     Export project data in specified format.
-    
+
     Args:
         project_id: Project UUID
         format: Export format (json, markdown, zip)
-    
+
     Returns:
         Exported data in requested format
     """
     try:
         from fastapi.responses import Response, FileResponse
         import tempfile
-        
-        export_data = project_manager.export_project(project_id, format=format)
+
+        export_data = await sql_project_manager.export_project(project_id, format=format)
         
         if export_data is None:
             return JSONResponse(

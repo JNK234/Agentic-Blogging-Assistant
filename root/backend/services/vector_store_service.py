@@ -4,7 +4,7 @@ Supports caching of generated outlines for efficient retrieval.
 """
 from chromadb import Client, Settings as ChromaSettings # Renamed to avoid conflict
 from typing import Dict, List, Optional
-from root.backend.models.embeddings.embedding_factory import EmbeddingFactory # Import the factory
+from backend.models.embeddings.embedding_factory import EmbeddingFactory # Import the factory
 import hashlib
 import logging
 import os

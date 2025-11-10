@@ -6,7 +6,7 @@ from datetime import datetime
 import logging
 import asyncio
 from langchain.schema import AIMessage, BaseMessage
-from root.backend.utils.token_counter import TokenCounter
+from backend.utils.token_counter import TokenCounter
 
 logger = logging.getLogger(__name__)
 

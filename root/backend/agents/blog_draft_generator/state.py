@@ -2,9 +2,9 @@
 # ABOUTME: It includes state classes for tracking section generation, quality validation, and iteration progress.
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any, Set
-from root.backend.parsers import ContentStructure
-from root.backend.agents.outline_generator.state import FinalOutline
-from root.backend.agents.cost_tracking_state import CostTrackingMixin
+from backend.parsers import ContentStructure
+from backend.agents.outline_generator.state import FinalOutline
+from backend.agents.cost_tracking_state import CostTrackingMixin
 
 class CodeExample(BaseModel):
     """Represents a code example in a blog section."""

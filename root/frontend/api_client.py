@@ -62,7 +62,9 @@ async def get_job_status(
 async def upload_files(
     project_name: str,
     files_to_upload: List[Tuple[str, bytes, str]], # List of (filename, content_bytes, content_type)
-    base_url: str = DEFAULT_API_BASE_URL
+    base_url: str = DEFAULT_API_BASE_URL,
+    model_name: Optional[str] = None,
+    persona: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Uploads files to the backend.
@@ -71,6 +73,8 @@ async def upload_files(
         project_name: The name of the project.
         files_to_upload: A list of tuples, each containing (filename, file_content_bytes, content_type).
         base_url: The base URL of the API.
+        model_name: Optional model name for the project (e.g., "gpt-4", "claude-3")
+        persona: Optional persona/writing style for the project
 
     Returns:
         The JSON response from the API.
@@ -78,10 +82,17 @@ async def upload_files(
     api_url = _get_api_url(f"/upload/{project_name}", base_url)
     files_payload = [("files", (filename, content, ctype)) for filename, content, ctype in files_to_upload]
 
+    # Add model_name and persona as form data if provided
+    form_data = {}
+    if model_name:
+        form_data["model_name"] = model_name
+    if persona:
+        form_data["persona"] = persona
+
     async with httpx.AsyncClient(timeout=60.0) as client: # Increased timeout for uploads
         try:
-            logger.info(f"Uploading {len(files_payload)} files to {api_url}")
-            response = await client.post(api_url, files=files_payload)
+            logger.info(f"Uploading {len(files_payload)} files to {api_url} with model={model_name}, persona={persona}")
+            response = await client.post(api_url, files=files_payload, data=form_data)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during file upload: {e}")
@@ -355,7 +366,7 @@ async def refine_blog(
     """
     api_url = _get_api_url(f"/refine_blog/{project_name}", base_url)
     data = {
-        "project_id": project_id,
+        "job_id": project_id,  # Backend expects 'job_id' not 'project_id'
         "compiled_draft": compiled_draft  # Include compiled_draft in the payload
     }
 

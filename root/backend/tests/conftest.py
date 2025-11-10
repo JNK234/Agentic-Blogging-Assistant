@@ -10,7 +10,7 @@ from unittest.mock import patch
 import sys
 sys.path.append('/Users/jnk789/Developer/Agentic Blogging Assistant/Agentic-Blogging-Assistant')
 
-from root.backend.services.project_manager import ProjectManager
+from backend.services.project_manager import ProjectManager
 
 
 @pytest.fixture(scope="session")

@@ -20,9 +20,9 @@ import asyncio
 import logging
 from typing import Optional
 
-from root.backend.models.cost_tracking_wrapper import CostTrackingModel
-from root.backend.models.model_factory import ModelFactory
-from root.backend.services.sql_project_manager import SQLProjectManager
+from backend.models.cost_tracking_wrapper import CostTrackingModel
+from backend.models.model_factory import ModelFactory
+from backend.services.sql_project_manager import SQLProjectManager
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -198,7 +198,7 @@ async def example_model_pricing():
     """Example showing pricing for different models"""
     print("\n=== Example 5: Model Pricing Information ===")
 
-    from root.backend.utils.token_counter import TokenCounter
+    from backend.utils.token_counter import TokenCounter
 
     counter = TokenCounter()
 

@@ -7,22 +7,22 @@ import logging
 import hashlib
 import json
 
-from root.backend.prompts.prompt_manager import PromptManager
-from root.backend.agents.outline_generator.graph import create_outline_graph
+from backend.prompts.prompt_manager import PromptManager
+from backend.agents.outline_generator.graph import create_outline_graph
 from typing import Optional, Tuple, List, Dict, Any # Added Dict, Any
 import logging
 import hashlib
 import json
 
-from root.backend.prompts.prompt_manager import PromptManager
-from root.backend.agents.outline_generator.graph import create_outline_graph
-from root.backend.agents.outline_generator.state import OutlineState, FinalOutline
-from root.backend.agents.content_parsing_agent import ContentParsingAgent
-from root.backend.agents.base_agent import BaseGraphAgent
-from root.backend.services.vector_store_service import VectorStoreService
-from root.backend.services.persona_service import PersonaService
-from root.backend.utils.serialization import serialize_object, to_json
-from root.backend.parsers.base import ContentStructure
+from backend.prompts.prompt_manager import PromptManager
+from backend.agents.outline_generator.graph import create_outline_graph
+from backend.agents.outline_generator.state import OutlineState, FinalOutline
+from backend.agents.content_parsing_agent import ContentParsingAgent
+from backend.agents.base_agent import BaseGraphAgent
+from backend.services.vector_store_service import VectorStoreService
+from backend.services.persona_service import PersonaService
+from backend.utils.serialization import serialize_object, to_json
+from backend.parsers.base import ContentStructure
 
 logging.basicConfig(level=logging.INFO)
 

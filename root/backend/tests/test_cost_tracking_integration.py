@@ -18,9 +18,9 @@ import tempfile
 import os
 from unittest.mock import Mock, AsyncMock, patch
 
-from root.backend.models.cost_tracking_wrapper import CostTrackingModel
-from root.backend.services.sql_project_manager import SQLProjectManager
-from root.backend.utils.token_counter import TokenCounter
+from backend.models.cost_tracking_wrapper import CostTrackingModel
+from backend.services.sql_project_manager import SQLProjectManager
+from backend.utils.token_counter import TokenCounter
 from langchain.schema import AIMessage
 
 

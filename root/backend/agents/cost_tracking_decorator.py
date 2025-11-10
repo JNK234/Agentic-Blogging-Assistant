@@ -6,8 +6,8 @@ from typing import Callable, Any, TypeVar
 import logging
 from datetime import datetime
 import asyncio
-from root.backend.models.cost_tracking_wrapper import CostTrackingModel
-from root.backend.services.cost_aggregator import CostAggregator
+from backend.models.cost_tracking_wrapper import CostTrackingModel
+from backend.services.cost_aggregator import CostAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -73,18 +73,45 @@ def track_node_costs(node_name: str, agent_name: str = None, stage: str = None):
 
                 # Inject tracking context into the model
                 if hasattr(state.model, 'configure_tracking'):
+                    import inspect
+                    import logging
+                    logger = logging.getLogger(__name__)
+
                     context_supplier = getattr(state, 'get_tracking_context', None)
                     sql_pm = getattr(state, 'sql_project_manager', None)
                     proj_id = getattr(state, 'project_id', None)
                     current_agent = getattr(state, 'current_agent_name', agent_name or 'unknown')
 
-                    state.model.configure_tracking(
-                        cost_aggregator=getattr(state, 'cost_aggregator', None),
-                        context_supplier=context_supplier,
-                        sql_project_manager=sql_pm,
-                        project_id=proj_id,
-                        agent_name=current_agent
-                    )
+                    # Build kwargs dynamically based on method signature
+                    try:
+                        sig = inspect.signature(state.model.configure_tracking)
+                        logger.debug(f"configure_tracking signature: {sig}")
+                        logger.debug(f"Parameters: {list(sig.parameters.keys())}")
+
+                        # Check if method accepts **kwargs (VAR_KEYWORD)
+                        has_var_keyword = any(
+                            p.kind == inspect.Parameter.VAR_KEYWORD
+                            for p in sig.parameters.values()
+                        )
+
+                        kwargs = {}
+                        if has_var_keyword or 'cost_aggregator' in sig.parameters:
+                            kwargs['cost_aggregator'] = getattr(state, 'cost_aggregator', None)
+                        if has_var_keyword or 'context_supplier' in sig.parameters:
+                            kwargs['context_supplier'] = context_supplier
+                        if has_var_keyword or 'sql_project_manager' in sig.parameters:
+                            kwargs['sql_project_manager'] = sql_pm
+                        if has_var_keyword or 'project_id' in sig.parameters:
+                            kwargs['project_id'] = proj_id
+                        if has_var_keyword or 'agent_name' in sig.parameters:
+                            kwargs['agent_name'] = current_agent
+
+                        state.model.configure_tracking(**kwargs)
+                    except Exception as e:
+                        logger.error(f"Error configuring tracking: {e}")
+                        logger.error(f"Model type: {type(state.model)}")
+                        logger.error(f"Has configure_tracking: {hasattr(state.model, 'configure_tracking')}")
+                        raise
                 else:
                     if hasattr(state.model, 'cost_aggregator'):
                         state.model.cost_aggregator = getattr(state, 'cost_aggregator', None)

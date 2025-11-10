@@ -4,14 +4,15 @@ import re
 from typing import Dict, List, Any
 
 from langchain_core.exceptions import OutputParserException
-from root.backend.utils.file_parser import ParsedContent
-from root.backend.agents.outline_generator.state import OutlineState
-from root.backend.agents.outline_generator.prompts import PROMPT_CONFIGS
-from root.backend.services.persona_service import PersonaService
-from root.backend.agents.cost_tracking_decorator import track_node_costs
+from backend.utils.file_parser import ParsedContent
+from backend.agents.outline_generator.state import OutlineState
+from backend.agents.outline_generator.prompts import PROMPT_CONFIGS
+from backend.services.persona_service import PersonaService
+from backend.agents.cost_tracking_decorator import track_node_costs
 from backend.services.sql_project_manager import MilestoneType
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def clean_json_response(response: str) -> str:
     """Clean LLM response by removing markdown fences and extra content."""
@@ -207,7 +208,7 @@ async def prerequisite_identifier(state: OutlineState) -> OutlineState:
         
         if not has_code and content_type == "theoretical":
             # For theoretical content, only include knowledge prerequisites
-            from root.backend.agents.outline_generator.state import Prerequisites
+            from backend.agents.outline_generator.state import Prerequisites
             state.prerequisites = Prerequisites(
                 required_knowledge=state.analysis_result.technical_concepts[:3] if state.analysis_result else [],
                 recommended_tools=[],  # No tools needed for theoretical content

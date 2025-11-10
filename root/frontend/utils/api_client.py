@@ -227,7 +227,8 @@ class BlogAPIClient:
         Returns:
             Upload response with project_id and file paths
         """
-        return await upload_files(project_name, files_to_upload, self.base_url)
+        return await upload_files(project_name, files_to_upload, self.base_url,
+                                 model_name=model_name, persona=persona)
 
     async def process_files(self, project_name: str, model_name: str,
                            file_paths: List[str]) -> Dict[str, Any]:

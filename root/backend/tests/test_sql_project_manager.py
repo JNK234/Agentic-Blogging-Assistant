@@ -12,10 +12,10 @@ from datetime import datetime
 from pathlib import Path
 import uuid
 
-from root.backend.services.sql_project_manager import (
+from backend.services.sql_project_manager import (
     SQLProjectManager, MilestoneType, ProjectStatus, SectionStatus
 )
-from root.backend.models.database import get_db_manager
+from backend.models.database import get_db_manager
 
 
 @pytest.fixture
