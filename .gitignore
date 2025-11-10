@@ -33,9 +33,11 @@ coverage.xml
 *.sqlite3
 *.bin
 
-# Vector store data
+# Vector store data and runtime files
 root/data/vector_store/
 root/data/uploads/
+data/
+root/data/projects/
 
 # Claude Code specific
 .claude/

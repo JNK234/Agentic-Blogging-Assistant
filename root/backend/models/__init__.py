@@ -1,7 +1,10 @@
-from .deepseek_model import DeepseekModel
-from .claude_model import ClaudeModel
-from .openai_model import OpenAIModel
-from .openrouter_model import OpenRouterModel
-from .model_factory import ModelFactory
+# ABOUTME: This module initializes the models package for LLM providers and generation configs
+# ABOUTME: Exports model classes, factory, and configuration classes for blog generation
 
-__all__ = ['DeepseekModel', 'ClaudeModel', 'OpenAIModel', 'OpenRouterModel', 'ModelFactory']
+# Import generation config classes
+from .generation_config import TitleGenerationConfig, SocialMediaConfig
+
+__all__ = [
+    'TitleGenerationConfig',
+    'SocialMediaConfig'
+]

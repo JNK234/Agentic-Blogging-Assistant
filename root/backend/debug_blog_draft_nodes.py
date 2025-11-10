@@ -4,10 +4,10 @@ import os
 import json
 import time
 from datetime import datetime
-from root.backend.agents.outline_generator_agent import OutlineGeneratorAgent
-from root.backend.agents.content_parsing_agent import ContentParsingAgent
-from root.backend.agents.blog_draft_generator_agent import BlogDraftGeneratorAgent
-from root.backend.agents.blog_draft_generator.nodes import (
+from backend.agents.outline_generator_agent import OutlineGeneratorAgent
+from backend.agents.content_parsing_agent import ContentParsingAgent
+from backend.agents.blog_draft_generator_agent import BlogDraftGeneratorAgent
+from backend.agents.blog_draft_generator.nodes import (
     semantic_content_mapper,
     section_generator,
     content_enhancer,
@@ -19,8 +19,8 @@ from root.backend.agents.blog_draft_generator.nodes import (
     transition_generator,
     blog_compiler
 )
-from root.backend.agents.blog_draft_generator.state import BlogDraftState
-from root.backend.models.model_factory import ModelFactory
+from backend.agents.blog_draft_generator.state import BlogDraftState
+from backend.models.model_factory import ModelFactory
 
 # Configure detailed logging
 logging.basicConfig(
@@ -215,7 +215,7 @@ class BlogDraftNodeDebugger:
             if feedback_text == 'next' or not feedback_text:
                 feedback_text = "Please add more code examples and explain the implementation details more thoroughly."
             
-            from root.backend.agents.blog_draft_generator.state import SectionFeedback
+            from backend.agents.blog_draft_generator.state import SectionFeedback
             from datetime import datetime
             
             feedback = SectionFeedback(

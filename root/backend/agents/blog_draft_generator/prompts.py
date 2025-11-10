@@ -1,6 +1,6 @@
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from root.backend.agents.blog_draft_generator.state import ContentReference, CodeExample, DraftSection, ImagePlaceholder
+from backend.agents.blog_draft_generator.state import ContentReference, CodeExample, DraftSection, ImagePlaceholder
 
 # Expert Writing Principles for contextual content generation
 EXPERT_WRITING_PRINCIPLES = """**CONTEXTUAL CONTENT GENERATION PRINCIPLES:**
@@ -78,11 +78,14 @@ Your output MUST be a valid JSON object that includes:
 
 # Section Generation Prompt
 SECTION_GENERATION_PROMPT = PromptTemplate(
-    template="""{persona_instructions}
+    template="""CRITICAL WRITING PERSONA - MUST BE FOLLOWED EXACTLY:
+{persona_instructions}
+
+MANDATORY COMPLIANCE: The above persona voice and writing style MUST be followed in EVERY sentence. No exceptions. Your writing MUST embody this persona completely. ANY deviation from this persona's voice is a CRITICAL FAILURE.
 
 {expert_writing_principles}
 
-Generate a focused and clear blog section based on the following information:
+Generate a focused and clear blog section that STRICTLY follows the persona voice above based on the following information:
 
 {format_instructions}
 
@@ -427,6 +430,155 @@ Your response MUST be **ONLY** a single, valid JSON object containing the follow
     ],
 )
 
+# Structural Rules for Blog Generation
+STRUCTURAL_RULES = {
+    "default": """
+MANDATORY STRUCTURAL REQUIREMENTS:
+1. HEADING HIERARCHY:
+   - Use ONLY H2 and H3 headings (NO H4, H5, or H6)
+   - Each H2 must have substantial content (300-500 words)
+   - Limit H3 subsections to 2-4 per H2 section
+
+2. PARAGRAPH REQUIREMENTS:
+   - Write AT LEAST 2-3 substantial paragraphs before ANY heading
+   - Each paragraph must be 3-5 sentences minimum
+   - Focus on flowing prose over fragmented sections
+
+3. LIST FORMATTING:
+   - Use bullet/numbered lists for 3 or more related items
+   - Don't use lists for fewer than 3 items
+   - Include brief explanations with each list item
+
+4. SECTION LENGTH:
+   - Maintain consistent section lengths
+   - Avoid very short sections (under 200 words)
+   - Don't create new sections for single concepts
+
+5. CONTENT FLOW:
+   - Ensure smooth transitions between paragraphs
+   - Build concepts progressively
+   - Don't fragment related content with unnecessary headings
+""",
+
+    "tutorial": """
+TUTORIAL-SPECIFIC STRUCTURAL REQUIREMENTS:
+1. Use numbered H2 sections (Step 1:, Step 2:, etc.)
+2. Each step must have clear prerequisites and outcomes
+3. Include code examples in each implementation step
+4. Use ordered lists for sequential instructions
+5. Minimum 2 paragraphs of explanation per step
+""",
+
+    "deep_dive": """
+DEEP-DIVE STRUCTURAL REQUIREMENTS:
+1. Concept-focused H2 sections (no more than 5 total)
+2. Extensive explanation (4-6 paragraphs) before subsections
+3. Use H3 only for major concept variations
+4. Include theoretical background before implementation
+5. Minimum section length: 400 words
+""",
+
+    "how_to": """
+HOW-TO STRUCTURAL REQUIREMENTS:
+1. Action-oriented H2 headings ("How to...", "Setting up...", "Implementing...")
+2. Clear before/after context for each section
+3. Use numbered lists for procedures
+4. Include troubleshooting subsections where relevant
+5. Keep sections focused on single tasks
+"""
+}
+
+def get_structural_rules(post_type: str = "default") -> str:
+    """Get structural rules based on post type."""
+    return STRUCTURAL_RULES.get(post_type, STRUCTURAL_RULES["default"])
+
+# Comprehensive Quality Validation Prompt (includes persona and structural evaluation)
+COMPREHENSIVE_QUALITY_VALIDATION_PROMPT = PromptTemplate(
+    template="""You are an expert content quality assessor evaluating blog content across multiple dimensions.
+
+SECTION INFORMATION:
+Title: {section_title}
+Learning Goals: {learning_goals}
+Target Persona: {persona_name}
+Target Section Length: {target_length} words
+
+PERSONA REQUIREMENTS:
+{persona_profile}
+
+STRUCTURAL REQUIREMENTS:
+{structural_rules}
+
+CONTENT TO EVALUATE:
+--- START CONTENT ---
+{section_content}
+--- END CONTENT ---
+
+TASK: Evaluate the content on ALL the following criteria. Provide scores between 0.0 and 1.0 for each metric.
+
+A. CONTENT QUALITY METRICS:
+1. Completeness: Does the content cover all stated Learning Goals? (0.0-1.0)
+2. Technical Accuracy: Is the technical information correct and precise? (0.0-1.0)
+3. Clarity: Is the content easy to understand and well-explained? (0.0-1.0)
+4. Code Quality: Are code examples well-written and explained? (0.0-1.0, use 0.0 if no code)
+5. Engagement: Is the content engaging for technical readers? (0.0-1.0)
+6. Structural Consistency: Does content maintain logical flow? (0.0-1.0)
+
+B. PERSONA COMPLIANCE METRICS:
+7. Voice Match: Does content match {persona_name}'s distinctive voice? (0.0-1.0)
+8. Tone Consistency: Is the tone appropriate for {persona_name}? (0.0-1.0)
+9. Audience Alignment: Does it speak to {persona_name}'s target audience? (0.0-1.0)
+10. Style Adherence: Does it follow {persona_name}'s writing patterns? (0.0-1.0)
+
+C. STRUCTURAL COMPLIANCE METRICS:
+11. Heading Hierarchy: Proper H2/H3 usage, NO H4+ headings (0.0-1.0)
+12. Paragraph Flow: At least 2-3 paragraphs before any heading (0.0-1.0)
+13. Length Compliance: Within ±20% of target {target_length} words (0.0-1.0)
+14. List Usage: Uses lists for 3+ related items (0.0-1.0)
+15. No Fragmentation: Avoids excessive small sections (0.0-1.0)
+
+OUTPUT REQUIREMENTS:
+Return ONLY a valid JSON object with ALL the following keys:
+
+{{
+    "completeness": float,
+    "technical_accuracy": float,
+    "clarity": float,
+    "code_quality": float,
+    "engagement": float,
+    "structural_consistency": float,
+    "voice_match": float,
+    "tone_consistency": float,
+    "audience_alignment": float,
+    "style_adherence": float,
+    "heading_hierarchy": float,
+    "paragraph_flow": float,
+    "length_compliance": float,
+    "list_usage": float,
+    "no_fragmentation": float,
+    "content_quality_score": float,      # Average of metrics 1-6
+    "persona_compliance_score": float,   # Average of metrics 7-10
+    "structural_compliance_score": float,# Average of metrics 11-15
+    "overall_score": float,              # Weighted average of all scores
+    "improvement_needed": boolean,
+    "content_issues": [string],          # Issues with content quality
+    "persona_violations": [string],      # Persona compliance issues
+    "structural_violations": [string],   # Structural rule violations
+    "improvement_suggestions": [string]  # Actionable suggestions
+}}
+
+IMPORTANT: All scores MUST be between 0.0 and 1.0. Lists can be empty [].
+""",
+    input_variables=[
+        "section_title",
+        "learning_goals",
+        "section_content",
+        "persona_name",
+        "persona_profile",
+        "structural_rules",
+        "target_length"
+    ],
+)
+
 # Feedback Incorporation Prompt
 FEEDBACK_INCORPORATION_PROMPT = PromptTemplate(
     template="""You are an expert technical editor. Revise the following blog section based on feedback while strictly adhering to the provided constraints:
@@ -502,9 +654,12 @@ FORMAT:
 
 # Section Transition Prompt
 SECTION_TRANSITION_PROMPT = PromptTemplate(
-    template="""{persona_instructions}
+    template="""CRITICAL: USE THIS EXACT PERSONA VOICE:
+{persona_instructions}
 
-Create a smooth transition between these blog sections:
+MANDATORY: Every word of your transition MUST follow the above persona. Do NOT use generic transitions. The persona voice OVERRIDES all other instructions.
+
+Create a smooth transition between these blog sections IN THE EXACT VOICE OF THE PERSONA ABOVE:
 
 CURRENT SECTION:
 Title: {current_section_title}
@@ -537,9 +692,12 @@ Write a brief transition paragraph (2-3 sentences) that:
 
 # Final Blog Compilation Prompt
 BLOG_COMPILATION_PROMPT = PromptTemplate(
-    template="""{persona_instructions}
+    template="""ABSOLUTE REQUIREMENT - THIS PERSONA DEFINES EVERYTHING:
+{persona_instructions}
 
-Compile the following blog sections into a cohesive final blog post:
+WARNING: You are FORBIDDEN from using any writing style other than the persona above. The ENTIRE blog MUST be written in this persona's voice. Generic technical writing is NOT acceptable.
+
+Compile the following blog sections into a cohesive final blog post USING ONLY THE PERSONA VOICE ABOVE:
 
 BLOG TITLE: {blog_title}
 DIFFICULTY LEVEL: {difficulty_level}
@@ -737,6 +895,10 @@ PROMPT_CONFIGS = {
     },
     "quality_validation": {
         "prompt": QUALITY_VALIDATION_PROMPT,
+        "parser": None  # JSON output
+    },
+    "comprehensive_quality_validation": {
+        "prompt": COMPREHENSIVE_QUALITY_VALIDATION_PROMPT,
         "parser": None  # JSON output
     },
     "feedback_incorporation": {

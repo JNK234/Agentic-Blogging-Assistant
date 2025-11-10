@@ -5,7 +5,7 @@ from typing import List
 import logging
 from chromadb import Documents, EmbeddingFunction, Embeddings
 from sentence_transformers import SentenceTransformer
-from root.backend.config.settings import Settings
+from backend.config.settings import Settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

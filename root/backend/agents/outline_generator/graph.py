@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, START, END, Graph
-from root.backend.agents.outline_generator.nodes import analyze_content, difficulty_assessor, prerequisite_identifier, outline_structurer, final_generator
-from root.backend.agents.outline_generator.state import OutlineState
+from backend.agents.outline_generator.nodes import analyze_content, difficulty_assessor, prerequisite_identifier, outline_structurer, final_generator
+from backend.agents.outline_generator.state import OutlineState
 
 async def create_outline_graph() -> StateGraph:
     """Creates the outline generation graph."""

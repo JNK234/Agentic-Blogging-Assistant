@@ -1,8 +1,8 @@
 import asyncio
 import logging
-from root.backend.agents.outline_generator_agent import OutlineGeneratorAgent
-from root.backend.agents.content_parsing_agent import ContentParsingAgent
-from root.backend.models.model_factory import ModelFactory
+from backend.agents.outline_generator_agent import OutlineGeneratorAgent
+from backend.agents.content_parsing_agent import ContentParsingAgent
+from backend.models.model_factory import ModelFactory
 
 logging.basicConfig(level=logging.INFO)
 

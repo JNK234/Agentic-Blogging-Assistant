@@ -7,8 +7,8 @@ import json
 import json
 from typing import Dict, List, Optional, Any
 from datetime import datetime
-from root.backend.services.vector_store_service import VectorStoreService
-from root.backend.agents.blog_draft_generator.state import ContentReference, CodeExample
+from backend.services.vector_store_service import VectorStoreService
+from backend.agents.blog_draft_generator.state import ContentReference, CodeExample
 
 logging.basicConfig(level=logging.INFO)
 

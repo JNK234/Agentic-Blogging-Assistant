@@ -5,7 +5,7 @@ from typing import List
 import logging
 from langchain_openai import AzureOpenAIEmbeddings
 from chromadb import Documents, EmbeddingFunction, Embeddings
-from root.backend.config.settings import Settings
+from backend.config.settings import Settings
 
 class AzureEmbeddingFunction(EmbeddingFunction):
     """Custom embedding function using Azure OpenAI for ChromaDB."""
