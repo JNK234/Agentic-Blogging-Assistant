@@ -14,12 +14,14 @@ from langchain_text_splitters import (
     TextSplitter
 )
 
-from root.backend.parsers import ParserFactory, ContentStructure
-from root.backend.services.vector_store_service import VectorStoreService
+from backend.parsers import ParserFactory, ContentStructure
+from backend.services.vector_store_service import VectorStoreService
+from backend.agents.cost_tracking_decorator import track_node_costs
 from .state import ContentParsingState
 
 logging.basicConfig(level=logging.INFO)
 
+@track_node_costs("validate_file", agent_name="ContentParsingAgent", stage="content_parsing")
 async def validate_file(state: ContentParsingState) -> ContentParsingState:
     """Validates the input file."""
     try:
@@ -38,6 +40,7 @@ async def validate_file(state: ContentParsingState) -> ContentParsingState:
         state.errors.append(f"Validation error: {str(e)}")
     return state
 
+@track_node_costs("parse_content", agent_name="ContentParsingAgent", stage="content_parsing")
 async def parse_content(state: ContentParsingState) -> ContentParsingState:
     """Parses the file content."""
     if not state.validation_result or not all(state.validation_result.values()):
@@ -69,6 +72,7 @@ async def parse_content(state: ContentParsingState) -> ContentParsingState:
     return state
 # Removed the old _chunk_content helper function as it's replaced by LangChain splitters
 
+@track_node_costs("chunk_content", agent_name="ContentParsingAgent", stage="content_parsing")
 async def chunk_content(state: ContentParsingState) -> ContentParsingState:
     """Chunks the parsed content using appropriate LangChain text splitters."""
     if not state.parsed_content:
@@ -168,6 +172,7 @@ async def chunk_content(state: ContentParsingState) -> ContentParsingState:
     return state
 
 
+@track_node_costs("prepare_metadata", agent_name="ContentParsingAgent", stage="content_parsing")
 async def prepare_metadata(state: ContentParsingState) -> ContentParsingState:
     """Prepares metadata for storage."""
     if not state.parsed_content:
@@ -194,6 +199,7 @@ async def prepare_metadata(state: ContentParsingState) -> ContentParsingState:
         state.errors.append(f"Metadata error: {str(e)}")
     return state
 
+@track_node_costs("store_content", agent_name="ContentParsingAgent", stage="content_parsing")
 async def store_content(state: ContentParsingState) -> ContentParsingState:
     """Stores the processed content."""
     # Replace print statements with proper logging

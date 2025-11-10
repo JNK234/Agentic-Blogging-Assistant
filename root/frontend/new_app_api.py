@@ -21,6 +21,8 @@ import api_client
 from auto_save_manager import AutoSaveManager
 from services.project_service import ProjectService
 from components.project_manager import ProjectManagerUI
+from utils.api_client import BlogAPIClient
+from components.api_project_dashboard import APIProjectDashboard
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -74,7 +76,6 @@ class SessionManager:
                 'notebook_hash': None,
                 'markdown_hash': None,
                 'python_hashes': [], # Store multiple python file hashes if needed
-                'job_id': None, # ID for the current outline/draft generation job
                 'generated_outline': None,
                 'generated_sections': {}, # Dict mapping index to section data {title, raw_content, formatted_content}
                 'final_draft': None, # Compiled draft before refinement
@@ -133,7 +134,7 @@ class SessionManager:
         keys_to_reset = [
             'project_name', 'selected_model', 'selected_persona', 'specific_model', 'uploaded_files_info', 'processed_file_paths',
             'processed_file_hashes', 'notebook_hash', 'markdown_hash', 'python_hashes',
-            'job_id', 'generated_outline', 'generated_sections', 'final_draft', 'refined_draft',
+            'generated_outline', 'generated_sections', 'final_draft', 'refined_draft',
             'summary', 'title_options', 'social_content', 'current_section_index', 'total_sections',
             'is_initialized', 'error_message'
         ]
@@ -638,14 +639,26 @@ class SidebarUI:
                 self._check_api_health(api_base_url)
 
             st.markdown("---")
-            
-            # Project Management Section
+
+            # Project Dashboard Section (New API-based)
             try:
-                project_manager = ProjectManagerUI(SessionManager, api_base_url)
-                project_manager.render()
+                # Initialize API client if not already done
+                if not hasattr(st.session_state, 'blog_api_client'):
+                    st.session_state.blog_api_client = BlogAPIClient(base_url=api_base_url)
+
+                # Render project dashboard in sidebar
+                api_dashboard = APIProjectDashboard(st.session_state.blog_api_client)
+                selected_project = api_dashboard.render_sidebar()
+
+                # Handle project selection
+                if selected_project:
+                    SessionManager.set('current_project_id', selected_project)
+                    SessionManager.set('project_id', selected_project)
+                    st.rerun()
+
             except Exception as e:
-                st.error(f"Project manager error: {str(e)}")
-                logger.error(f"Project manager error: {e}")
+                st.error(f"Dashboard error: {str(e)}")
+                logger.error(f"Dashboard error: {e}")
 
             st.markdown("---")
 
@@ -810,9 +823,10 @@ class SidebarUI:
 
                     # Run the async initialization process
                     try:
-                        # Use current provider from session (reactive section above)
+                        # Use current provider and persona from session (reactive section above)
                         provider_for_init = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
-                        asyncio.run(self._initialize_assistant(project_name, provider_for_init, uploaded_files, api_base_url))
+                        persona_for_init = SessionManager.get('selected_persona', 'neuraforge')
+                        asyncio.run(self._initialize_assistant(project_name, provider_for_init, uploaded_files, api_base_url, persona=persona_for_init))
                     except (httpx.HTTPStatusError, ConnectionError, ValueError) as api_err:
                         SessionManager.set_error(f"API Error: {str(api_err)}")
                         SessionManager.set_status("Initialization failed.")
@@ -892,14 +906,15 @@ class SidebarUI:
             SessionManager.set_status("API unreachable.")
 
 
-    async def _initialize_assistant(self, project_name, model_name, uploaded_files, base_url):
+    async def _initialize_assistant(self, project_name, model_name, uploaded_files, base_url, persona=None):
         """Handles the async steps of uploading and processing files via API."""
         SessionManager.set_status("Uploading files...")
         files_to_send: List[Tuple[str, bytes, str]] = []
         for f in uploaded_files:
             files_to_send.append((f.name, f.getvalue(), f.type or "application/octet-stream"))
 
-        upload_result = await api_client.upload_files(project_name, files_to_send, base_url=base_url)
+        upload_result = await api_client.upload_files(project_name, files_to_send, base_url=base_url,
+                                                      model_name=model_name, persona=persona)
         uploaded_paths = upload_result.get("files", [])
         if not uploaded_paths:
             SessionManager.set_error("File upload failed or returned no paths.")
@@ -965,7 +980,11 @@ class OutlineGeneratorUI:
             with col2:
                 persona = SessionManager.get('selected_persona', 'neuraforge')
                 personas = SessionManager.get('available_personas', {})
-                persona_name = personas.get(persona, {}).get('name', persona.title()) if personas else persona.title()
+                # Handle None persona gracefully
+                if persona:
+                    persona_name = personas.get(persona, {}).get('name', persona.title()) if personas else persona.title()
+                else:
+                    persona_name = "Default"
                 st.markdown(f"**Writing Style:** {persona_name}")
 
                 if personas and persona in personas:
@@ -1041,7 +1060,7 @@ class OutlineGeneratorUI:
                             specific_model=SessionManager.get('specific_model'), # Pass specific model
                             base_url=SessionManager.get('api_base_url')
                         ))
-                    SessionManager.set('job_id', result.get('job_id'))
+                    SessionManager.set('current_project_id', result.get('project_id'))
                     SessionManager.set('generated_outline', result.get('outline'))
                     SessionManager.set('total_sections', len(result.get('outline', {}).get('sections', [])))
                     SessionManager.set('current_section_index', 0) # Reset section index
@@ -1050,7 +1069,7 @@ class OutlineGeneratorUI:
                     SessionManager.set('social_content', None) # Clear old social content
                     SessionManager.set('cost_summary', result.get('cost_summary'))
                     SessionManager.set_status("Outline generated successfully.")
-                    logger.info(f"Outline generated for job ID: {result.get('job_id')}")
+                    logger.info(f"Outline generated for project ID: {result.get('project_id')}")
                     
                     # Auto-save the generated outline
                     try:
@@ -1060,7 +1079,7 @@ class OutlineGeneratorUI:
                             saved_path = auto_save_manager.save_outline(
                                 project_name=project_name,
                                 outline_data=outline_data,
-                                job_id=result.get('job_id'),
+                                project_id=result.get('project_id'),
                                 add_timestamp=True
                             )
                             logger.info(f"Auto-saved outline to: {saved_path}")
@@ -1096,7 +1115,7 @@ class OutlineGeneratorUI:
                                         SessionManager.set('generated_sections', {})
                                         SessionManager.set('final_draft', None)
                                         SessionManager.set('social_content', None)
-                                        SessionManager.set('job_id', outline_info.get("job_id"))
+                                        SessionManager.set('current_project_id', outline_info.get("project_id"))
                                         SessionManager.set_status("Outline loaded successfully from saved file.")
                                         st.success(f"✅ Loaded outline: {outline_info['title']}")
                                         st.rerun()
@@ -1117,7 +1136,7 @@ class OutlineGeneratorUI:
             st.subheader("Generated Outline")
             # Display the outline in a readable format
             display_readable_outline(outline)
-            st.success(f"Outline ready for Job ID: `{SessionManager.get('job_id')}`")
+            st.success(f"Outline ready for Project ID: `{SessionManager.get('current_project_id')}`")
             st.markdown("---")
             st.info("Proceed to the 'Blog Draft' tab to generate sections.")
         else:
@@ -1129,11 +1148,11 @@ class BlogDraftUI:
     def render(self):
         st.header("2. Generate Blog Draft Sections")
 
-        if not SessionManager.get('job_id') or not SessionManager.get('generated_outline'):
+        if not SessionManager.get('current_project_id') or not SessionManager.get('generated_outline'):
             st.warning("Please generate an outline first on the 'Outline' tab.")
             return
 
-        job_id = SessionManager.get('job_id')
+        project_id = SessionManager.get('current_project_id')
         project_name = SessionManager.get('project_name')
         outline = SessionManager.get('generated_outline')
         total_sections = SessionManager.get('total_sections', 0)
@@ -1167,7 +1186,7 @@ class BlogDraftUI:
                                         # Load the draft
                                         loaded_draft = auto_save_manager.load_draft_content(draft_info["file_path"])
                                         SessionManager.set('final_draft', loaded_draft)
-                                        SessionManager.set('job_id', draft_info.get("job_id"))
+                                        SessionManager.set('current_project_id', draft_info.get("project_id"))
                                         SessionManager.set_status("Blog draft loaded successfully from saved file.")
                                         st.success(f"✅ Loaded draft: {draft_info['filename']}")
                                         st.rerun()
@@ -1204,7 +1223,7 @@ class BlogDraftUI:
                     with st.spinner(f"Calling API to generate section {current_section_index + 1}..."):
                         result = asyncio.run(api_client.generate_section(
                             project_name=project_name,
-                            job_id=job_id,
+                            project_id=project_id,
                             section_index=current_section_index,
                             max_iterations=max_iter,
                             quality_threshold=quality_thresh,
@@ -1234,9 +1253,9 @@ class BlogDraftUI:
                     # Validate content (format_section_content_as_markdown now handles the dict with placeholders)
                     formatted_content = format_section_content_as_markdown(section_data)
                     if "Error:" in formatted_content and section_content_raw is None:
-                         logger.warning(f"generate_section (cached={was_cached}) for job {job_id}, section {current_section_index} returned None content. Full result: {result}")
+                         logger.warning(f"generate_section (cached={was_cached}) for project {project_id}, section {current_section_index} returned None content. Full result: {result}")
                     elif "Error:" in formatted_content:
-                         logger.error(f"generate_section (cached={was_cached}) for job {job_id}, section {current_section_index} returned unexpected content type: {type(section_content_raw)}. Value: {section_content_raw}")
+                         logger.error(f"generate_section (cached={was_cached}) for project {project_id}, section {current_section_index} returned unexpected content type: {type(section_content_raw)}. Value: {section_content_raw}")
 
 
                     # Update session state
@@ -1287,8 +1306,8 @@ class BlogDraftUI:
                     final_draft_content = "\n\n".join(draft_parts)
                     SessionManager.set('final_draft', final_draft_content)
                     SessionManager.set_status("Draft compiled successfully in frontend.")
-                    logger.info(f"Draft compiled in frontend for job ID: {job_id}")
-                    
+                    logger.info(f"Draft compiled in frontend for project ID: {project_id}")
+
                     # Auto-save the compiled blog draft
                     try:
                         auto_save_manager = SessionManager.get_auto_save_manager()
@@ -1297,7 +1316,7 @@ class BlogDraftUI:
                             saved_path = auto_save_manager.save_blog_draft(
                                 project_name=project_name,
                                 draft_content=final_draft_content,
-                                job_id=job_id,
+                                project_id=project_id,
                                 add_timestamp=True
                             )
                             logger.info(f"Auto-saved blog draft to: {saved_path}")
@@ -1398,7 +1417,7 @@ class BlogDraftUI:
                             with st.spinner(f"Calling API to regenerate section {index + 1}..."):
                                 result = asyncio.run(api_client.regenerate_section_with_feedback(
                                     project_name=project_name,
-                                    job_id=job_id,
+                                    project_id=project_id,
                                     section_index=index,
                                     feedback=feedback_text,
                                     # Add advanced options if needed, e.g., from sliders outside the form
@@ -1411,10 +1430,10 @@ class BlogDraftUI:
                                 section_content = section_content_raw
                             elif section_content_raw is None:
                                 section_content = "Error: Regeneration failed to return content."
-                                logger.warning(f"regenerate_section for job {job_id}, section {index} returned None content. Full result: {result}")
+                                logger.warning(f"regenerate_section for project {project_id}, section {index} returned None content. Full result: {result}")
                             else:
                                 # Handle unexpected non-string content
-                                logger.error(f"regenerate_section for job {job_id}, section {index} returned non-string content: {type(section_content_raw)}. Value: {section_content_raw}")
+                                logger.error(f"regenerate_section for project {project_id}, section {index} returned non-string content: {type(section_content_raw)}. Value: {section_content_raw}")
                                 # Note: section_content variable is not directly used below, but error logging is kept.
 
                             # Explicitly fetch the latest state right before updating
@@ -1451,7 +1470,7 @@ class RefinementUI:
         st.header("3. Refine & Finalize Blog")
 
         final_draft = SessionManager.get('final_draft')
-        job_id = SessionManager.get('job_id')
+        project_id = SessionManager.get('current_project_id')
         project_name = SessionManager.get('project_name')
 
         if not final_draft:
@@ -1489,8 +1508,8 @@ class RefinementUI:
                         # Store the uploaded draft in session state
                         SessionManager.set('final_draft', draft_content)
                         SessionManager.set('project_name', project_name)
-                        # Clear any existing job_id since we're starting fresh
-                        SessionManager.set('job_id', None)
+                        # Clear any existing project_id since we're starting fresh
+                        SessionManager.set('current_project_id', None)
                         st.success("✅ Draft loaded successfully! You can now refine it.")
                         st.rerun()
                     else:
@@ -1505,9 +1524,17 @@ class RefinementUI:
 
         st.subheader("Generate Introduction, Conclusion, Summary, Titles & Suggestions") # Updated subheader
 
+        # Import the configuration UI component
+        from components.generation_config_ui import get_generation_configs
+
+        # Add configuration controls
+        title_config_json, social_config_json = get_generation_configs()
+
+        st.divider()
+
         # Resume from saved refined blog option
         col1, col2 = st.columns([2, 1])
-        
+
         with col1:
             if st.button("Refine Blog", key="refine_blog_btn"):
                 SessionManager.set_status("Refining blog draft...")
@@ -1519,17 +1546,19 @@ class RefinementUI:
                         if not compiled_draft_content:
                             raise ValueError("Compiled draft content is missing from session state.")
 
-                        # Call the appropriate API client function based on whether we have a job_id
-                        if job_id:
-                            # Use regular refine_blog with job state
+                        # Call the appropriate API client function based on whether we have a project_id
+                        if project_id:
+                            # Use regular refine_blog with project state
                             result = asyncio.run(api_client.refine_blog(
                                 project_name=project_name,
-                                job_id=job_id,
+                                project_id=project_id,
                                 compiled_draft=compiled_draft_content, # Pass the draft content
+                                title_config=title_config_json,  # Pass configuration
+                                social_config=social_config_json,  # Pass configuration
                                 base_url=SessionManager.get('api_base_url')
                             ))
                         else:
-                            # Use standalone refinement for uploaded drafts without job state
+                            # Use standalone refinement for uploaded drafts without project state
                             selected_model = SessionManager.get('selected_model', 'claude')  # Provider key
                             specific_model = SessionManager.get('specific_model')
                             result = asyncio.run(api_client.refine_standalone(
@@ -1537,6 +1566,8 @@ class RefinementUI:
                                 compiled_draft=compiled_draft_content,
                                 model_name=selected_model,  # Provider key
                                 specific_model=specific_model,  # Specific model id if available
+                                title_config=title_config_json,  # Pass configuration
+                                social_config=social_config_json,  # Pass configuration
                                 base_url=SessionManager.get('api_base_url')
                             ))
                     # Store the results from the API response
@@ -1545,7 +1576,7 @@ class RefinementUI:
                     SessionManager.set('title_options', result.get('title_options')) # Expecting a list of dicts
                     SessionManager.set('cost_summary', result.get('cost_summary'))
                     SessionManager.set_status("Blog refined successfully.")
-                    logger.info(f"Blog refined for job ID: {job_id}")
+                    logger.info(f"Blog refined for project ID: {project_id}")
                     
                     # Auto-save the refined blog content
                     try:
@@ -1559,7 +1590,7 @@ class RefinementUI:
                                 refined_content=refined_content,
                                 summary=summary_content,
                                 title_options=title_options_content,
-                                job_id=job_id,
+                                project_id=project_id,
                                 add_timestamp=True
                             )
                             logger.info(f"Auto-saved refined blog to: {saved_path}")
@@ -1592,7 +1623,7 @@ class RefinementUI:
                                         # Load the refined content
                                         loaded_refined = auto_save_manager.load_refined_content(refined_info["file_path"])
                                         SessionManager.set('refined_draft', loaded_refined)
-                                        SessionManager.set('job_id', refined_info.get("job_id"))
+                                        SessionManager.set('current_project_id', refined_info.get("project_id"))
                                         SessionManager.set_status("Refined blog loaded successfully from saved file.")
                                         st.success(f"✅ Loaded refined blog: {refined_info['filename']}")
                                         st.rerun()
@@ -1703,15 +1734,15 @@ class SocialPostsUI:
                         # Store in session state
                         SessionManager.set('refined_draft', refined_content)
                         SessionManager.set('project_name', project_name)
-                        # Clear job_id since we're using uploaded content
-                        SessionManager.set('job_id', None)
+                        # Clear project_id since we're using uploaded content
+                        SessionManager.set('current_project_id', None)
                         st.success("✅ Refined blog loaded successfully! You can now generate social content.")
                         st.rerun()
                     else:
                         st.error("Please enter a project name.")
             return
 
-        job_id = SessionManager.get('job_id')
+        project_id = SessionManager.get('current_project_id')
         project_name = SessionManager.get('project_name')
 
         if st.button("Generate Social Content", key="gen_social_btn"):
@@ -1719,12 +1750,12 @@ class SocialPostsUI:
             SessionManager.clear_error()
             try:
                 with st.spinner("Calling API to generate social content..."):
-                    # Check if we have a job_id and use appropriate endpoint
-                    if job_id:
-                        # Use regular social content generation with job state
+                    # Check if we have a project_id and use appropriate endpoint
+                    if project_id:
+                        # Use regular social content generation with project state
                         result = asyncio.run(api_client.generate_social_content(
                             project_name=project_name,
-                            job_id=job_id,
+                            project_id=project_id,
                             base_url=SessionManager.get('api_base_url')
                         ))
                     else:
@@ -1915,10 +1946,47 @@ class BloggingAssistantAPIApp:
         elif status_message and not SessionManager.get('is_initialized'): # Show status only if not initialized
              st.info(status_message)
 
-        # Show current project context
+        # Show current project context with progress
         current_project_name = SessionManager.get('current_project_name')
+        current_project_id = SessionManager.get('current_project_id')
+
         if current_project_name:
             st.markdown(f"### 📝 Current Project: **{current_project_name}**")
+
+            # Show project progress if we have an API client and project ID
+            if hasattr(st.session_state, 'blog_api_client') and current_project_id:
+                try:
+                    progress_data = asyncio.run(
+                        st.session_state.blog_api_client.get_project_progress(current_project_id)
+                    )
+
+                    # Display progress metrics
+                    col1, col2, col3, col4 = st.columns(4)
+
+                    with col1:
+                        st.metric("Progress", f"{progress_data.get('progress_percentage', 0):.0f}%")
+
+                    with col2:
+                        milestones = progress_data.get('milestones', {})
+                        completed = sum(1 for v in milestones.values() if v)
+                        total = len(milestones)
+                        st.metric("Milestones", f"{completed}/{total}")
+
+                    with col3:
+                        st.metric("Cost", f"${progress_data.get('total_cost', 0):.4f}")
+
+                    with col4:
+                        status = progress_data.get('status', 'active')
+                        status_emoji = "✅" if status == "active" else "📦"
+                        st.metric("Status", f"{status_emoji} {status.title()}")
+
+                    # Progress bar
+                    st.progress(progress_data.get('progress_percentage', 0) / 100)
+
+                except Exception as e:
+                    logger.debug(f"Failed to load project progress: {e}")
+                    # Don't show error - progress is optional
+
             st.markdown("---")
 
         if SessionManager.get('is_initialized'):

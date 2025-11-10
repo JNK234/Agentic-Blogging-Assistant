@@ -1,12 +1,13 @@
+# ABOUTME: This file defines the state management models for the outline generation agent.
+# ABOUTME: It includes state classes for content analysis, difficulty assessment, and outline structure creation.
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, List, Optional, Any
-#from root.backend.utils.file_parser import ParsedContent
-from root.backend.parsers.base import ContentStructure # Added import
-from root.backend.services.vector_store_service import VectorStoreService
-from root.backend.utils.serialization import to_json, model_to_dict, serialize_object
+from backend.parsers.base import ContentStructure
+from backend.services.vector_store_service import VectorStoreService
+from backend.utils.serialization import to_json, model_to_dict, serialize_object
 from dataclasses import asdict
 import json
-from root.backend.agents.cost_tracking_state import CostTrackingMixin
+from backend.agents.cost_tracking_state import CostTrackingMixin
 
 class ContentAnalysis(BaseModel):
     main_topics: List[str]
@@ -69,6 +70,7 @@ class OutlineState(CostTrackingMixin, BaseModel):
     length_preference: Optional[str] = Field(default=None, description="User's preferred blog length category")
     custom_length: Optional[int] = Field(default=None, description="Custom target word count if specified")
     writing_style: Optional[str] = Field(default=None, description="User's preferred writing style")
+    persona: str = Field(default="neuraforge", description="Selected persona for content generation")
 
     # Intermediate states
     analysis_result: Optional[ContentAnalysis] = None
@@ -81,6 +83,9 @@ class OutlineState(CostTrackingMixin, BaseModel):
 
     # Project metadata for cost tracking
     project_name: Optional[str] = Field(default=None)
+
+    # SQL persistence (optional)
+    sql_project_manager: Optional[Any] = Field(default=None, description="SQL project manager for milestone persistence")
 
     def __init__(self, **data):
         super().__init__(**data)

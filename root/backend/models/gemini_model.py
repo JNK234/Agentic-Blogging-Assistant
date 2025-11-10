@@ -94,6 +94,15 @@ class GeminiModel:
             logger.exception(f"Error during asynchronous Gemini invoke: {str(e)}")
             raise Exception(f"Gemini API call failed (async): {str(e)}")
 
+    def configure_tracking(self, **kwargs):
+        """
+        Stub method for compatibility with cost tracking decorator.
+        GeminiModel doesn't track costs internally - this is a no-op.
+        Cost tracking should be handled by CostTrackingModel wrapper or external decorators.
+        """
+        # No-op: GeminiModel doesn't implement cost tracking directly
+        pass
+
     # Placeholder for potential future embedding functionality if needed via LangChain
     # async def get_embedding(self, text: str) -> List[float]:
     #     # Implementation would use LangChain's GoogleGenerativeAIEmbeddings

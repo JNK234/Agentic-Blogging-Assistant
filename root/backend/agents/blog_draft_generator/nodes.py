@@ -5,11 +5,11 @@ import json
 import re
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity # Added for semantic similarity
-from root.backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback, ImagePlaceholder
-from root.backend.utils.blog_context import extract_blog_narrative_context, calculate_content_length, calculate_section_length_targets, get_length_priority
-from root.backend.services.persona_service import PersonaService
-from root.backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS, EXPERT_WRITING_PRINCIPLES
-from root.backend.agents.blog_draft_generator.utils import (
+from backend.agents.blog_draft_generator.state import BlogDraftState, DraftSection, ContentReference, CodeExample, SectionVersion, SectionFeedback, ImagePlaceholder
+from backend.utils.blog_context import extract_blog_narrative_context, calculate_content_length, calculate_section_length_targets, get_length_priority
+from backend.services.persona_service import PersonaService
+from backend.agents.blog_draft_generator.prompts import PROMPT_CONFIGS, EXPERT_WRITING_PRINCIPLES
+from backend.agents.blog_draft_generator.utils import (
     extract_code_blocks,
     format_content_references,
     extract_section_metrics,
@@ -21,8 +21,9 @@ from root.backend.agents.blog_draft_generator.utils import (
     process_search_results,
     determine_content_category
 )
-from root.backend.services.vector_store_service import VectorStoreService
-from root.backend.agents.cost_tracking_decorator import track_node_costs, track_iteration_costs
+from backend.services.vector_store_service import VectorStoreService
+from backend.agents.cost_tracking_decorator import track_node_costs, track_iteration_costs
+from backend.services.sql_project_manager import MilestoneType, SectionStatus
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,10 +35,10 @@ def validate_and_enforce_constraints(content: str, include_code: bool, section_t
     """
     import re
     
-    print(f"DEBUG: validate_and_enforce_constraints - Input content length: {len(content)}, include_code: {include_code}")
+    logger.debug(f"DEBUG: validate_and_enforce_constraints - Input content length: {len(content)}, include_code: {include_code}")
     
     if not content:
-        print(f"DEBUG: validate_and_enforce_constraints - Empty content received for section '{section_title}'")
+        logger.debug(f"DEBUG: validate_and_enforce_constraints - Empty content received for section '{section_title}'")
         return content
     
     # First, handle the case where LLM wraps content in markdown fences
@@ -46,9 +47,9 @@ def validate_and_enforce_constraints(content: str, include_code: bool, section_t
     markdown_match = re.match(markdown_wrapper_pattern, content.strip(), re.DOTALL)
     
     if markdown_match:
-        print(f"DEBUG: Found markdown-wrapped content, extracting inner content")
+        logger.debug(f"DEBUG: Found markdown-wrapped content, extracting inner content")
         content = markdown_match.group(1).strip()
-        print(f"DEBUG: After markdown extraction, content length: {len(content)}")
+        logger.debug(f"DEBUG: After markdown extraction, content length: {len(content)}")
         
     if not include_code:
         # More specific pattern that excludes markdown language specifiers
@@ -59,11 +60,11 @@ def validate_and_enforce_constraints(content: str, include_code: bool, section_t
         code_blocks = re.findall(code_block_pattern, content)
         if code_blocks:
             logging.warning(f"Section '{section_title}' has include_code=False but contains {len(code_blocks)} code block(s). Removing them.")
-            print(f"DEBUG: Found {len(code_blocks)} actual code blocks to remove")
+            logger.debug(f"DEBUG: Found {len(code_blocks)} actual code blocks to remove")
             for i, block in enumerate(code_blocks):
                 logging.info(f"Removed code block {i+1}: {block[:100]}...")
         else:
-            print(f"DEBUG: No actual code blocks found to remove")
+            logger.debug(f"DEBUG: No actual code blocks found to remove")
         
         # Remove code blocks
         cleaned_content = re.sub(code_block_pattern, '', content)
@@ -72,10 +73,10 @@ def validate_and_enforce_constraints(content: str, include_code: bool, section_t
         cleaned_content = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_content)
         
         result = cleaned_content.strip()
-        print(f"DEBUG: validate_and_enforce_constraints - After code removal, content length: {len(result)}")
+        logger.debug(f"DEBUG: validate_and_enforce_constraints - After code removal, content length: {len(result)}")
         return result
     
-    print(f"DEBUG: validate_and_enforce_constraints - No constraints applied, returning original content")
+    logger.debug(f"DEBUG: validate_and_enforce_constraints - No constraints applied, returning original content")
     return content
 
 @track_node_costs("semantic_mapper", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
@@ -439,21 +440,21 @@ async def retrieve_context_with_hyde(state: BlogDraftState) -> BlogDraftState:
 async def section_generator(state: BlogDraftState) -> BlogDraftState:
     """Generates content for current section using retrieved HyDE context."""
     logging.info("Executing node: section_generator")
-    print(f"Section generator - Starting generation for section index {state.current_section_index}")
+    logger.debug(f"Section generator - Starting generation for section index {state.current_section_index}")
     
     # Update generation stage
     state.generation_stage = "drafting"
     
     if state.current_section_index >= len(state.outline.sections):
         logging.info("All sections have been generated.")
-        print("All sections have been generated.")
+        logger.debug("All sections have been generated.")
         return state
     
     section = state.outline.sections[state.current_section_index]
     section_title = section.title
     learning_goals = section.learning_goals
     
-    print(f"Section generator - Generating content for '{section_title}' using HyDE context")
+    logger.debug(f"Section generator - Generating content for '{section_title}' using HyDE context")
 
     # Get relevant context retrieved via HyDE
     hyde_context_list = state.hyde_retrieved_context if state.hyde_retrieved_context else []
@@ -633,21 +634,21 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
             # Optionally, update title if LLM refines it, though prompt doesn't explicitly ask for this.
             # parsed_title = parsed_draft_section_object.title 
             logging.info(f"Successfully parsed DraftSection. Extracted content length: {len(actual_markdown_content)}")
-            print(f"DEBUG: Successfully parsed DraftSection content length: {len(actual_markdown_content)}")
+            logger.debug(f"DEBUG: Successfully parsed DraftSection content length: {len(actual_markdown_content)}")
         except Exception as e:
             logging.error(f"Failed to parse DraftSection from LLM output for section '{section_title}': {e}. LLM output was: {llm_output_str}")
-            print(f"DEBUG: Failed to parse DraftSection, attempting fallback. Error: {e}")
+            logger.debug(f"DEBUG: Failed to parse DraftSection, attempting fallback. Error: {e}")
             # Fallback: Try to extract content if LLM just returned markdown, or use error message.
             # This might happen if the LLM doesn't perfectly follow the JSON instruction.
             if "{" not in llm_output_str and "}" not in llm_output_str: # Heuristic: if no JSON structure, assume it's direct markdown
                 actual_markdown_content = llm_output_str
                 logging.warning("LLM output did not seem to be JSON, using raw output as content.")
-                print(f"DEBUG: Using raw output as content. Length: {len(actual_markdown_content)}")
+                logger.debug(f"DEBUG: Using raw output as content. Length: {len(actual_markdown_content)}")
             else:
                 actual_markdown_content = f"Error: Could not parse section content from LLM. Raw output: {llm_output_str}"
-                print(f"DEBUG: Using error fallback content. Length: {len(actual_markdown_content)}")
+                logger.debug(f"DEBUG: Using error fallback content. Length: {len(actual_markdown_content)}")
         
-        print(f"DEBUG: Before validation - actual_markdown_content length: {len(actual_markdown_content)}")
+        logger.debug(f"DEBUG: Before validation - actual_markdown_content length: {len(actual_markdown_content)}")
         
         # Create a new draft section
         draft_section = DraftSection(
@@ -664,15 +665,15 @@ Current Position: Section {state.current_section_index + 1} of {len(getattr(stat
         draft_section.key_concepts = learning_goals
         
         # Validate and enforce constraints on the generated content
-        print(f"DEBUG: Section '{section_title}' include_code: {section.include_code}")
+        logger.debug(f"DEBUG: Section '{section_title}' include_code: {section.include_code}")
         validated_content = validate_and_enforce_constraints(
             actual_markdown_content, 
             section.include_code, 
             section_title
         )
-        print(f"DEBUG: After validation - content length: {len(validated_content)}")
+        logger.debug(f"DEBUG: After validation - content length: {len(validated_content)}")
         draft_section.content = validated_content
-        print(f"DEBUG: Final draft section content length: {len(draft_section.content)}")
+        logger.debug(f"DEBUG: Final draft section content length: {len(draft_section.content)}")
         
         # Add to sections list
         state.sections.append(draft_section)
@@ -952,12 +953,7 @@ async def image_placeholder_generator(state: BlogDraftState) -> BlogDraftState:
     
     # Extract main concepts from learning goals and content
     main_concepts = learning_goals[:3]  # Use first 3 learning goals as main concepts
-    
-    # Only generate image placeholders for substantial content
-    if content_length < 200:
-        logging.info(f"Section '{section_title}' is too short ({content_length} words) for image placeholders.")
-        return state
-    
+
     try:
         # Prepare input variables for the prompt
         input_variables = {
@@ -1007,32 +1003,62 @@ async def image_placeholder_generator(state: BlogDraftState) -> BlogDraftState:
 @track_node_costs("validator", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 @track_iteration_costs
 async def quality_validator(state: BlogDraftState) -> BlogDraftState:
-    """Validates the quality of the current section."""
+    """Validates the quality of the current section with comprehensive scoring."""
     logging.info("Executing node: quality_validator")
-    print(f"Quality validator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
+    logger.debug(f"Quality validator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
     logging.info(f"Quality validator - Current section index: {state.current_section_index}, Section: {state.current_section.title if state.current_section else 'None'}")
-    
+
     # Update generation stage
     state.generation_stage = "validating"
-    
+
     if state.current_section is None:
         logging.warning("No current section to validate.")
         return state
-    
+
     section_title = state.current_section.title
-    section_index = state.current_section_index  # Use current index directly (0-based)
+    section_index = state.current_section_index
     learning_goals = state.outline.sections[section_index].learning_goals
     section_content = state.current_section.content
-    
-    # Prepare input variables for the prompt
-    input_variables = {
-        "section_title": section_title,
-        "learning_goals": ", ".join(learning_goals),
-        "section_content": section_content
-    }
-    
-    # Format prompt and get LLM response
-    prompt = PROMPT_CONFIGS["quality_validation"]["prompt"].format(**input_variables)
+
+    # NEW: Get persona profile and structural rules
+    from backend.services.persona_service import PersonaService
+    from backend.agents.blog_draft_generator.prompts import get_structural_rules
+    persona_service = PersonaService()
+    persona_name = getattr(state, 'persona', 'neuraforge')
+    persona_profile = persona_service.get_persona_prompt(persona_name)
+
+    # NEW: Get structural rules based on post type
+    post_type = getattr(state, 'post_type', 'default')
+    structural_rules = get_structural_rules(post_type)
+
+    # NEW: Get target length for this section
+    target_length = state.section_length_targets.get(section_title, 400)
+
+    # Check if we should use comprehensive validation (when persona and structural rules are available)
+    use_comprehensive = True  # Always use comprehensive validation for better quality
+
+    if use_comprehensive:
+        # Prepare input variables for the comprehensive prompt
+        input_variables = {
+            "section_title": section_title,
+            "learning_goals": ", ".join(learning_goals),
+            "section_content": section_content,
+            "persona_name": persona_name,
+            "persona_profile": persona_profile,
+            "structural_rules": structural_rules,
+            "target_length": target_length
+        }
+
+        # Use the comprehensive validation prompt
+        prompt = PROMPT_CONFIGS["comprehensive_quality_validation"]["prompt"].format(**input_variables)
+    else:
+        # Fallback to original validation (backward compatibility)
+        input_variables = {
+            "section_title": section_title,
+            "learning_goals": ", ".join(learning_goals),
+            "section_content": section_content
+        }
+        prompt = PROMPT_CONFIGS["quality_validation"]["prompt"].format(**input_variables)
     
     try:
         response = await state.model.ainvoke(prompt)
@@ -1044,97 +1070,116 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
         
         # Parse the response
         parsed_result = parse_json_safely(response, {})
-        logging.info(f"Parsed quality validation result: {parsed_result}")
+        logging.info(f"Parsed quality validation result")
 
-        # --- Robust Quality Metric Handling ---
-        required_metrics = [
-            "completeness", "technical_accuracy", "clarity",
-            "code_quality", "engagement", "structural_consistency", "overall_score"
-        ]
-        quality_metrics = {}
-        parsing_successful = True
+        if use_comprehensive:
+            # Handle comprehensive validation response
+            if not parsed_result:
+                logging.warning(f"Comprehensive validation response was not valid JSON")
+                # Set default low scores for all metrics
+                parsed_result = {
+                    # Content quality metrics
+                    "completeness": 0.0, "technical_accuracy": 0.0, "clarity": 0.0,
+                    "code_quality": 0.0, "engagement": 0.0, "structural_consistency": 0.0,
+                    # Persona compliance metrics
+                    "voice_match": 0.0, "tone_consistency": 0.0,
+                    "audience_alignment": 0.0, "style_adherence": 0.0,
+                    # Structural compliance metrics
+                    "heading_hierarchy": 0.0, "paragraph_flow": 0.0,
+                    "length_compliance": 0.0, "list_usage": 0.0, "no_fragmentation": 0.0,
+                    # Aggregated scores
+                    "content_quality_score": 0.0,
+                    "persona_compliance_score": 0.0,
+                    "structural_compliance_score": 0.0,
+                    "overall_score": 0.0,
+                    "improvement_needed": True,
+                    "content_issues": ["Failed to parse validation response"],
+                    "persona_violations": [],
+                    "structural_violations": [],
+                    "improvement_suggestions": ["Regenerate section"]
+                }
 
-        if not parsed_result:
-            logging.warning(f"Quality validation LLM response for '{section_title}' was not valid JSON or was empty.")
-            parsing_successful = False
+            # Store all metrics
+            state.current_section.quality_metrics = {
+                k: float(v) for k, v in parsed_result.items()
+                if k not in ["improvement_needed", "content_issues",
+                            "persona_violations", "structural_violations",
+                            "improvement_suggestions"]
+            }
+
+            # Store detailed scores
+            state.current_section.content_quality_score = parsed_result.get("content_quality_score", 0.0)
+            state.current_section.persona_compliance_score = parsed_result.get("persona_compliance_score", 0.0)
+            state.current_section.structural_compliance_score = parsed_result.get("structural_compliance_score", 0.0)
+
+            # Store issues
+            state.current_section.content_issues = parsed_result.get("content_issues", [])
+            state.current_section.persona_violations = parsed_result.get("persona_violations", [])
+            state.current_section.structural_violations = parsed_result.get("structural_violations", [])
+
+            # Calculate weighted overall score if not provided
+            if "overall_score" not in parsed_result or parsed_result["overall_score"] == 0.0:
+                weights = state.quality_weights
+                overall = (
+                    weights['content'] * state.current_section.content_quality_score +
+                    weights['persona'] * state.current_section.persona_compliance_score +
+                    weights['structure'] * state.current_section.structural_compliance_score
+                )
+                state.current_section.quality_metrics["overall_score"] = overall
+            else:
+                overall = parsed_result["overall_score"]
+
+            logger.debug(f"Comprehensive Scores - Content: {state.current_section.content_quality_score:.2f}, "
+                  f"Persona: {state.current_section.persona_compliance_score:.2f}, "
+                  f"Structure: {state.current_section.structural_compliance_score:.2f}, "
+                  f"Overall: {overall:.2f}")
+
         else:
-            for metric in required_metrics:
-                if metric not in parsed_result or not isinstance(parsed_result[metric], (float, int)):
-                    logging.warning(f"Metric '{metric}' missing or invalid type in quality validation response for '{section_title}'. Response: {response}")
-                    # Assign a default low score if missing/invalid to trigger feedback
-                    quality_metrics[metric] = 0.0
-                    # We might consider parsing_successful = False here too, depending on strictness
-                else:
-                    quality_metrics[metric] = float(parsed_result[metric])
+            # Original validation handling (backward compatibility)
+            required_metrics = [
+                "completeness", "technical_accuracy", "clarity",
+                "code_quality", "engagement", "structural_consistency", "overall_score"
+            ]
+            quality_metrics = {}
+            parsing_successful = True
 
-        # If parsing failed completely, assign all defaults
-        if not parsing_successful:
-             quality_metrics = {metric: 0.0 for metric in required_metrics}
-             logging.info(f"Assigned default low scores for '{section_title}' due to parsing failure.")
+            if not parsed_result:
+                logging.warning(f"Quality validation LLM response for '{section_title}' was not valid JSON or was empty.")
+                parsing_successful = False
+            else:
+                for metric in required_metrics:
+                    if metric not in parsed_result or not isinstance(parsed_result[metric], (float, int)):
+                        logging.warning(f"Metric '{metric}' missing or invalid type in quality validation response for '{section_title}'")
+                        quality_metrics[metric] = 0.0
+                    else:
+                        quality_metrics[metric] = float(parsed_result[metric])
 
-        # Store quality metrics
-        state.current_section.quality_metrics = quality_metrics
-        # --- End of Robust Handling ---
+            # If parsing failed completely, assign all defaults
+            if not parsing_successful:
+                quality_metrics = {metric: 0.0 for metric in required_metrics}
+                logging.info(f"Assigned default low scores for '{section_title}' due to parsing failure.")
 
-        # Calculate overall score if it wasn't correctly parsed or provided (as a fallback)
-        # Note: The robust handling above already assigns 0.0 if 'overall_score' is missing/invalid
-        if "overall_score" not in quality_metrics or quality_metrics["overall_score"] == 0.0 and parsing_successful and any(quality_metrics[m] > 0.0 for m in quality_metrics if m != "overall_score"):
-            logging.warning(f"Recalculating overall_score for '{section_title}' as it was missing or potentially invalid.")
-            metrics = quality_metrics
-            valid_scores = [metrics[m] for m in required_metrics if m != "overall_score" and m in metrics]
-            overall = sum(valid_scores) / len(valid_scores) if valid_scores else 0.0
-            state.current_section.quality_metrics["overall_score"] = overall
-            print(f"Recalculated overall score: {overall}")
+            # Store quality metrics
+            state.current_section.quality_metrics = quality_metrics
+            overall = quality_metrics.get("overall_score", 0.0)
 
         # Determine if improvement is needed based on overall score
-        # Use the potentially updated overall_score
-        overall_score = state.current_section.quality_metrics.get("overall_score", 0.0)
-        # Lowered threshold slightly as semantic matching might be stricter
-        quality_threshold = state.quality_threshold # Use threshold from state
+        overall_score = state.current_section.quality_metrics.get("overall_score", overall)
+        quality_threshold = state.quality_threshold
         improvement_needed = overall_score < quality_threshold
-        print(f"Overall score: {overall_score:.2f}, Quality Threshold: {quality_threshold}, Improvement needed: {improvement_needed}")
-
-        # --- The following block seems duplicated/incorrectly placed after the previous edit ---
-        # --- Removing it to fix syntax errors ---
-        # "completeness": result.get("completeness", 0.0),
-        # "technical_accuracy": result.get("technical_accuracy", 0.0),
-        # "clarity": result.get("clarity", 0.0),
-        # "code_quality": result.get("code_quality", 0.0),
-        # "engagement": result.get("engagement", 0.0),
-        # "structural_consistency": result.get("structural_consistency", 0.0),
-        # "overall_score": result.get("overall_score", 0.0)
-        # }
-        
-        # Calculate overall score if not provided (This logic is already handled above)
-        if "overall_score" not in state.current_section.quality_metrics:
-            metrics = state.current_section.quality_metrics
-            overall = sum([
-                metrics.get("completeness", 0.0),
-                metrics.get("technical_accuracy", 0.0),
-                metrics.get("clarity", 0.0),
-                metrics.get("code_quality", 0.0),
-                metrics.get("engagement", 0.0),
-                metrics.get("structural_consistency", 0.0)
-            ]) / 6.0
-            # state.current_section.quality_metrics["overall_score"] = overall # Already handled
-            # print(f"Calculated overall score: {overall}") # Already handled
-
-        # Determine if improvement is needed based on overall score (This logic is already handled above)
-        # overall_score = state.current_section.quality_metrics.get("overall_score", 0.0) # Already handled
-        # improvement_needed = overall_score < 0.85  # Set a threshold for quality # Already handled
-        # print(f"Overall score: {overall_score}, Improvement needed: {improvement_needed}") # Already handled
+        logger.debug(f"Overall score: {overall_score:.2f}, Quality Threshold: {quality_threshold}, Improvement needed: {improvement_needed}")
 
         # Increment iteration count
         state.iteration_count += 1
-        print(f"Incremented iteration count to: {state.iteration_count}")
+        logger.debug(f"Incremented iteration count to: {state.iteration_count}")
         
         # If improvement is needed and we haven't reached max iterations, continue
         if improvement_needed and state.iteration_count < state.max_iterations:
-            print(f"Improvement needed and iteration count ({state.iteration_count}) < max iterations ({state.max_iterations})")
+            logger.debug(f"Improvement needed and iteration count ({state.iteration_count}) < max iterations ({state.max_iterations})")
             state.status["current_section"] = f"Needs improvement (iteration {state.iteration_count})"
         else:
             # Section is good enough or we've reached max iterations
-            print(f"Section is good enough or max iterations reached. Iteration count: {state.iteration_count}")
+            logger.debug(f"Section is good enough or max iterations reached. Iteration count: {state.iteration_count}")
             state.status["current_section"] = "Ready for finalization"
             state.completed_sections.add(section_index)
             
@@ -1142,54 +1187,105 @@ async def quality_validator(state: BlogDraftState) -> BlogDraftState:
         logging.error(f"Error validating section quality: {e}")
         state.errors.append(f"Quality validation failed: {str(e)}")
         state.iteration_count += 1
-        print(f"Error in quality validator. Incremented iteration count to: {state.iteration_count}")
+        logger.debug(f"Error in quality validator. Incremented iteration count to: {state.iteration_count}")
     
     return state
 
 @track_node_costs("auto_feedback", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
-    """Generates automatic feedback for the current section."""
+    """Generates automatic feedback based on comprehensive quality metrics."""
     logging.info("Executing node: auto_feedback_generator")
-    print(f"Auto feedback generator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
-    
+    logger.debug(f"Auto feedback generator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
+
     if state.current_section is None:
         logging.warning("No current section to generate feedback for.")
-        print("No current section to generate feedback for.")
+        logger.debug("No current section to generate feedback for.")
         return state
-    
-    # Get quality metrics if available
-    quality_metrics = getattr(state.current_section, "quality_metrics", {})
-    print(f"Quality metrics: {quality_metrics}")
-    
-    # Generate specific feedback based on quality metrics
+
     feedback_points = []
-    
-    if quality_metrics.get("completeness", 1.0) < 0.8:
-        feedback_points.append("Ensure all learning goals are thoroughly covered.")
-    
-    if quality_metrics.get("technical_accuracy", 1.0) < 0.8:
-        feedback_points.append("Verify technical accuracy and provide more precise explanations.")
-    
-    if quality_metrics.get("clarity", 1.0) < 0.8:
-        feedback_points.append("Improve clarity by breaking down complex concepts.")
-    
-    if quality_metrics.get("code_quality", 1.0) < 0.8:
-        feedback_points.append("Enhance code examples with better comments and explanations.")
-    
-    if quality_metrics.get("engagement", 1.0) < 0.8:
-        feedback_points.append("Make the content more engaging with real-world applications.")
-    
-    if quality_metrics.get("structural_consistency", 1.0) < 0.8:
-        feedback_points.append("Better align the content with the original document's structure and organization.")
-    
+
+    # Content quality feedback (using issues if available)
+    if hasattr(state.current_section, 'content_issues') and state.current_section.content_issues:
+        for issue in state.current_section.content_issues[:3]:  # Top 3 content issues
+            feedback_points.append(f"Content: {issue}")
+    else:
+        # Fallback to metrics-based feedback
+        quality_metrics = getattr(state.current_section, "quality_metrics", {})
+
+        if quality_metrics.get("completeness", 1.0) < 0.8:
+            feedback_points.append("Content: Ensure all learning goals are thoroughly covered")
+
+        if quality_metrics.get("technical_accuracy", 1.0) < 0.8:
+            feedback_points.append("Content: Verify technical accuracy and provide more precise explanations")
+
+        if quality_metrics.get("clarity", 1.0) < 0.8:
+            feedback_points.append("Content: Improve clarity by breaking down complex concepts")
+
+        if quality_metrics.get("code_quality", 1.0) < 0.8:
+            feedback_points.append("Content: Enhance code examples with better comments and explanations")
+
+        if quality_metrics.get("engagement", 1.0) < 0.8:
+            feedback_points.append("Content: Make the content more engaging with real-world applications")
+
+    # Persona compliance feedback
+    if hasattr(state.current_section, 'persona_compliance_score') and state.current_section.persona_compliance_score:
+        if state.current_section.persona_compliance_score < 0.75:
+            if hasattr(state.current_section, 'persona_violations') and state.current_section.persona_violations:
+                for violation in state.current_section.persona_violations[:2]:  # Top 2 persona violations
+                    feedback_points.append(f"Persona: {violation}")
+            else:
+                persona_name = getattr(state, 'persona', 'the selected')
+                feedback_points.append(f"Persona: Better align content with {persona_name} persona voice and style")
+
+                # Specific persona metrics feedback
+                quality_metrics = getattr(state.current_section, "quality_metrics", {})
+                if quality_metrics.get("voice_match", 1.0) < 0.7:
+                    feedback_points.append(f"Persona: Adjust voice to match {persona_name} persona's distinctive style")
+
+                if quality_metrics.get("tone_consistency", 1.0) < 0.7:
+                    feedback_points.append(f"Persona: Maintain consistent {persona_name} tone throughout the section")
+
+                if quality_metrics.get("audience_alignment", 1.0) < 0.7:
+                    feedback_points.append(f"Persona: Better target {persona_name}'s intended audience")
+
+    # Structural compliance feedback
+    if hasattr(state.current_section, 'structural_compliance_score') and state.current_section.structural_compliance_score:
+        if state.current_section.structural_compliance_score < 0.8:
+            if hasattr(state.current_section, 'structural_violations') and state.current_section.structural_violations:
+                for violation in state.current_section.structural_violations[:3]:  # Top 3 structural violations
+                    feedback_points.append(f"Structure: {violation}")
+            else:
+                # Specific structural metrics feedback
+                quality_metrics = getattr(state.current_section, "quality_metrics", {})
+
+                if quality_metrics.get("paragraph_flow", 1.0) < 0.7:
+                    feedback_points.append("Structure: Add 2-3 substantial paragraphs before introducing headings")
+
+                if quality_metrics.get("heading_hierarchy", 1.0) < 0.8:
+                    feedback_points.append("Structure: Fix heading hierarchy - use only H2 and H3 levels")
+
+                if quality_metrics.get("no_fragmentation", 1.0) < 0.7:
+                    feedback_points.append("Structure: Avoid fragmenting content - combine related short sections")
+
+                if quality_metrics.get("list_usage", 1.0) < 0.7:
+                    feedback_points.append("Structure: Use bullet/numbered lists for groups of 3+ related items")
+
+                if quality_metrics.get("length_compliance", 1.0) < 0.7:
+                    target = state.section_length_targets.get(state.current_section.title, 400)
+                    current = len(state.current_section.content.split())
+                    if current < target * 0.8:
+                        feedback_points.append(f"Structure: Expand content to reach target length (~{target} words, current: {current})")
+                    elif current > target * 1.2:
+                        feedback_points.append(f"Structure: Condense content to target length (~{target} words, current: {current})")
+
     # If no specific issues, provide general enhancement feedback
     if not feedback_points:
-        feedback_points = ["Add more technical depth and practical examples."]
-    
-    # Set the feedback
-    feedback = "Automatic feedback:\n- " + "\n- ".join(feedback_points)
-    print(f"Generated feedback: {feedback}")
-    
+        feedback_points = ["Consider adding more examples or deeper technical explanations to enhance the content"]
+
+    # Format feedback with categories
+    feedback = "Comprehensive feedback:\n• " + "\n• ".join(feedback_points)
+    logger.debug(f"Generated comprehensive feedback with {len(feedback_points)} points")
+
     # Add feedback to the section
     state.current_section.feedback.append(SectionFeedback(
         content=feedback,
@@ -1197,7 +1293,7 @@ async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
         timestamp=datetime.now().isoformat(),
         addressed=False
     ))
-    print(f"Added feedback to section '{state.current_section.title}'")
+    logger.debug(f"Added comprehensive feedback to section '{state.current_section.title}'")
     
     return state
 
@@ -1205,22 +1301,22 @@ async def auto_feedback_generator(state: BlogDraftState) -> BlogDraftState:
 async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
     """Incorporates feedback into the section content while maintaining original document structure."""
     logging.info("Executing node: feedback_incorporator")
-    print(f"Feedback incorporator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
+    logger.debug(f"Feedback incorporator - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
     
     if state.current_section is None:
         logging.warning("No current section to incorporate feedback.")
-        print("No current section to incorporate feedback.")
+        logger.debug("No current section to incorporate feedback.")
         return state
     
     # Get the most recent feedback that hasn't been addressed
     unaddressed_feedback = [f for f in state.current_section.feedback if not f.addressed]
     if not unaddressed_feedback:
         logging.info("No unaddressed feedback to incorporate.")
-        print("No unaddressed feedback to incorporate.")
+        logger.debug("No unaddressed feedback to incorporate.")
         return state
     
     feedback = unaddressed_feedback[-1].content
-    print(f"Found unaddressed feedback: {feedback[:50]}...")
+    logger.debug(f"Found unaddressed feedback: {feedback[:50]}...")
     
     section_title = state.current_section.title
     section_index = state.current_section_index  # Use current index directly (0-based)
@@ -1377,47 +1473,76 @@ async def feedback_incorporator(state: BlogDraftState) -> BlogDraftState:
 async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
     """Finalizes the current section."""
     logging.info("Executing node: section_finalizer")
-    print(f"Section finalizer - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
+    logger.debug(f"Section finalizer - Current iteration: {state.iteration_count}, Max iterations: {state.max_iterations}")
     
     # Update generation stage
     state.generation_stage = "finalizing"
     
     if state.current_section is None:
         logging.warning("No current section to finalize.")
-        print("No current section to finalize.")
+        logger.debug("No current section to finalize.")
         return state
     
     # Log the section content to ensure it's captured
     section_title = state.current_section.title
     section_content_preview = state.current_section.content[:200] + "..." if len(state.current_section.content) > 200 else state.current_section.content
-    print(f"Finalizing section '{section_title}' with content preview: {section_content_preview}")
+    logger.debug(f"Finalizing section '{section_title}' with content preview: {section_content_preview}")
     logging.info(f"Finalizing section '{section_title}' with content length: {len(state.current_section.content)} characters")
     
     # Mark the section as finalized
     state.current_section.status = "approved"
-    print(f"Section '{section_title}' marked as approved")
+    logger.debug(f"Section '{section_title}' marked as approved")
     
     # Ensure the section is properly stored in the sections list
     if state.current_section not in state.sections:
-        print(f"Warning: Current section '{section_title}' not found in sections list. Adding it now.")
+        logger.debug(f"Warning: Current section '{section_title}' not found in sections list. Adding it now.")
         state.sections.append(state.current_section)
     
     # Reset iteration count for next section
     state.iteration_count = 0
-    print("Reset iteration count to 0 for next section")
-    
+    logger.debug("Reset iteration count to 0 for next section")
+
+    # NEW: Save section to SQL if sql_project_manager is available
+    if hasattr(state, 'sql_project_manager') and state.sql_project_manager and hasattr(state, 'project_id') and state.project_id:
+        try:
+            # Extract quality metrics if available
+            quality_metrics = state.current_section.quality_metrics or {}
+            word_count = len(state.current_section.content.split())
+
+            section_data = {
+                "section_index": state.current_section_index,
+                "title": state.current_section.title,
+                "content": state.current_section.content,
+                "status": SectionStatus.COMPLETED.value,
+                "quality_score": quality_metrics.get("overall_score", 0.0),
+                "word_count": word_count,
+                "cost_delta": 0.0,  # Would need to track this from cost aggregator
+                "input_tokens": 0,  # Would need to track from state
+                "output_tokens": 0  # Would need to track from state
+            }
+
+            # Save this single section (we'll batch save all sections at the end via save_sections)
+            await state.sql_project_manager.save_sections(
+                project_id=state.project_id,
+                sections=[section_data]
+            )
+            logging.info(f"Saved section {state.current_section_index} to SQL for project {state.project_id}")
+        except Exception as e:
+            logging.error(f"Failed to save section to SQL: {e}")
+            # Don't fail the workflow for SQL errors
+
     # Increment section index only after finalization is complete
     state.current_section_index += 1
-    print(f"Advanced to section index {state.current_section_index}")
+    logger.debug(f"Advanced to section index {state.current_section_index}")
     logging.info(f"Section index advanced to {state.current_section_index} after finalizing '{section_title}'")
-    
+
     return state
 
 @track_node_costs("transition_gen", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")
 async def transition_generator(state: BlogDraftState) -> BlogDraftState:
     """Generates transitions between sections."""
     logging.info("Executing node: transition_generator")
-    print(f"Transition generator - Current section index: {state.current_section_index}, Total sections: {len(state.outline.sections)}")
+    logger.debug(f"Transition generator - Current section index: {state.current_section_index}, Total sections: {len(state.outline.sections)}")
     
     # If we've just finalized a section and there's another section coming up
     if (state.current_section_index < len(state.outline.sections) and 
@@ -1427,7 +1552,7 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
         current_section = state.sections[-1]
         next_section_title = state.outline.sections[state.current_section_index].title
         
-        print(f"Transition generator - Moving from '{current_section.title}' to '{next_section_title}'")
+        logger.debug(f"Transition generator - Moving from '{current_section.title}' to '{next_section_title}'")
         logging.info(f"Generating transition from '{current_section.title}' to '{next_section_title}'")
         
         # Get the last 200 characters of the current section
@@ -1466,18 +1591,18 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
             # Store the transition
             state.transitions[f"{current_section.title}_to_{next_section_title}"] = response
             
-            print(f"Successfully generated transition from '{current_section.title}' to '{next_section_title}'")
-            print(f"Next section to generate: '{next_section_title}'")
+            logger.debug(f"Successfully generated transition from '{current_section.title}' to '{next_section_title}'")
+            logger.debug(f"Next section to generate: '{next_section_title}'")
             
         except Exception as e:
             logging.error(f"Error generating transition: {e}")
             state.errors.append(f"Transition generation failed: {str(e)}")
-            print(f"Error generating transition: {e}")
+            logger.debug(f"Error generating transition: {e}")
     else:
         if state.current_section_index >= len(state.outline.sections):
-            print("Transition generator - All sections have been generated, moving to blog compilation")
+            logger.debug("Transition generator - All sections have been generated, moving to blog compilation")
         else:
-            print(f"Transition generator - No transition needed (first section or no sections yet)")
+            logger.debug(f"Transition generator - No transition needed (first section or no sections yet)")
     
     return state
 
@@ -1605,12 +1730,44 @@ async def blog_compiler(state: BlogDraftState) -> BlogDraftState:
         
         # Store the final blog post
         state.final_blog_post = response
-        
+
         # Update generation stage
         state.generation_stage = "completed"
-        
+
+        # NEW: Save DRAFT_COMPLETED milestone to SQL
+        if hasattr(state, 'sql_project_manager') and state.sql_project_manager and hasattr(state, 'project_id') and state.project_id:
+            try:
+                # Calculate total word count and quality metrics
+                total_word_count = sum(len(section.content.split()) for section in state.sections)
+                section_quality_scores = [
+                    {
+                        "section_index": idx,
+                        "title": section.title,
+                        "quality_score": section.quality_metrics.get("overall_score", 0.0) if section.quality_metrics else 0.0,
+                        "word_count": len(section.content.split())
+                    }
+                    for idx, section in enumerate(state.sections)
+                ]
+
+                milestone_data = {
+                    "compiled_blog": response,
+                    "total_sections": len(state.sections),
+                    "total_word_count": total_word_count,
+                    "section_quality_scores": section_quality_scores
+                }
+
+                await state.sql_project_manager.save_milestone(
+                    project_id=state.project_id,
+                    milestone_type=MilestoneType.DRAFT_COMPLETED,
+                    data=milestone_data
+                )
+                logging.info(f"Saved DRAFT_COMPLETED milestone for project {state.project_id}")
+            except Exception as e:
+                logging.error(f"Failed to save draft completion milestone: {e}")
+                # Don't fail the workflow for SQL errors
+
     except Exception as e:
         logging.error(f"Error compiling blog: {e}")
         state.errors.append(f"Blog compilation failed: {str(e)}")
-    
+
     return state

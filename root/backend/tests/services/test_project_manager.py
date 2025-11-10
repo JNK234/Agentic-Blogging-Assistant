@@ -19,7 +19,7 @@ from datetime import datetime
 import sys
 sys.path.append('/Users/jnk789/Developer/Agentic Blogging Assistant/Agentic-Blogging-Assistant')
 
-from root.backend.services.project_manager import ProjectManager, ProjectStatus, MilestoneType
+from backend.services.project_manager import ProjectManager, ProjectStatus, MilestoneType
 
 
 class TestProjectManagerInitialization:

@@ -1,5 +1,5 @@
 from langgraph.graph import StateGraph
-from root.backend.agents.blog_draft_generator.nodes import (
+from backend.agents.blog_draft_generator.nodes import (
     semantic_content_mapper,
     section_generator,
     content_enhancer,
@@ -13,7 +13,7 @@ from root.backend.agents.blog_draft_generator.nodes import (
     blog_compiler
 )
 from typing import Dict, Literal, Union
-from root.backend.agents.blog_draft_generator.state import BlogDraftState
+from backend.agents.blog_draft_generator.state import BlogDraftState
 
 def should_continue_iteration(state: BlogDraftState) -> Union[Literal["continue_iteration"], Literal["finalize_section"]]:
     """Conditional routing based on iteration count."""

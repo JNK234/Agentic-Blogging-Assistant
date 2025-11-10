@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 
-from root.backend.services.project_manager import ProjectManager, MilestoneType
+from backend.services.project_manager import ProjectManager, MilestoneType
 
 
 class ProjectTestHelper:

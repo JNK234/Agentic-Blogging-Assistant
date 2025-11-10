@@ -259,13 +259,16 @@ Generate the `OutlineStructure` JSON object now.
 
 # Final Generation Prompt
 FINAL_GENERATION_PROMPT = PromptTemplate(
-    template="""{persona_instructions}
+    template="""CRITICAL PERSONA REQUIREMENT - YOU MUST FOLLOW THIS EXACTLY:
+{persona_instructions}
+
+MANDATORY: You MUST strictly follow the persona instructions above. The persona voice and style OVERRIDE all other instructions. Any deviation from the persona is a complete failure.
 
 Output must be valid JSON matching the format instructions.
 
 {format_instructions}
 
-Create a comprehensive outline that supports the target writing voice using:
+Create a comprehensive outline that EXACTLY follows the persona voice and approach above using:
 
 Title:
 {title}

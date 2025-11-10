@@ -3,7 +3,7 @@
 # ABOUTME: Launch script for Agentic Blogging Assistant - starts backend and frontend in separate terminals
 # ABOUTME: Handles macOS Terminal app and cross-platform terminal detection for parallel service execution
 
-echo "🚀 Starting Agentic Blogging Assistant..."
+echo "🚀 Starting Agentic Blogging Assistant with Project Manager..."
 echo "================================================"
 
 # Get the directory where this script is located

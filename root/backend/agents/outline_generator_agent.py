@@ -7,27 +7,27 @@ import logging
 import hashlib
 import json
 
-from root.backend.prompts.prompt_manager import PromptManager
-from root.backend.agents.outline_generator.graph import create_outline_graph
+from backend.prompts.prompt_manager import PromptManager
+from backend.agents.outline_generator.graph import create_outline_graph
 from typing import Optional, Tuple, List, Dict, Any # Added Dict, Any
 import logging
 import hashlib
 import json
 
-from root.backend.prompts.prompt_manager import PromptManager
-from root.backend.agents.outline_generator.graph import create_outline_graph
-from root.backend.agents.outline_generator.state import OutlineState, FinalOutline
-from root.backend.agents.content_parsing_agent import ContentParsingAgent
-from root.backend.agents.base_agent import BaseGraphAgent
-from root.backend.services.vector_store_service import VectorStoreService
-from root.backend.services.persona_service import PersonaService
-from root.backend.utils.serialization import serialize_object, to_json
-from ..parsers import ContentStructure
+from backend.prompts.prompt_manager import PromptManager
+from backend.agents.outline_generator.graph import create_outline_graph
+from backend.agents.outline_generator.state import OutlineState, FinalOutline
+from backend.agents.content_parsing_agent import ContentParsingAgent
+from backend.agents.base_agent import BaseGraphAgent
+from backend.services.vector_store_service import VectorStoreService
+from backend.services.persona_service import PersonaService
+from backend.utils.serialization import serialize_object, to_json
+from backend.parsers.base import ContentStructure
 
 logging.basicConfig(level=logging.INFO)
 
 class OutlineGeneratorAgent(BaseGraphAgent):
-    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None): # Added persona_service parameter
+    def __init__(self, model, content_parser, vector_store: VectorStoreService, persona_service: PersonaService = None, sql_project_manager=None): # Added sql_project_manager parameter
         super().__init__(
             llm=model,
             tools=[],  # Add any needed tools
@@ -38,6 +38,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         self.content_parser = content_parser  # Use the passed content parser
         self.vector_store = vector_store  # Use the passed vector_store instance
         self.persona_service = persona_service or PersonaService() # Initialize persona service
+        self.sql_project_manager = sql_project_manager  # SQL project manager for persistence
         self._initialized = False
         
     async def initialize(self):
@@ -205,7 +206,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         return cached_outline, cached_outline is not None
         
     async def generate_outline(
-        self, 
+        self,
         project_name: str,
         notebook_path: Optional[str] = None,
         markdown_path: Optional[str] = None,
@@ -215,6 +216,7 @@ class OutlineGeneratorAgent(BaseGraphAgent):
         length_preference: Optional[str] = None, # Added
         custom_length: Optional[int] = None, # Added
         writing_style: Optional[str] = None, # Added
+        persona: Optional[str] = None, # Added persona parameter
         model=None,  # For backward compatibility
         use_cache: bool = True,  # Whether to use cached outlines
         cost_aggregator=None,
@@ -337,10 +339,12 @@ class OutlineGeneratorAgent(BaseGraphAgent):
             length_preference=length_preference,
             custom_length=custom_length,
             writing_style=writing_style,
+            persona=persona or "neuraforge",  # Pass persona with default
             project_name=project_name,
             project_id=project_id,
             cost_aggregator=cost_aggregator,
-            current_stage="outline_generation"
+            current_stage="outline_generation",
+            sql_project_manager=self.sql_project_manager  # Pass SQL manager for persistence
         )
 
         # Execute graph

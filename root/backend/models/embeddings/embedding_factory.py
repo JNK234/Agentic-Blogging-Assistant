@@ -3,9 +3,9 @@ Factory for creating embedding function instances based on configuration.
 """
 import logging
 from chromadb import EmbeddingFunction
-from root.backend.config.settings import Settings
-from root.backend.models.embeddings.azure_embedding import AzureEmbeddingFunction
-from root.backend.models.embeddings.sentence_transformer_embedding import SentenceTransformerEmbeddingFunction
+from backend.config.settings import Settings
+from backend.models.embeddings.azure_embedding import AzureEmbeddingFunction
+from backend.models.embeddings.sentence_transformer_embedding import SentenceTransformerEmbeddingFunction
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

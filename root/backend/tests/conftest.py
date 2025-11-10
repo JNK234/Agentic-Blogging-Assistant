@@ -10,8 +10,7 @@ from unittest.mock import patch
 import sys
 sys.path.append('/Users/jnk789/Developer/Agentic Blogging Assistant/Agentic-Blogging-Assistant')
 
-from root.backend.services.project_manager import ProjectManager
-from root.backend.main import state_cache
+from backend.services.project_manager import ProjectManager
 
 
 @pytest.fixture(scope="session")
@@ -20,14 +19,6 @@ def test_data_dir():
     temp_dir = tempfile.mkdtemp(prefix="blog_assistant_tests_")
     yield Path(temp_dir)
     shutil.rmtree(temp_dir, ignore_errors=True)
-
-
-@pytest.fixture(autouse=True)
-def clean_state_cache():
-    """Automatically clean the state cache before each test."""
-    state_cache.clear()
-    yield
-    state_cache.clear()
 
 
 @pytest.fixture
