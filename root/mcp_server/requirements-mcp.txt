@@ -1,0 +1,15 @@
+# ABOUTME: MCP server dependencies for the Agentic Blogging Assistant
+# ABOUTME: Core packages required to run the FastMCP server with all tools
+
+# FastMCP framework for building MCP servers
+fastmcp>=0.4.0
+
+# Async HTTP client for API communication
+aiohttp>=3.9.0
+
+# Data validation and settings management
+pydantic>=2.5.0
+pydantic-settings>=2.0.0
+
+# Environment variable management
+python-dotenv>=1.0.0
