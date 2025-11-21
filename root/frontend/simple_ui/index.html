@@ -1,0 +1,1449 @@
+<!-- ABOUTME: Simple vanilla HTML/CSS/JS frontend for the Agentic Blogging Assistant -->
+<!-- ABOUTME: Provides end-to-end blog creation workflow with project management -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agentic Blogging Assistant</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+        }
+
+        .layout {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 20px;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            height: fit-content;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .sidebar h2 {
+            font-size: 1rem;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .project-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 15px;
+        }
+
+        .project-item {
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .project-item:hover {
+            background: #f0f0f0;
+        }
+
+        .project-item.active {
+            background: #3498db;
+            color: white;
+            border-color: #3498db;
+        }
+
+        .project-item .name {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .project-item .status {
+            font-size: 0.75rem;
+            opacity: 0.8;
+        }
+
+        .new-project {
+            display: flex;
+            gap: 8px;
+        }
+
+        .new-project input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        /* Main content */
+        .main {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        /* Workflow steps */
+        .workflow-steps {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+        }
+
+        .step {
+            padding: 8px 12px;
+            background: #eee;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .step.active {
+            background: #3498db;
+            color: white;
+        }
+
+        .step.completed {
+            background: #27ae60;
+            color: white;
+        }
+
+        .step:hover:not(.active) {
+            background: #ddd;
+        }
+
+        /* Panels */
+        .panel {
+            display: none;
+        }
+
+        .panel.active {
+            display: block;
+        }
+
+        .panel h3 {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+
+        /* Forms */
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 0.9rem;
+        }
+
+        .form-group select,
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+
+        .btn-success {
+            background: #27ae60;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #219a52;
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* File upload */
+        .file-upload {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 15px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .file-upload:hover {
+            border-color: #3498db;
+        }
+
+        .file-upload input {
+            display: none;
+        }
+
+        .file-list {
+            margin-top: 15px;
+        }
+
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            background: #f9f9f9;
+            border-radius: 4px;
+            margin-bottom: 5px;
+        }
+
+        /* Outline display */
+        .outline-section {
+            border: 1px solid #eee;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+        }
+
+        .outline-section h4 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+
+        .outline-section ul {
+            margin-left: 20px;
+            font-size: 0.9rem;
+        }
+
+        /* Progress bar */
+        .progress-container {
+            margin: 20px 0;
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: #eee;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: #27ae60;
+            transition: width 0.3s;
+        }
+
+        .progress-text {
+            font-size: 0.85rem;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        /* Content display */
+        .content-display {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 15px;
+            white-space: pre-wrap;
+            font-family: inherit;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        /* Status messages */
+        .status {
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+
+        .status.error {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        .status.loading {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+
+        /* Cost summary */
+        .cost-summary {
+            background: #f0f7ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .cost-summary h4 {
+            font-size: 0.9rem;
+            margin-bottom: 10px;
+        }
+
+        .cost-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            padding: 3px 0;
+        }
+
+        /* Sections list */
+        .sections-list {
+            margin: 15px 0;
+        }
+
+        .section-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .section-item.completed {
+            border-color: #27ae60;
+            background: #f0fff4;
+        }
+
+        .section-item.generating {
+            border-color: #f39c12;
+            background: #fffbf0;
+        }
+
+        .section-item .index {
+            width: 30px;
+            height: 30px;
+            background: #eee;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+
+        .section-item.completed .index {
+            background: #27ae60;
+            color: white;
+        }
+
+        .section-item .title {
+            flex: 1;
+        }
+
+        /* Social content tabs */
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 15px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            background: #eee;
+            border: none;
+            border-radius: 4px 4px 0 0;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .tab.active {
+            background: #3498db;
+            color: white;
+        }
+
+        .tab-content {
+            display: none;
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 0 8px 8px 8px;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .layout {
+                grid-template-columns: 1fr;
+            }
+
+            .workflow-steps {
+                overflow-x: auto;
+            }
+        }
+
+        /* Loading spinner */
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Agentic Blogging Assistant</h1>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="layout">
+            <!-- Sidebar - Project Management -->
+            <aside class="sidebar">
+                <h2>Projects</h2>
+                <div class="project-list" id="projectList">
+                    <p style="color: #999; font-size: 0.85rem;">No projects yet</p>
+                </div>
+                <div class="new-project">
+                    <input type="text" id="newProjectName" placeholder="New project name...">
+                    <button class="btn btn-primary" onclick="createProject()">+</button>
+                </div>
+                <div style="margin-top: 15px;">
+                    <button class="btn btn-secondary" onclick="loadProjects()" style="width: 100%;">Refresh</button>
+                </div>
+
+                <!-- Config -->
+                <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
+                    <h2>Configuration</h2>
+                    <div class="form-group">
+                        <label>Model</label>
+                        <select id="modelSelect">
+                            <option value="openai">OpenAI</option>
+                            <option value="claude">Claude</option>
+                            <option value="gemini">Gemini</option>
+                            <option value="deepseek">Deepseek</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Persona</label>
+                        <select id="personaSelect">
+                            <option value="neuraforge">NeuraForge (Professional)</option>
+                            <option value="student_sharing">Student Sharing</option>
+                        </select>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Main Content -->
+            <main class="main">
+                <div id="noProjectMessage">
+                    <p style="text-align: center; color: #999; padding: 50px;">
+                        Select or create a project to get started
+                    </p>
+                </div>
+
+                <div id="workflowContainer" class="hidden">
+                    <!-- Workflow Steps -->
+                    <div class="workflow-steps">
+                        <div class="step active" data-step="upload" onclick="goToStep('upload')">1. Upload</div>
+                        <div class="step" data-step="process" onclick="goToStep('process')">2. Process</div>
+                        <div class="step" data-step="outline" onclick="goToStep('outline')">3. Outline</div>
+                        <div class="step" data-step="draft" onclick="goToStep('draft')">4. Draft</div>
+                        <div class="step" data-step="compile" onclick="goToStep('compile')">5. Compile</div>
+                        <div class="step" data-step="refine" onclick="goToStep('refine')">6. Refine</div>
+                        <div class="step" data-step="social" onclick="goToStep('social')">7. Social</div>
+                    </div>
+
+                    <!-- Status Message -->
+                    <div id="statusMessage" class="status info hidden"></div>
+
+                    <!-- Panel 1: Upload Files -->
+                    <div class="panel active" id="uploadPanel">
+                        <h3>Upload Source Files</h3>
+                        <p style="margin-bottom: 15px; color: #666;">Upload Jupyter notebooks (.ipynb), Markdown (.md), or Python (.py) files.</p>
+
+                        <div class="file-upload" onclick="document.getElementById('fileInput').click()">
+                            <input type="file" id="fileInput" multiple accept=".ipynb,.md,.py" onchange="handleFileSelect(event)">
+                            <p>Click to select files or drag and drop</p>
+                            <p style="font-size: 0.85rem; color: #999;">Supported: .ipynb, .md, .py</p>
+                        </div>
+
+                        <div class="file-list" id="fileList"></div>
+
+                        <button class="btn btn-primary" onclick="uploadFiles()" id="uploadBtn" disabled>Upload Files</button>
+                    </div>
+
+                    <!-- Panel 2: Process Files -->
+                    <div class="panel" id="processPanel">
+                        <h3>Process Content</h3>
+                        <p style="margin-bottom: 15px; color: #666;">Process uploaded files for content analysis and indexing.</p>
+
+                        <div id="uploadedFilesList" style="margin-bottom: 15px;"></div>
+
+                        <button class="btn btn-primary" onclick="processFiles()" id="processBtn">Process Files</button>
+
+                        <div id="processStatus" class="hidden" style="margin-top: 15px;"></div>
+                    </div>
+
+                    <!-- Panel 3: Generate Outline -->
+                    <div class="panel" id="outlinePanel">
+                        <h3>Generate Outline</h3>
+
+                        <div class="form-group">
+                            <label>Length Preference</label>
+                            <select id="lengthPreference">
+                                <option value="short">Short (1000-2000 words)</option>
+                                <option value="medium" selected>Medium (2000-4000 words)</option>
+                                <option value="long">Long (4000+ words)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Writing Style</label>
+                            <select id="writingStyle">
+                                <option value="technical">Technical</option>
+                                <option value="conversational" selected>Conversational</option>
+                                <option value="academic">Academic</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Custom Guidelines (optional)</label>
+                            <textarea id="userGuidelines" placeholder="Any specific requirements for the blog..."></textarea>
+                        </div>
+
+                        <button class="btn btn-primary" onclick="generateOutline()" id="outlineBtn">Generate Outline</button>
+
+                        <div id="outlineResult" class="hidden" style="margin-top: 20px;"></div>
+                    </div>
+
+                    <!-- Panel 4: Generate Draft -->
+                    <div class="panel" id="draftPanel">
+                        <h3>Generate Blog Sections</h3>
+
+                        <div id="outlineSummary" style="margin-bottom: 20px;"></div>
+
+                        <div class="progress-container" id="draftProgress" class="hidden">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="draftProgressFill" style="width: 0%"></div>
+                            </div>
+                            <div class="progress-text" id="draftProgressText">0 / 0 sections</div>
+                        </div>
+
+                        <div class="sections-list" id="sectionsList"></div>
+
+                        <button class="btn btn-primary" onclick="generateAllSections()" id="generateSectionsBtn">Generate All Sections</button>
+                        <button class="btn btn-secondary" onclick="generateNextSection()" id="generateNextBtn" style="margin-left: 10px;">Generate Next</button>
+                    </div>
+
+                    <!-- Panel 5: Compile Draft -->
+                    <div class="panel" id="compilePanel">
+                        <h3>Compile Draft</h3>
+                        <p style="margin-bottom: 15px; color: #666;">Compile all generated sections into a complete blog draft.</p>
+
+                        <button class="btn btn-primary" onclick="compileDraft()" id="compileBtn">Compile Draft</button>
+
+                        <div id="compiledDraft" class="hidden" style="margin-top: 20px;">
+                            <h4>Compiled Draft</h4>
+                            <div class="content-display" id="compiledContent"></div>
+                        </div>
+                    </div>
+
+                    <!-- Panel 6: Refine Blog -->
+                    <div class="panel" id="refinePanel">
+                        <h3>Refine Blog</h3>
+                        <p style="margin-bottom: 15px; color: #666;">Generate introduction, conclusion, and title options.</p>
+
+                        <button class="btn btn-primary" onclick="refineBlog()" id="refineBtn">Refine Blog</button>
+
+                        <div id="refinedResult" class="hidden" style="margin-top: 20px;">
+                            <h4>Title Options</h4>
+                            <div id="titleOptions" style="margin-bottom: 15px;"></div>
+
+                            <h4>Summary</h4>
+                            <div class="content-display" id="summaryContent" style="max-height: 150px;"></div>
+
+                            <h4 style="margin-top: 15px;">Refined Draft</h4>
+                            <div class="content-display" id="refinedContent"></div>
+
+                            <div style="margin-top: 15px;">
+                                <button class="btn btn-success" onclick="copyToClipboard('refinedContent')">Copy to Clipboard</button>
+                                <button class="btn btn-secondary" onclick="downloadDraft()" style="margin-left: 10px;">Download</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Panel 7: Social Content -->
+                    <div class="panel" id="socialPanel">
+                        <h3>Generate Social Content</h3>
+                        <p style="margin-bottom: 15px; color: #666;">Create platform-specific social media content.</p>
+
+                        <button class="btn btn-primary" onclick="generateSocialContent()" id="socialBtn">Generate Social Content</button>
+
+                        <div id="socialResult" class="hidden" style="margin-top: 20px;">
+                            <div class="tabs">
+                                <button class="tab active" onclick="showSocialTab('linkedin')">LinkedIn</button>
+                                <button class="tab" onclick="showSocialTab('twitter')">Twitter/X</button>
+                                <button class="tab" onclick="showSocialTab('thread')">Thread</button>
+                                <button class="tab" onclick="showSocialTab('newsletter')">Newsletter</button>
+                            </div>
+
+                            <div class="tab-content active" id="linkedinTab">
+                                <div id="linkedinContent"></div>
+                                <button class="btn btn-secondary" onclick="copyToClipboard('linkedinContent')" style="margin-top: 10px;">Copy</button>
+                            </div>
+
+                            <div class="tab-content" id="twitterTab">
+                                <div id="twitterContent"></div>
+                                <button class="btn btn-secondary" onclick="copyToClipboard('twitterContent')" style="margin-top: 10px;">Copy</button>
+                            </div>
+
+                            <div class="tab-content" id="threadTab">
+                                <div id="threadContent"></div>
+                                <button class="btn btn-secondary" onclick="copyToClipboard('threadContent')" style="margin-top: 10px;">Copy</button>
+                            </div>
+
+                            <div class="tab-content" id="newsletterTab">
+                                <div id="newsletterContent"></div>
+                                <button class="btn btn-secondary" onclick="copyToClipboard('newsletterContent')" style="margin-top: 10px;">Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cost Summary -->
+                    <div class="cost-summary" id="costSummary" style="margin-top: 20px;">
+                        <h4>Cost Summary</h4>
+                        <div class="cost-item">
+                            <span>Total Cost:</span>
+                            <span id="totalCost">$0.00</span>
+                        </div>
+                        <div class="cost-item">
+                            <span>Total Tokens:</span>
+                            <span id="totalTokens">0</span>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        // ABOUTME: Main JavaScript for the simple blogging UI
+        // ABOUTME: Handles all API interactions and UI state management
+
+        // Configuration
+        const API_BASE = 'http://localhost:8000';
+
+        // State
+        let state = {
+            currentProject: null,
+            currentProjectId: null,
+            uploadedFiles: [],
+            processedHashes: {},
+            outline: null,
+            sections: {},
+            compiledDraft: null,
+            refinedDraft: null,
+            socialContent: null,
+            costSummary: { total_cost: 0, total_tokens: 0 }
+        };
+
+        // Files selected for upload
+        let selectedFiles = [];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadProjects();
+            loadModelsAndPersonas();
+        });
+
+        // API Helper
+        async function api(endpoint, options = {}) {
+            try {
+                const response = await fetch(`${API_BASE}${endpoint}`, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'API Error');
+                }
+
+                return await response.json();
+            } catch (error) {
+                showStatus(error.message, 'error');
+                throw error;
+            }
+        }
+
+        // Load projects
+        async function loadProjects() {
+            try {
+                const data = await api('/projects');
+                renderProjects(data.projects || []);
+            } catch (error) {
+                console.error('Failed to load projects:', error);
+            }
+        }
+
+        // Load models and personas
+        async function loadModelsAndPersonas() {
+            try {
+                const [models, personas] = await Promise.all([
+                    api('/models'),
+                    api('/personas')
+                ]);
+
+                // Populate model select
+                const modelSelect = document.getElementById('modelSelect');
+                modelSelect.innerHTML = '';
+                for (const [provider, modelList] of Object.entries(models)) {
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = provider;
+                    modelList.forEach(m => {
+                        const option = document.createElement('option');
+                        option.value = provider;
+                        option.textContent = m;
+                        optgroup.appendChild(option);
+                    });
+                    modelSelect.appendChild(optgroup);
+                }
+
+                // Populate persona select
+                const personaSelect = document.getElementById('personaSelect');
+                personaSelect.innerHTML = '';
+                for (const [name, desc] of Object.entries(personas)) {
+                    const option = document.createElement('option');
+                    option.value = name;
+                    option.textContent = `${name} - ${desc}`;
+                    personaSelect.appendChild(option);
+                }
+            } catch (error) {
+                console.error('Failed to load config:', error);
+            }
+        }
+
+        // Render projects list
+        function renderProjects(projects) {
+            const list = document.getElementById('projectList');
+
+            if (!projects.length) {
+                list.innerHTML = '<p style="color: #999; font-size: 0.85rem;">No projects yet</p>';
+                return;
+            }
+
+            list.innerHTML = projects.map(p => `
+                <div class="project-item ${state.currentProject === p.name ? 'active' : ''}"
+                     onclick="selectProject('${p.name}', '${p.id}')">
+                    <div class="name">${p.name}</div>
+                    <div class="status">${p.current_milestone || 'New'}</div>
+                </div>
+            `).join('');
+        }
+
+        // Create new project
+        async function createProject() {
+            const input = document.getElementById('newProjectName');
+            const name = input.value.trim();
+
+            if (!name) {
+                showStatus('Please enter a project name', 'error');
+                return;
+            }
+
+            try {
+                // Creating project happens on first upload
+                state.currentProject = name;
+                state.currentProjectId = null;
+                resetWorkflowState();
+
+                document.getElementById('noProjectMessage').classList.add('hidden');
+                document.getElementById('workflowContainer').classList.remove('hidden');
+
+                input.value = '';
+                loadProjects();
+                goToStep('upload');
+
+                showStatus(`Project "${name}" created. Upload files to continue.`, 'success');
+            } catch (error) {
+                console.error('Failed to create project:', error);
+            }
+        }
+
+        // Select existing project
+        async function selectProject(name, id) {
+            state.currentProject = name;
+            state.currentProjectId = id;
+
+            document.getElementById('noProjectMessage').classList.add('hidden');
+            document.getElementById('workflowContainer').classList.remove('hidden');
+
+            // Load project details
+            try {
+                const project = await api(`/project/${id}`);
+
+                // Restore state from milestones
+                if (project.milestones) {
+                    restoreFromMilestones(project.milestones);
+                }
+
+                // Update UI
+                loadProjects();
+                determineCurrentStep();
+
+            } catch (error) {
+                console.error('Failed to load project:', error);
+            }
+        }
+
+        // Restore state from milestones
+        function restoreFromMilestones(milestones) {
+            milestones.forEach(m => {
+                switch (m.milestone_type) {
+                    case 'FILES_UPLOADED':
+                        state.uploadedFiles = m.data?.uploaded_files || [];
+                        markStepCompleted('upload');
+                        break;
+                    case 'OUTLINE_GENERATED':
+                        state.outline = m.data?.outline;
+                        state.processedHashes = {
+                            notebook_hash: m.data?.notebook_hash,
+                            markdown_hash: m.data?.markdown_hash
+                        };
+                        markStepCompleted('process');
+                        markStepCompleted('outline');
+                        break;
+                    case 'DRAFT_COMPLETED':
+                        state.compiledDraft = m.data?.compiled_draft;
+                        markStepCompleted('draft');
+                        markStepCompleted('compile');
+                        break;
+                    case 'BLOG_REFINED':
+                        state.refinedDraft = m.data?.refined_draft;
+                        markStepCompleted('refine');
+                        break;
+                    case 'SOCIAL_GENERATED':
+                        state.socialContent = m.data;
+                        markStepCompleted('social');
+                        break;
+                }
+            });
+        }
+
+        // Determine current step
+        function determineCurrentStep() {
+            if (state.socialContent) goToStep('social');
+            else if (state.refinedDraft) goToStep('social');
+            else if (state.compiledDraft) goToStep('refine');
+            else if (Object.keys(state.sections).length > 0) goToStep('draft');
+            else if (state.outline) goToStep('draft');
+            else if (state.processedHashes.notebook_hash) goToStep('outline');
+            else if (state.uploadedFiles.length > 0) goToStep('process');
+            else goToStep('upload');
+        }
+
+        // Reset workflow state
+        function resetWorkflowState() {
+            state.uploadedFiles = [];
+            state.processedHashes = {};
+            state.outline = null;
+            state.sections = {};
+            state.compiledDraft = null;
+            state.refinedDraft = null;
+            state.socialContent = null;
+            selectedFiles = [];
+
+            // Reset step states
+            document.querySelectorAll('.step').forEach(s => {
+                s.classList.remove('completed', 'active');
+            });
+            document.querySelector('[data-step="upload"]').classList.add('active');
+        }
+
+        // Navigation
+        function goToStep(step) {
+            // Update step indicators
+            document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+            document.querySelector(`[data-step="${step}"]`).classList.add('active');
+
+            // Show corresponding panel
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(`${step}Panel`).classList.add('active');
+
+            // Refresh panel content
+            refreshPanelContent(step);
+        }
+
+        function markStepCompleted(step) {
+            document.querySelector(`[data-step="${step}"]`).classList.add('completed');
+        }
+
+        function refreshPanelContent(step) {
+            switch (step) {
+                case 'process':
+                    renderUploadedFiles();
+                    break;
+                case 'outline':
+                    if (state.outline) renderOutline();
+                    break;
+                case 'draft':
+                    if (state.outline) renderDraftPanel();
+                    break;
+                case 'compile':
+                    if (state.compiledDraft) {
+                        document.getElementById('compiledContent').textContent = state.compiledDraft;
+                        document.getElementById('compiledDraft').classList.remove('hidden');
+                    }
+                    break;
+                case 'refine':
+                    if (state.refinedDraft) renderRefinedResult();
+                    break;
+                case 'social':
+                    if (state.socialContent) renderSocialContent();
+                    break;
+            }
+        }
+
+        // File handling
+        function handleFileSelect(event) {
+            selectedFiles = Array.from(event.target.files);
+            renderSelectedFiles();
+            document.getElementById('uploadBtn').disabled = selectedFiles.length === 0;
+        }
+
+        function renderSelectedFiles() {
+            const list = document.getElementById('fileList');
+            list.innerHTML = selectedFiles.map(f => `
+                <div class="file-item">
+                    <span>${f.name}</span>
+                    <span>${(f.size / 1024).toFixed(1)} KB</span>
+                </div>
+            `).join('');
+        }
+
+        // Upload files
+        async function uploadFiles() {
+            if (!selectedFiles.length || !state.currentProject) return;
+
+            const formData = new FormData();
+            selectedFiles.forEach(f => formData.append('files', f));
+
+            const model = document.getElementById('modelSelect').value;
+            const persona = document.getElementById('personaSelect').value;
+
+            showStatus('Uploading files...', 'loading');
+
+            try {
+                const response = await fetch(
+                    `${API_BASE}/upload/${state.currentProject}?model_name=${model}&persona=${persona}`,
+                    { method: 'POST', body: formData }
+                );
+
+                if (!response.ok) throw new Error('Upload failed');
+
+                const data = await response.json();
+                state.currentProjectId = data.project_id;
+                state.uploadedFiles = data.uploaded_files || [];
+
+                showStatus('Files uploaded successfully!', 'success');
+                markStepCompleted('upload');
+                loadProjects();
+                goToStep('process');
+
+            } catch (error) {
+                showStatus(`Upload failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Render uploaded files
+        function renderUploadedFiles() {
+            const list = document.getElementById('uploadedFilesList');
+            list.innerHTML = state.uploadedFiles.map(f => `
+                <div class="file-item">
+                    <span>${f}</span>
+                </div>
+            `).join('');
+        }
+
+        // Process files
+        async function processFiles() {
+            if (!state.currentProject) return;
+
+            const model = document.getElementById('modelSelect').value;
+
+            showStatus('Processing files... This may take a moment.', 'loading');
+            document.getElementById('processBtn').disabled = true;
+
+            try {
+                const data = await api(`/process_files/${state.currentProject}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model_name: model,
+                        file_paths: state.uploadedFiles
+                    })
+                });
+
+                state.processedHashes = {
+                    notebook_hash: data.notebook_hash,
+                    markdown_hash: data.markdown_hash,
+                    python_hashes: data.python_hashes
+                };
+
+                showStatus('Files processed successfully!', 'success');
+                markStepCompleted('process');
+                goToStep('outline');
+
+            } catch (error) {
+                showStatus(`Processing failed: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('processBtn').disabled = false;
+            }
+        }
+
+        // Generate outline
+        async function generateOutline() {
+            if (!state.currentProject) return;
+
+            const model = document.getElementById('modelSelect').value;
+            const persona = document.getElementById('personaSelect').value;
+
+            showStatus('Generating outline... This may take a moment.', 'loading');
+            document.getElementById('outlineBtn').disabled = true;
+
+            try {
+                const data = await api(`/generate_outline/${state.currentProject}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model_name: model,
+                        notebook_hash: state.processedHashes.notebook_hash,
+                        markdown_hash: state.processedHashes.markdown_hash,
+                        user_guidelines: document.getElementById('userGuidelines').value,
+                        length_preference: document.getElementById('lengthPreference').value,
+                        writing_style: document.getElementById('writingStyle').value,
+                        persona_style: persona
+                    })
+                });
+
+                state.outline = data.outline;
+                updateCostSummary(data.cost_summary);
+
+                renderOutline();
+                showStatus('Outline generated successfully!', 'success');
+                markStepCompleted('outline');
+
+            } catch (error) {
+                showStatus(`Outline generation failed: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('outlineBtn').disabled = false;
+            }
+        }
+
+        // Render outline
+        function renderOutline() {
+            const container = document.getElementById('outlineResult');
+            container.classList.remove('hidden');
+
+            const outline = state.outline;
+            container.innerHTML = `
+                <h4>${outline.title}</h4>
+                <p><strong>Difficulty:</strong> ${outline.difficulty_level}</p>
+                <p><strong>Introduction:</strong> ${outline.introduction}</p>
+
+                <h4 style="margin-top: 15px;">Sections</h4>
+                ${outline.sections.map((s, i) => `
+                    <div class="outline-section">
+                        <h4>${i + 1}. ${s.title}</h4>
+                        <ul>
+                            ${s.subsections.map(sub => `<li>${sub}</li>`).join('')}
+                        </ul>
+                        ${s.include_code ? '<span style="color: #27ae60; font-size: 0.8rem;">Includes code</span>' : ''}
+                    </div>
+                `).join('')}
+
+                <p><strong>Conclusion:</strong> ${outline.conclusion}</p>
+
+                <button class="btn btn-success" onclick="goToStep('draft')" style="margin-top: 15px;">
+                    Continue to Draft Generation
+                </button>
+            `;
+        }
+
+        // Render draft panel
+        function renderDraftPanel() {
+            const outline = state.outline;
+            if (!outline) return;
+
+            // Summary
+            document.getElementById('outlineSummary').innerHTML = `
+                <strong>${outline.title}</strong>
+                <p style="color: #666;">${outline.sections.length} sections to generate</p>
+            `;
+
+            // Sections list
+            const list = document.getElementById('sectionsList');
+            list.innerHTML = outline.sections.map((s, i) => {
+                const section = state.sections[i];
+                const status = section ? 'completed' : '';
+                return `
+                    <div class="section-item ${status}">
+                        <div class="index">${i + 1}</div>
+                        <div class="title">${s.title}</div>
+                        ${section ? '<span style="color: #27ae60;">Done</span>' : ''}
+                    </div>
+                `;
+            }).join('');
+
+            // Progress
+            const completed = Object.keys(state.sections).length;
+            const total = outline.sections.length;
+            document.getElementById('draftProgressFill').style.width = `${(completed / total) * 100}%`;
+            document.getElementById('draftProgressText').textContent = `${completed} / ${total} sections`;
+        }
+
+        // Generate all sections
+        async function generateAllSections() {
+            if (!state.outline) return;
+
+            const total = state.outline.sections.length;
+
+            for (let i = 0; i < total; i++) {
+                if (state.sections[i]) continue; // Skip completed
+                await generateSection(i);
+            }
+
+            showStatus('All sections generated!', 'success');
+            markStepCompleted('draft');
+            goToStep('compile');
+        }
+
+        // Generate next section
+        async function generateNextSection() {
+            if (!state.outline) return;
+
+            const total = state.outline.sections.length;
+            for (let i = 0; i < total; i++) {
+                if (!state.sections[i]) {
+                    await generateSection(i);
+                    return;
+                }
+            }
+
+            showStatus('All sections already generated!', 'info');
+        }
+
+        // Generate single section
+        async function generateSection(index) {
+            const model = document.getElementById('modelSelect').value;
+
+            showStatus(`Generating section ${index + 1}...`, 'loading');
+
+            // Update UI to show generating
+            const items = document.querySelectorAll('.section-item');
+            if (items[index]) items[index].classList.add('generating');
+
+            try {
+                const data = await api(`/generate_section/${state.currentProject}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model_name: model,
+                        section_index: index,
+                        max_iterations: 3,
+                        quality_threshold: 0.8
+                    })
+                });
+
+                state.sections[index] = {
+                    title: data.section_title,
+                    content: data.section_content
+                };
+
+                updateCostSummary(data.cost_summary);
+                renderDraftPanel();
+
+                showStatus(`Section ${index + 1} generated!`, 'success');
+
+            } catch (error) {
+                showStatus(`Section generation failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Compile draft
+        async function compileDraft() {
+            if (!state.currentProject) return;
+
+            showStatus('Compiling draft...', 'loading');
+            document.getElementById('compileBtn').disabled = true;
+
+            try {
+                const data = await api(`/compile_draft/${state.currentProject}`, {
+                    method: 'POST'
+                });
+
+                state.compiledDraft = data.compiled_draft;
+
+                document.getElementById('compiledContent').textContent = state.compiledDraft;
+                document.getElementById('compiledDraft').classList.remove('hidden');
+
+                showStatus('Draft compiled successfully!', 'success');
+                markStepCompleted('compile');
+
+            } catch (error) {
+                showStatus(`Compilation failed: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('compileBtn').disabled = false;
+            }
+        }
+
+        // Refine blog
+        async function refineBlog() {
+            if (!state.currentProject || !state.compiledDraft) return;
+
+            const model = document.getElementById('modelSelect').value;
+
+            showStatus('Refining blog...', 'loading');
+            document.getElementById('refineBtn').disabled = true;
+
+            try {
+                const data = await api(`/refine_blog/${state.currentProject}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model_name: model,
+                        compiled_draft: state.compiledDraft
+                    })
+                });
+
+                state.refinedDraft = data.refined_draft;
+                state.summary = data.summary;
+                state.titleOptions = data.title_options;
+
+                updateCostSummary(data.cost_summary);
+                renderRefinedResult();
+
+                showStatus('Blog refined successfully!', 'success');
+                markStepCompleted('refine');
+
+            } catch (error) {
+                showStatus(`Refinement failed: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('refineBtn').disabled = false;
+            }
+        }
+
+        // Render refined result
+        function renderRefinedResult() {
+            const container = document.getElementById('refinedResult');
+            container.classList.remove('hidden');
+
+            // Title options
+            const titleContainer = document.getElementById('titleOptions');
+            titleContainer.innerHTML = (state.titleOptions || []).map((t, i) => `
+                <div style="padding: 10px; background: #f0f0f0; border-radius: 4px; margin-bottom: 8px;">
+                    <strong>Option ${i + 1}:</strong> ${t.title}
+                    ${t.subtitle ? `<br><em>${t.subtitle}</em>` : ''}
+                </div>
+            `).join('');
+
+            document.getElementById('summaryContent').textContent = state.summary || '';
+            document.getElementById('refinedContent').textContent = state.refinedDraft || '';
+        }
+
+        // Generate social content
+        async function generateSocialContent() {
+            if (!state.currentProject || !state.refinedDraft) return;
+
+            const model = document.getElementById('modelSelect').value;
+
+            showStatus('Generating social content...', 'loading');
+            document.getElementById('socialBtn').disabled = true;
+
+            try {
+                const data = await api(`/generate_social_content/${state.currentProject}`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        model_name: model,
+                        refined_draft: state.refinedDraft
+                    })
+                });
+
+                state.socialContent = data;
+                updateCostSummary(data.cost_summary);
+
+                renderSocialContent();
+                showStatus('Social content generated!', 'success');
+                markStepCompleted('social');
+
+            } catch (error) {
+                showStatus(`Social generation failed: ${error.message}`, 'error');
+            } finally {
+                document.getElementById('socialBtn').disabled = false;
+            }
+        }
+
+        // Render social content
+        function renderSocialContent() {
+            const container = document.getElementById('socialResult');
+            container.classList.remove('hidden');
+
+            const content = state.socialContent;
+
+            document.getElementById('linkedinContent').textContent = content.linkedin_post || '';
+            document.getElementById('twitterContent').textContent = content.x_post || '';
+            document.getElementById('newsletterContent').textContent = content.newsletter_content || '';
+
+            // Thread
+            if (content.x_thread) {
+                const thread = content.x_thread;
+                document.getElementById('threadContent').innerHTML =
+                    (thread.tweets || []).map((t, i) => `
+                        <div style="padding: 10px; background: #f9f9f9; border-left: 3px solid #1da1f2; margin-bottom: 8px;">
+                            <strong>${i + 1}/${thread.total_tweets}</strong>
+                            <p>${t.content}</p>
+                        </div>
+                    `).join('');
+            }
+        }
+
+        // Social tab switching
+        function showSocialTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById(`${tab}Tab`).classList.add('active');
+        }
+
+        // Utility functions
+        function showStatus(message, type) {
+            const el = document.getElementById('statusMessage');
+            el.textContent = message;
+            el.className = `status ${type}`;
+            el.classList.remove('hidden');
+
+            if (type === 'success' || type === 'info') {
+                setTimeout(() => el.classList.add('hidden'), 5000);
+            }
+        }
+
+        function updateCostSummary(summary) {
+            if (!summary) return;
+
+            state.costSummary.total_cost += summary.total_cost || 0;
+            state.costSummary.total_tokens += summary.total_tokens || 0;
+
+            document.getElementById('totalCost').textContent = `$${state.costSummary.total_cost.toFixed(4)}`;
+            document.getElementById('totalTokens').textContent = state.costSummary.total_tokens.toLocaleString();
+        }
+
+        function copyToClipboard(elementId) {
+            const text = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                showStatus('Copied to clipboard!', 'success');
+            });
+        }
+
+        function downloadDraft() {
+            const content = state.refinedDraft || state.compiledDraft;
+            if (!content) return;
+
+            const blob = new Blob([content], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${state.currentProject || 'blog'}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
