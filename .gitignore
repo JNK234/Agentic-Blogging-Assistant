@@ -20,7 +20,7 @@ coverage.xml
 .git
 .mypy_cache
 .pytest_cache
-.hypothesis
+.hypothesis 
 
 # Environment variables
 .env
