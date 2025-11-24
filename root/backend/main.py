@@ -776,145 +776,20 @@ async def regenerate_section(
     max_iterations: int = Form(3),
     quality_threshold: float = Form(0.8)
 ) -> JSONResponse:
-    """Regenerate a section with user feedback and update job state."""
-    try:
-        # REMOVED: Validate job exists via cache
-        # job_state = state_cache.get(job_id)
-        # NOTE: This endpoint still uses job_id parameter but should be migrated to project_id
-        # For now, commenting out cache access - endpoint needs full migration
-        logger.warning(f"regenerate_section_with_feedback endpoint needs migration to use project_id instead of job_id")
-        return JSONResponse(
-            content={"error": "This endpoint is deprecated and needs migration to use project_id"},
-            status_code=501  # Not Implemented
-        )
+    """
+    Regenerate a section with user feedback.
 
-        # Ensure cost tracking is available
-        cost_aggregator = job_state.get("cost_aggregator")
-        if not cost_aggregator:
-            cost_aggregator = CostAggregator()
-            target_project = job_state.get("project_id", job_id)
-            cost_aggregator.start_workflow(project_id=target_project)
-
-            existing_history = job_state.get("cost_call_history") or []
-            if not existing_history and job_state.get("project_id"):
-                project_record = await sql_project_manager.get_project(job_state["project_id"])
-                if project_record:
-                    existing_history = project_record.get("metadata", {}).get("cost_call_history", [])
-
-            if existing_history:
-                for call in existing_history:
-                    try:
-                        cost_aggregator.record_cost(call)
-                    except Exception as err:
-                        logger.warning(f"Failed to replay cost record during section resume: {err}")
-
-            job_state["cost_aggregator"] = cost_aggregator
-            job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
-            job_state["cost_call_history"] = list(cost_aggregator.call_history)
-
-        if job_state.get("project_id"):
-            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
-
-        previous_summary = job_state.get("cost_summary")
-        previous_total_cost = previous_summary.get("total_cost", 0.0) if previous_summary else 0.0
-        previous_total_tokens = previous_summary.get("total_tokens", 0) if previous_summary else 0
-
-        # Extract data from state
-        outline_data = job_state["outline"]
-        notebook_data = job_state.get("notebook_content")
-        markdown_data = job_state.get("markdown_content")
-        model_name = job_state["model_name"]
-
-        # Validate section index
-        if section_index < 0 or section_index >= len(outline_data.get("sections", [])):
-            return JSONResponse(
-                content={"error": f"Invalid section index: {section_index}"},
-                status_code=400
-            )
-
-        # Get current section
-        section = outline_data["sections"][section_index]
-        section_title = section.get("title", f"Section {section_index + 1}")
-
-        # Get agents
-        agents = await get_or_create_agents(model_name)
-        draft_agent = agents["draft_agent"]
-
-        # Regenerate section with feedback
-        new_content = await draft_agent.regenerate_section_with_feedback(
-            project_name=project_name,
-            section=section,
-            outline=outline_data,
-            notebook_content=notebook_data,
-            markdown_content=markdown_data,
-            feedback=feedback,
-            max_iterations=max_iterations,
-            quality_threshold=quality_threshold,
-            cost_aggregator=cost_aggregator,
-            project_id=job_state.get("project_id", job_id)
-        )
-
-        if not new_content:
-            return JSONResponse(
-                content={"error": f"Failed to regenerate section: {section_title}"},
-                status_code=500
-            )
-
-        # Update job state immediately
-        if 'generated_sections' not in job_state:
-            job_state['generated_sections'] = {}
-        
-        job_state['generated_sections'][section_index] = {
-            "title": section_title,
-            "content": new_content,
-            "regenerated_at": datetime.now().isoformat(),
-            "feedback_provided": feedback[:100] + "..." if len(feedback) > 100 else feedback
-        }
-
-        updated_summary = cost_aggregator.get_workflow_summary()
-        updated_history = list(cost_aggregator.call_history)
-        job_state["cost_summary"] = updated_summary
-        job_state["cost_call_history"] = updated_history
-
-        section_cost_delta = updated_summary.get("total_cost", 0.0) - previous_total_cost
-        section_tokens_delta = updated_summary.get("total_tokens", 0) - previous_total_tokens
-        job_state['generated_sections'][section_index]["cost_delta"] = section_cost_delta
-        job_state['generated_sections'][section_index]["token_delta"] = section_tokens_delta
-        job_state['generated_sections'][section_index]["cost_snapshot"] = updated_summary
-
-        project_id_in_state = job_state.get("project_id")
-        if project_id_in_state:
-            await sql_project_manager.update_metadata(project_id_in_state, {
-                "cost_summary": updated_summary,
-                "cost_call_history": updated_history,
-                "latest_job_id": job_id
-            })
-        
-        logger.info(f"Updated section {section_index} in job state with feedback")
-
-        return JSONResponse(
-            content={
-                "job_id": job_id,
-                "section_title": section_title,
-                "section_content": new_content,
-                "section_index": section_index,
-                "feedback_addressed": True,
-                "cost_summary": updated_summary,
-                "section_cost": section_cost_delta,
-                "section_tokens": section_tokens_delta
-            }
-        )
-
-    except Exception as e:
-        logger.exception(f"Section regeneration failed: {str(e)}")
-        return JSONResponse(
-            content={
-                "error": f"Section regeneration failed: {str(e)}",
-                "type": str(type(e).__name__),
-                "details": str(e)
-            },
-            status_code=500
-        )
+    DEPRECATED: This endpoint needs migration to use project_id instead of job_id.
+    Use the v2 API endpoints for section management instead.
+    """
+    logger.warning(f"regenerate_section_with_feedback endpoint is deprecated - needs migration to use project_id instead of job_id")
+    return JSONResponse(
+        content={
+            "error": "This endpoint is deprecated and needs migration to use project_id",
+            "suggestion": "Use /api/v2/projects/{project_id}/sections endpoint instead"
+        },
+        status_code=501  # Not Implemented
+    )
 
 
 @app.post("/compile_draft/{project_name}")

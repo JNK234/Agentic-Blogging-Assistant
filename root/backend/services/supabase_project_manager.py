@@ -439,7 +439,7 @@ class SupabaseProjectManager:
 
     async def save_sections(self, project_id: str, sections: List[Dict[str, Any]]) -> bool:
         """
-        Batch update all sections atomically.
+        Batch update all sections using upsert for transaction safety.
 
         Args:
             project_id: Project UUID
@@ -450,10 +450,7 @@ class SupabaseProjectManager:
         """
         try:
             async with await self._get_lock(project_id):
-                # Delete existing sections
-                self.supabase.table("sections").delete().eq("project_id", project_id).execute()
-
-                # Insert new sections
+                # Build section records for upsert
                 section_records = []
                 for section_data in sections:
                     section_records.append({
@@ -464,11 +461,33 @@ class SupabaseProjectManager:
                         "status": section_data.get('status', SectionStatus.PENDING.value),
                         "cost_delta": section_data.get('cost_delta', 0.0),
                         "input_tokens": section_data.get('input_tokens', 0),
-                        "output_tokens": section_data.get('output_tokens', 0)
+                        "output_tokens": section_data.get('output_tokens', 0),
+                        "updated_at": datetime.utcnow().isoformat()
                     })
 
                 if section_records:
-                    self.supabase.table("sections").insert(section_records).execute()
+                    # Upsert sections - if (project_id, section_index) exists, update; otherwise insert
+                    # This is safer than delete-then-insert as it won't lose data on partial failure
+                    self.supabase.table("sections").upsert(
+                        section_records,
+                        on_conflict="project_id,section_index"
+                    ).execute()
+
+                # Delete sections that are no longer in the list
+                current_indices = [s.get('section_index') for s in sections if s.get('section_index') is not None]
+                if current_indices:
+                    # Get existing sections
+                    existing = self.supabase.table("sections").select("section_index").eq(
+                        "project_id", project_id
+                    ).execute()
+                    existing_indices = [s.get('section_index') for s in existing.data]
+
+                    # Delete sections not in current list
+                    indices_to_delete = [i for i in existing_indices if i not in current_indices]
+                    for idx in indices_to_delete:
+                        self.supabase.table("sections").delete().eq(
+                            "project_id", project_id
+                        ).eq("section_index", idx).execute()
 
                 # Update project's updated_at
                 now = datetime.utcnow().isoformat()
@@ -516,6 +535,12 @@ class SupabaseProjectManager:
                                    status: str, cost_delta: float = None) -> bool:
         """Update status of a specific section."""
         try:
+            # Validate status is a valid SectionStatus value
+            valid_statuses = [s.value for s in SectionStatus]
+            if status not in valid_statuses:
+                logger.error(f"Invalid section status: {status}. Valid values: {valid_statuses}")
+                return False
+
             async with await self._get_lock(project_id):
                 update_data = {
                     "status": status,
@@ -562,6 +587,12 @@ class SupabaseProjectManager:
             Success boolean
         """
         try:
+            # Validate project exists before tracking cost
+            project = await self.get_project(project_id)
+            if not project:
+                logger.error(f"Cannot track cost for non-existent project: {project_id}")
+                return False
+
             self.supabase.table("cost_tracking").insert({
                 "project_id": project_id,
                 "agent_name": agent_name,
@@ -748,17 +779,21 @@ class SupabaseProjectManager:
         """Determine the next step based on completed milestones."""
         if not milestone_types:
             return "upload_files"
-        elif MilestoneType.FILES_UPLOADED.value in milestone_types and \
-             MilestoneType.OUTLINE_GENERATED.value not in milestone_types:
+
+        # Convert to set for O(1) lookup performance
+        milestone_set = set(milestone_types)
+
+        if MilestoneType.FILES_UPLOADED.value in milestone_set and \
+             MilestoneType.OUTLINE_GENERATED.value not in milestone_set:
             return "generate_outline"
-        elif MilestoneType.OUTLINE_GENERATED.value in milestone_types and \
-             MilestoneType.DRAFT_COMPLETED.value not in milestone_types:
+        elif MilestoneType.OUTLINE_GENERATED.value in milestone_set and \
+             MilestoneType.DRAFT_COMPLETED.value not in milestone_set:
             return "generate_draft"
-        elif MilestoneType.DRAFT_COMPLETED.value in milestone_types and \
-             MilestoneType.BLOG_REFINED.value not in milestone_types:
+        elif MilestoneType.DRAFT_COMPLETED.value in milestone_set and \
+             MilestoneType.BLOG_REFINED.value not in milestone_set:
             return "refine_blog"
-        elif MilestoneType.BLOG_REFINED.value in milestone_types and \
-             MilestoneType.SOCIAL_GENERATED.value not in milestone_types:
+        elif MilestoneType.BLOG_REFINED.value in milestone_set and \
+             MilestoneType.SOCIAL_GENERATED.value not in milestone_set:
             return "generate_social"
         else:
             return "completed"
