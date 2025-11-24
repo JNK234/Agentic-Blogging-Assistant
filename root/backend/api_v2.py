@@ -15,7 +15,7 @@ import uuid
 import logging
 import os
 
-from backend.services.sql_project_manager import SQLProjectManager, MilestoneType, ProjectStatus, SectionStatus
+from backend.services.supabase_project_manager import SupabaseProjectManager, MilestoneType, ProjectStatus, SectionStatus
 from backend.services.cost_aggregator import CostAggregator
 from backend.services.cost_analytics_service import CostAnalyticsService, TimeRange
 from backend.agents.outline_generator.state import FinalOutline
@@ -27,7 +27,7 @@ logger = logging.getLogger("APIv2")
 router = APIRouter(prefix="/api/v2", tags=["v2"])
 
 # Initialize services
-sql_manager = SQLProjectManager()
+sql_manager = SupabaseProjectManager()  # Keep variable name for compatibility
 cost_aggregator = CostAggregator()
 cost_analytics = CostAnalyticsService()
 

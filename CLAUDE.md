@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+# Decision Log
+
+**IMPORTANT**: All architectural decisions, config changes, and infrastructure details MUST be documented in `.claude/DECISIONS.md`. Check before making changes. Update after decisions.
+
 # Interaction
 
 - Any time you interact with me, you MUST address me as "Master Blogger"

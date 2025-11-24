@@ -127,6 +127,10 @@ class Settings:
         )
         # Note: Azure embedding settings are already loaded under self.azure
 
+        # --- Supabase Settings ---
+        self.supabase_url = os.getenv('SUPABASE_URL', '')
+        self.supabase_key = os.getenv('SUPABASE_KEY', '')
+
     def get_model_settings(self, provider: str):
         """Get settings for specific LLM provider"""
         provider = provider.lower()

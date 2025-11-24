@@ -33,7 +33,7 @@ from backend.models.model_factory import ModelFactory
 from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig # Added
 from backend.services.vector_store_service import VectorStoreService # Added
 from backend.services.persona_service import PersonaService # Added
-from backend.services.sql_project_manager import SQLProjectManager, MilestoneType # SQL-based project manager
+from backend.services.supabase_project_manager import SupabaseProjectManager, MilestoneType # Supabase-based project manager
 from backend.services.cost_aggregator import CostAggregator
 
 # Configure logging
@@ -58,8 +58,8 @@ os.makedirs(CACHE_DIRECTORY, exist_ok=True)
 # Agent cache to avoid recreating agents for each request
 agent_cache = {}
 
-# Initialize SQLProjectManager for SQL-based project tracking
-sql_project_manager = SQLProjectManager()
+# Initialize SupabaseProjectManager for Supabase-based project tracking
+sql_project_manager = SupabaseProjectManager()  # Keep variable name for compatibility
 
 async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
     """
