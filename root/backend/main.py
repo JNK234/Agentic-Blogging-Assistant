@@ -117,12 +117,17 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
     if "social_generated" in milestones:
         state["social_content"] = milestones["social_generated"]["data"]
 
-    # Load sections from SQL Sections table
+    # Load sections from SQL Sections table with full metadata
     state["generated_sections"] = {
         s["section_index"]: {
             "title": s["title"],
             "content": s["content"],
-            "status": s["status"]
+            "status": s["status"],
+            "cost_delta": s.get("cost_delta", 0.0),
+            "input_tokens": s.get("input_tokens", 0),
+            "output_tokens": s.get("output_tokens", 0),
+            "updated_at": s.get("updated_at"),
+            "outline_hash": s.get("outline_hash")
         }
         for s in project_data["sections"]
     }
@@ -286,14 +291,14 @@ async def get_or_create_agents(model_name: str, specific_model: Optional[str] = 
         outline_agent = OutlineGeneratorAgent(model, content_parser, vector_store, persona_service) # Pass persona_service
         await outline_agent.initialize()
 
-        # Pass vector_store and persona_service to BlogDraftGeneratorAgent
-        draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store, persona_service)
+        # Pass vector_store, persona_service, and sql_project_manager to BlogDraftGeneratorAgent
+        draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store, persona_service, sql_project_manager)
         await draft_agent.initialize()
 
         refinement_agent = BlogRefinementAgent(model, persona_service)
         await refinement_agent.initialize()
 
-        social_agent = SocialMediaAgent(model, persona_service)
+        social_agent = SocialMediaAgent(model, persona_service, sql_project_manager)
         await social_agent.initialize()
 
         # Cache the agents
@@ -342,6 +347,26 @@ async def process_files(
             content_hash = await content_parser.process_file_with_graph(file_path, project_name)
             logger.info(f"File processed with hash: {content_hash}")
             result[file_path] = content_hash
+
+        # Persist file hashes to Supabase for resume functionality
+        project = await sql_project_manager.get_project_by_name(project_name)
+        if project:
+            project_id = project["id"]
+            # Update the files_uploaded milestone with file hashes
+            existing_milestone = await sql_project_manager.load_milestone(
+                project_id, MilestoneType.FILES_UPLOADED
+            )
+            if existing_milestone:
+                # Update existing milestone data with file hashes
+                milestone_data = existing_milestone.get("data", {})
+                milestone_data["file_hashes"] = result
+                milestone_data["processed_at"] = datetime.now().isoformat()
+                await sql_project_manager.save_milestone(
+                    project_id=project_id,
+                    milestone_type=MilestoneType.FILES_UPLOADED,
+                    data=milestone_data
+                )
+                logger.info(f"Persisted {len(result)} file hashes for project {project_id}")
 
         return JSONResponse(
             content={
@@ -679,8 +704,10 @@ async def generate_section(
         section = outline_data["sections"][section_index]
         section_title = section.get("title", f"Section {section_index + 1}")
 
-        # Check if section already exists in SQL
+        # Get generated sections from state
         generated_sections = state.get('generated_sections', {})
+
+        # Check if section already exists in SQL
         if section_index in generated_sections:
             logger.info(f"Section {section_index} already exists in SQL, returning cached version")
             cached_section = generated_sections[section_index]
@@ -1553,97 +1580,144 @@ async def get_project_details(project_id: str) -> JSONResponse:
 @app.post("/project/{project_id}/resume")
 async def resume_project(project_id: str) -> JSONResponse:
     """
-    Resume a project from its latest milestone.
+    Resume a project from its latest milestone with COMPLETE state restoration.
+
+    Uses load_workflow_state() as single source of truth to ensure all data
+    (outline, sections, drafts, costs) is properly restored.
 
     Args:
         project_id: Project UUID
 
     Returns:
-        Resume data including next step and cached state
+        Complete resume data including all content and resume position
     """
     try:
-        # Use SQL project manager for consistent storage
-        project_data = await sql_project_manager.get_project(project_id)
+        # Use load_workflow_state() as SINGLE SOURCE OF TRUTH
+        state = await load_workflow_state(project_id)
 
-        if not project_data:
+        if not state:
             return JSONResponse(
                 content={"error": f"Project {project_id} not found"},
                 status_code=404
             )
 
-        # Get all milestones
-        milestones = {}
-        for milestone_type in MilestoneType:
-            milestone_data = await sql_project_manager.load_milestone(project_id, milestone_type)
-            if milestone_data:
-                milestones[milestone_type.value] = milestone_data
+        # Get project data for additional metadata
+        project_data = await sql_project_manager.get_project(project_id)
 
-        # Determine next step based on latest milestone
-        latest_milestone = project_data.get("current_milestone", "files_uploaded")
-        next_step_map = {
-            "files_uploaded": "outline_generation",
-            "outline_generated": "blog_drafting",
-            "draft_completed": "blog_refinement",
-            "blog_refined": "social_generation",
-            "social_generated": "completed"
-        }
-        next_step = next_step_map.get(latest_milestone, "outline_generation")
+        # Get milestones for files_uploaded data (file hashes, etc.)
+        files_milestone = await sql_project_manager.load_milestone(
+            project_id, MilestoneType.FILES_UPLOADED
+        )
 
-        # Generate a new job_id for this resume session
-        job_id = str(uuid.uuid4())
+        # Extract outline for section counting
+        outline = state.get("outline", {})
+        outline_sections = outline.get("sections", []) if outline else []
+        total_sections = len(outline_sections)
 
-        # Reconstruct state cache entry based on milestones
-        job_state = {
-            "job_id": job_id,
-            "project_id": project_id,
-            "project_name": project_data.get("name"),
-            "created_at": datetime.now().isoformat(),
-            "model_name": project_data.get("metadata", {}).get("model_name"),
-            "persona": project_data.get("metadata", {}).get("persona")
-        }
+        # Get generated sections from state (loaded from sections table)
+        generated_sections = state.get("generated_sections", {})
+        completed_sections = len([
+            s for s in generated_sections.values()
+            if s.get("status") == "completed"
+        ])
 
-        # Load outline if available
-        if "outline_generated" in milestones:
-            outline_data = milestones["outline_generated"].get("data", {})
-            job_state["outline"] = outline_data.get("outline")
-            job_state["outline_hash"] = outline_data.get("outline_hash")
+        # Calculate resume position - which section to generate next
+        resume_from_section = None
+        if total_sections > 0 and completed_sections < total_sections:
+            resume_from_section = completed_sections
 
-        # Load draft if available
-        if "draft_completed" in milestones:
-            draft_data = milestones["draft_completed"].get("data", {})
-            job_state["final_draft"] = draft_data.get("compiled_blog")
-            job_state["generated_sections"] = draft_data.get("sections", {})
+        # Determine current milestone and next step
+        milestones_data = await sql_project_manager.get_milestones(project_id)
+        milestone_types = [m.get("type") for m in milestones_data]
 
-        # Load refined blog if available
-        if "blog_refined" in milestones:
-            refined_data = milestones["blog_refined"].get("data", {})
-            job_state["refined_draft"] = refined_data.get("refined_content")
-            job_state["summary"] = refined_data.get("summary")
-            job_state["title_options"] = refined_data.get("title_options")
+        # Determine current milestone (most advanced)
+        milestone_priority = [
+            "social_generated", "blog_refined", "draft_completed",
+            "outline_generated", "files_uploaded"
+        ]
+        current_milestone = "files_uploaded"
+        for m in milestone_priority:
+            if m in milestone_types:
+                current_milestone = m
+                break
 
-        # REMOVED: Store in state cache for session
-        # No longer needed - using SQL-only persistence via load_workflow_state()
-        # state_cache[job_id] = job_state
-        logger.info(f"Resumed project {project_id} (cache storage removed, using SQL-only)")
+        # Determine next step based on current state
+        if "social_generated" in milestone_types:
+            next_step = "completed"
+        elif "blog_refined" in milestone_types:
+            next_step = "social_generation"
+        elif "draft_completed" in milestone_types:
+            next_step = "blog_refinement"
+        elif "outline_generated" in milestone_types:
+            if completed_sections < total_sections:
+                next_step = "section_generation"
+            else:
+                next_step = "compile_draft"
+        else:
+            next_step = "outline_generation"
+
+        # Get cost data from outline_generated milestone metadata (most complete)
+        outline_milestone = await sql_project_manager.load_milestone(
+            project_id, MilestoneType.OUTLINE_GENERATED
+        )
+        cost_call_history = []
+        if outline_milestone:
+            cost_call_history = outline_milestone.get("metadata", {}).get("cost_call_history", [])
+
+        # Calculate progress percentage
+        progress = await sql_project_manager.get_progress(project_id)
+
+        logger.info(f"Resumed project {project_id} with {completed_sections}/{total_sections} sections")
 
         return JSONResponse(
             content={
                 "status": "success",
-                "job_id": job_id,
                 "project_id": project_id,
-                "project_name": project_data.get("name"),
-                "current_milestone": latest_milestone,
+                "project_name": state.get("project_name"),
+
+                # Configuration
+                "model_name": state.get("model_name"),
+                "specific_model": state.get("specific_model"),
+                "persona": state.get("persona"),
+
+                # Progress tracking
+                "current_milestone": current_milestone,
                 "next_step": next_step,
-                "has_outline": bool(job_state.get("outline")),
-                "has_draft": bool(job_state.get("final_draft")),
-                "has_refined": bool(job_state.get("refined_draft")),
-                "cost_summary": job_state.get("cost_summary"),
-                "cost_call_history": job_state.get("cost_call_history", [])
+                "progress_percentage": progress.get("percentage", 0),
+
+                # Section progress
+                "total_sections": total_sections,
+                "completed_sections": completed_sections,
+                "resume_from_section": resume_from_section,
+
+                # File data
+                "uploaded_files": files_milestone.get("data", {}).get("files", []) if files_milestone else [],
+                "processed_file_hashes": files_milestone.get("data", {}).get("file_hashes", {}) if files_milestone else {},
+
+                # Content - FULL DATA for frontend restoration
+                "outline": outline,
+                "outline_hash": state.get("outline_hash"),
+                "generated_sections": generated_sections,
+                "final_draft": state.get("final_draft"),
+                "refined_draft": state.get("refined_draft"),
+                "summary": state.get("summary"),
+                "title_options": state.get("title_options"),
+                "social_content": state.get("social_content"),
+
+                # Cost tracking
+                "cost_summary": state.get("cost_summary", {}),
+                "cost_call_history": cost_call_history,
+
+                # Legacy compatibility flags
+                "has_outline": bool(outline),
+                "has_draft": bool(state.get("final_draft")),
+                "has_refined": bool(state.get("refined_draft")),
+                "has_social": bool(state.get("social_content"))
             }
         )
 
     except Exception as e:
-        logger.error(f"Failed to resume project {project_id}: {e}")
+        logger.exception(f"Failed to resume project {project_id}: {e}")
         return JSONResponse(
             content={"error": f"Failed to resume project: {str(e)}"},
             status_code=500

@@ -453,7 +453,7 @@ class SupabaseProjectManager:
                 # Build section records for upsert
                 section_records = []
                 for section_data in sections:
-                    section_records.append({
+                    record = {
                         "project_id": project_id,
                         "section_index": section_data.get('section_index'),
                         "title": section_data.get('title'),
@@ -463,7 +463,11 @@ class SupabaseProjectManager:
                         "input_tokens": section_data.get('input_tokens', 0),
                         "output_tokens": section_data.get('output_tokens', 0),
                         "updated_at": datetime.utcnow().isoformat()
-                    })
+                    }
+                    # Add outline_hash if provided (for version tracking)
+                    if section_data.get('outline_hash'):
+                        record["outline_hash"] = section_data.get('outline_hash')
+                    section_records.append(record)
 
                 if section_records:
                     # Upsert sections - if (project_id, section_index) exists, update; otherwise insert
