@@ -476,6 +476,8 @@ class SupabaseProjectManager:
                 if section_records:
                     # Upsert sections - if (project_id, section_index) exists, update; otherwise insert
                     # This is safer than delete-then-insert as it won't lose data on partial failure
+                    # Note: Supabase Python client uses REST API with JSON payloads (PostgREST),
+                    # not raw SQL - all parameters are properly escaped/parameterized by the client
                     self.supabase.table("sections").upsert(
                         section_records,
                         on_conflict="project_id,section_index"
@@ -492,13 +494,14 @@ class SupabaseProjectManager:
                         ).execute()
                         existing_indices = [s.get('section_index') for s in existing.data]
 
-                        # Delete sections not in current list
+                        # Delete sections not in current list using batch operation
+                        # Note: Supabase Python client uses REST API with JSON payloads,
+                        # not raw SQL - all parameters are properly escaped by the client
                         indices_to_delete = [i for i in existing_indices if i not in current_indices]
-                        for idx in indices_to_delete:
+                        if indices_to_delete:
                             self.supabase.table("sections").delete().eq(
                                 "project_id", project_id
-                            ).eq("section_index", idx).execute()
-                        if indices_to_delete:
+                            ).in_("section_index", indices_to_delete).execute()
                             logger.info(f"Deleted orphaned sections {indices_to_delete} for project {project_id}")
 
                 # Update project's updated_at
