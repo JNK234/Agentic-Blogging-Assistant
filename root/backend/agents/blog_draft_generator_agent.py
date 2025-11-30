@@ -313,7 +313,8 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
             project_id=project_id,
             current_stage="draft_generation",
             persona=persona,  # Pass the persona to the state
-            sql_project_manager=self.sql_project_manager  # Pass SQL manager for persistence
+            sql_project_manager=self.sql_project_manager,  # Pass SQL manager for persistence
+            outline_hash=outline_hash  # Pass outline hash for version tracking
             # job_id is not part of BlogDraftState, but available via project_name/index
         )
 

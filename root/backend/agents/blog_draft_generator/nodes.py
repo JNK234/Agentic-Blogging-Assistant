@@ -23,7 +23,7 @@ from backend.agents.blog_draft_generator.utils import (
 )
 from backend.services.vector_store_service import VectorStoreService
 from backend.agents.cost_tracking_decorator import track_node_costs, track_iteration_costs
-from backend.services.sql_project_manager import MilestoneType, SectionStatus
+from backend.services.supabase_project_manager import MilestoneType, SectionStatus
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1509,6 +1509,23 @@ async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
             quality_metrics = state.current_section.quality_metrics or {}
             word_count = len(state.current_section.content.split())
 
+            # Extract actual costs from CostAggregator for this section
+            section_cost = 0.0
+            section_input_tokens = 0
+            section_output_tokens = 0
+
+            if hasattr(state, 'cost_aggregator') and state.cost_aggregator:
+                section_key = f"section_{state.current_section_index}"
+                section_costs = state.cost_aggregator.costs_by_section.get(section_key, {})
+                section_cost = section_costs.get("total_cost", 0.0)
+                section_tokens = section_costs.get("total_tokens", 0)
+
+                # Get input/output token breakdown from call history for this section
+                for call in state.cost_aggregator.call_history:
+                    if call.get("section_index") == state.current_section_index:
+                        section_input_tokens += call.get("input_tokens", 0)
+                        section_output_tokens += call.get("output_tokens", 0)
+
             section_data = {
                 "section_index": state.current_section_index,
                 "title": state.current_section.title,
@@ -1516,9 +1533,10 @@ async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
                 "status": SectionStatus.COMPLETED.value,
                 "quality_score": quality_metrics.get("overall_score", 0.0),
                 "word_count": word_count,
-                "cost_delta": 0.0,  # Would need to track this from cost aggregator
-                "input_tokens": 0,  # Would need to track from state
-                "output_tokens": 0  # Would need to track from state
+                "cost_delta": section_cost,
+                "input_tokens": section_input_tokens,
+                "output_tokens": section_output_tokens,
+                "outline_hash": getattr(state, 'outline_hash', None)
             }
 
             # Save this single section (we'll batch save all sections at the end via save_sections)

@@ -23,7 +23,7 @@ from backend.agents.blog_refinement.validation import (
     create_correction_prompt
 )
 from backend.models.generation_config import TitleGenerationConfig
-from backend.services.sql_project_manager import MilestoneType
+from backend.services.supabase_project_manager import MilestoneType
 
 logger = logging.getLogger(__name__)
 

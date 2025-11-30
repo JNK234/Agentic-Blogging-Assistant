@@ -33,7 +33,7 @@ from backend.models.model_factory import ModelFactory
 from backend.models.generation_config import TitleGenerationConfig, SocialMediaConfig # Added
 from backend.services.vector_store_service import VectorStoreService # Added
 from backend.services.persona_service import PersonaService # Added
-from backend.services.sql_project_manager import SQLProjectManager, MilestoneType # SQL-based project manager
+from backend.services.supabase_project_manager import SupabaseProjectManager, MilestoneType # Supabase-based project manager
 from backend.services.cost_aggregator import CostAggregator
 
 # Configure logging
@@ -58,8 +58,8 @@ os.makedirs(CACHE_DIRECTORY, exist_ok=True)
 # Agent cache to avoid recreating agents for each request
 agent_cache = {}
 
-# Initialize SQLProjectManager for SQL-based project tracking
-sql_project_manager = SQLProjectManager()
+# Initialize SupabaseProjectManager for Supabase-based project tracking
+sql_project_manager = SupabaseProjectManager()  # Keep variable name for compatibility
 
 async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -117,12 +117,17 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
     if "social_generated" in milestones:
         state["social_content"] = milestones["social_generated"]["data"]
 
-    # Load sections from SQL Sections table
+    # Load sections from SQL Sections table with full metadata
     state["generated_sections"] = {
         s["section_index"]: {
             "title": s["title"],
             "content": s["content"],
-            "status": s["status"]
+            "status": s["status"],
+            "cost_delta": s.get("cost_delta", 0.0),
+            "input_tokens": s.get("input_tokens", 0),
+            "output_tokens": s.get("output_tokens", 0),
+            "updated_at": s.get("updated_at"),
+            "outline_hash": s.get("outline_hash")
         }
         for s in project_data["sections"]
     }
@@ -286,14 +291,14 @@ async def get_or_create_agents(model_name: str, specific_model: Optional[str] = 
         outline_agent = OutlineGeneratorAgent(model, content_parser, vector_store, persona_service) # Pass persona_service
         await outline_agent.initialize()
 
-        # Pass vector_store and persona_service to BlogDraftGeneratorAgent
-        draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store, persona_service)
+        # Pass vector_store, persona_service, and sql_project_manager to BlogDraftGeneratorAgent
+        draft_agent = BlogDraftGeneratorAgent(model, content_parser, vector_store, persona_service, sql_project_manager)
         await draft_agent.initialize()
 
         refinement_agent = BlogRefinementAgent(model, persona_service)
         await refinement_agent.initialize()
 
-        social_agent = SocialMediaAgent(model, persona_service)
+        social_agent = SocialMediaAgent(model, persona_service, sql_project_manager)
         await social_agent.initialize()
 
         # Cache the agents
@@ -342,6 +347,26 @@ async def process_files(
             content_hash = await content_parser.process_file_with_graph(file_path, project_name)
             logger.info(f"File processed with hash: {content_hash}")
             result[file_path] = content_hash
+
+        # Persist file hashes to Supabase for resume functionality
+        project = await sql_project_manager.get_project_by_name(project_name)
+        if project:
+            project_id = project["id"]
+            # Update the files_uploaded milestone with file hashes
+            existing_milestone = await sql_project_manager.load_milestone(
+                project_id, MilestoneType.FILES_UPLOADED
+            )
+            if existing_milestone:
+                # Update existing milestone data with file hashes
+                milestone_data = existing_milestone.get("data", {})
+                milestone_data["file_hashes"] = result
+                milestone_data["processed_at"] = datetime.now().isoformat()
+                await sql_project_manager.save_milestone(
+                    project_id=project_id,
+                    milestone_type=MilestoneType.FILES_UPLOADED,
+                    data=milestone_data
+                )
+                logger.info(f"Persisted {len(result)} file hashes for project {project_id}")
 
         return JSONResponse(
             content={
@@ -679,8 +704,10 @@ async def generate_section(
         section = outline_data["sections"][section_index]
         section_title = section.get("title", f"Section {section_index + 1}")
 
-        # Check if section already exists in SQL
+        # Get generated sections from state
         generated_sections = state.get('generated_sections', {})
+
+        # Check if section already exists in SQL
         if section_index in generated_sections:
             logger.info(f"Section {section_index} already exists in SQL, returning cached version")
             cached_section = generated_sections[section_index]
@@ -776,145 +803,20 @@ async def regenerate_section(
     max_iterations: int = Form(3),
     quality_threshold: float = Form(0.8)
 ) -> JSONResponse:
-    """Regenerate a section with user feedback and update job state."""
-    try:
-        # REMOVED: Validate job exists via cache
-        # job_state = state_cache.get(job_id)
-        # NOTE: This endpoint still uses job_id parameter but should be migrated to project_id
-        # For now, commenting out cache access - endpoint needs full migration
-        logger.warning(f"regenerate_section_with_feedback endpoint needs migration to use project_id instead of job_id")
-        return JSONResponse(
-            content={"error": "This endpoint is deprecated and needs migration to use project_id"},
-            status_code=501  # Not Implemented
-        )
+    """
+    Regenerate a section with user feedback.
 
-        # Ensure cost tracking is available
-        cost_aggregator = job_state.get("cost_aggregator")
-        if not cost_aggregator:
-            cost_aggregator = CostAggregator()
-            target_project = job_state.get("project_id", job_id)
-            cost_aggregator.start_workflow(project_id=target_project)
-
-            existing_history = job_state.get("cost_call_history") or []
-            if not existing_history and job_state.get("project_id"):
-                project_record = await sql_project_manager.get_project(job_state["project_id"])
-                if project_record:
-                    existing_history = project_record.get("metadata", {}).get("cost_call_history", [])
-
-            if existing_history:
-                for call in existing_history:
-                    try:
-                        cost_aggregator.record_cost(call)
-                    except Exception as err:
-                        logger.warning(f"Failed to replay cost record during section resume: {err}")
-
-            job_state["cost_aggregator"] = cost_aggregator
-            job_state["cost_summary"] = cost_aggregator.get_workflow_summary()
-            job_state["cost_call_history"] = list(cost_aggregator.call_history)
-
-        if job_state.get("project_id"):
-            cost_aggregator.current_workflow["project_id"] = job_state["project_id"]
-
-        previous_summary = job_state.get("cost_summary")
-        previous_total_cost = previous_summary.get("total_cost", 0.0) if previous_summary else 0.0
-        previous_total_tokens = previous_summary.get("total_tokens", 0) if previous_summary else 0
-
-        # Extract data from state
-        outline_data = job_state["outline"]
-        notebook_data = job_state.get("notebook_content")
-        markdown_data = job_state.get("markdown_content")
-        model_name = job_state["model_name"]
-
-        # Validate section index
-        if section_index < 0 or section_index >= len(outline_data.get("sections", [])):
-            return JSONResponse(
-                content={"error": f"Invalid section index: {section_index}"},
-                status_code=400
-            )
-
-        # Get current section
-        section = outline_data["sections"][section_index]
-        section_title = section.get("title", f"Section {section_index + 1}")
-
-        # Get agents
-        agents = await get_or_create_agents(model_name)
-        draft_agent = agents["draft_agent"]
-
-        # Regenerate section with feedback
-        new_content = await draft_agent.regenerate_section_with_feedback(
-            project_name=project_name,
-            section=section,
-            outline=outline_data,
-            notebook_content=notebook_data,
-            markdown_content=markdown_data,
-            feedback=feedback,
-            max_iterations=max_iterations,
-            quality_threshold=quality_threshold,
-            cost_aggregator=cost_aggregator,
-            project_id=job_state.get("project_id", job_id)
-        )
-
-        if not new_content:
-            return JSONResponse(
-                content={"error": f"Failed to regenerate section: {section_title}"},
-                status_code=500
-            )
-
-        # Update job state immediately
-        if 'generated_sections' not in job_state:
-            job_state['generated_sections'] = {}
-        
-        job_state['generated_sections'][section_index] = {
-            "title": section_title,
-            "content": new_content,
-            "regenerated_at": datetime.now().isoformat(),
-            "feedback_provided": feedback[:100] + "..." if len(feedback) > 100 else feedback
-        }
-
-        updated_summary = cost_aggregator.get_workflow_summary()
-        updated_history = list(cost_aggregator.call_history)
-        job_state["cost_summary"] = updated_summary
-        job_state["cost_call_history"] = updated_history
-
-        section_cost_delta = updated_summary.get("total_cost", 0.0) - previous_total_cost
-        section_tokens_delta = updated_summary.get("total_tokens", 0) - previous_total_tokens
-        job_state['generated_sections'][section_index]["cost_delta"] = section_cost_delta
-        job_state['generated_sections'][section_index]["token_delta"] = section_tokens_delta
-        job_state['generated_sections'][section_index]["cost_snapshot"] = updated_summary
-
-        project_id_in_state = job_state.get("project_id")
-        if project_id_in_state:
-            await sql_project_manager.update_metadata(project_id_in_state, {
-                "cost_summary": updated_summary,
-                "cost_call_history": updated_history,
-                "latest_job_id": job_id
-            })
-        
-        logger.info(f"Updated section {section_index} in job state with feedback")
-
-        return JSONResponse(
-            content={
-                "job_id": job_id,
-                "section_title": section_title,
-                "section_content": new_content,
-                "section_index": section_index,
-                "feedback_addressed": True,
-                "cost_summary": updated_summary,
-                "section_cost": section_cost_delta,
-                "section_tokens": section_tokens_delta
-            }
-        )
-
-    except Exception as e:
-        logger.exception(f"Section regeneration failed: {str(e)}")
-        return JSONResponse(
-            content={
-                "error": f"Section regeneration failed: {str(e)}",
-                "type": str(type(e).__name__),
-                "details": str(e)
-            },
-            status_code=500
-        )
+    DEPRECATED: This endpoint needs migration to use project_id instead of job_id.
+    Use the v2 API endpoints for section management instead.
+    """
+    logger.warning(f"regenerate_section_with_feedback endpoint is deprecated - needs migration to use project_id instead of job_id")
+    return JSONResponse(
+        content={
+            "error": "This endpoint is deprecated and needs migration to use project_id",
+            "suggestion": "Use /api/v2/projects/{project_id}/sections endpoint instead"
+        },
+        status_code=501  # Not Implemented
+    )
 
 
 @app.post("/compile_draft/{project_name}")
@@ -1404,11 +1306,49 @@ async def generate_social_content(
 
         logger.info(f"Saved social media milestone for project {project_id}")
 
+        # Save to completed_blogs table - this marks the blog as fully complete
+        word_count = len(refined_draft.split())
+        cost_summary = workflow_state.get("cost_summary", {})
+        total_cost = cost_summary.get("total_cost", 0.0)
+
+        # Calculate generation time from project creation
+        project_created = project.get("created_at")
+        generation_time = 0
+        if project_created:
+            try:
+                if isinstance(project_created, str):
+                    created_dt = datetime.fromisoformat(project_created.replace('Z', '+00:00'))
+                else:
+                    created_dt = project_created
+                generation_time = int((datetime.now(created_dt.tzinfo) - created_dt).total_seconds())
+            except Exception as e:
+                logger.warning(f"Could not calculate generation time: {e}")
+
+        await sql_project_manager.save_completed_blog(
+            project_id=project_id,
+            title=blog_title,
+            content=refined_draft,
+            word_count=word_count,
+            total_cost=total_cost,
+            generation_time=generation_time,
+            metadata={
+                "model_name": workflow_state.get("model_name"),
+                "specific_model": workflow_state.get("specific_model"),
+                "persona": workflow_state.get("persona"),
+                "has_social_content": True
+            }
+        )
+
+        logger.info(f"Saved completed blog for project {project_id}: {blog_title} ({word_count} words)")
+
         return JSONResponse(
             content={
                 "project_id": project_id,
                 "project_name": project_name,
-                "social_content": social_content_response
+                "social_content": social_content_response,
+                "blog_completed": True,
+                "word_count": word_count,
+                "total_cost": total_cost
             }
         )
 
@@ -1678,97 +1618,144 @@ async def get_project_details(project_id: str) -> JSONResponse:
 @app.post("/project/{project_id}/resume")
 async def resume_project(project_id: str) -> JSONResponse:
     """
-    Resume a project from its latest milestone.
+    Resume a project from its latest milestone with COMPLETE state restoration.
+
+    Uses load_workflow_state() as single source of truth to ensure all data
+    (outline, sections, drafts, costs) is properly restored.
 
     Args:
         project_id: Project UUID
 
     Returns:
-        Resume data including next step and cached state
+        Complete resume data including all content and resume position
     """
     try:
-        # Use SQL project manager for consistent storage
-        project_data = await sql_project_manager.get_project(project_id)
+        # Use load_workflow_state() as SINGLE SOURCE OF TRUTH
+        state = await load_workflow_state(project_id)
 
-        if not project_data:
+        if not state:
             return JSONResponse(
                 content={"error": f"Project {project_id} not found"},
                 status_code=404
             )
 
-        # Get all milestones
-        milestones = {}
-        for milestone_type in MilestoneType:
-            milestone_data = await sql_project_manager.load_milestone(project_id, milestone_type)
-            if milestone_data:
-                milestones[milestone_type.value] = milestone_data
+        # Get project data for additional metadata
+        project_data = await sql_project_manager.get_project(project_id)
 
-        # Determine next step based on latest milestone
-        latest_milestone = project_data.get("current_milestone", "files_uploaded")
-        next_step_map = {
-            "files_uploaded": "outline_generation",
-            "outline_generated": "blog_drafting",
-            "draft_completed": "blog_refinement",
-            "blog_refined": "social_generation",
-            "social_generated": "completed"
-        }
-        next_step = next_step_map.get(latest_milestone, "outline_generation")
+        # Get milestones for files_uploaded data (file hashes, etc.)
+        files_milestone = await sql_project_manager.load_milestone(
+            project_id, MilestoneType.FILES_UPLOADED
+        )
 
-        # Generate a new job_id for this resume session
-        job_id = str(uuid.uuid4())
+        # Extract outline for section counting
+        outline = state.get("outline", {})
+        outline_sections = outline.get("sections", []) if outline else []
+        total_sections = len(outline_sections)
 
-        # Reconstruct state cache entry based on milestones
-        job_state = {
-            "job_id": job_id,
-            "project_id": project_id,
-            "project_name": project_data.get("name"),
-            "created_at": datetime.now().isoformat(),
-            "model_name": project_data.get("metadata", {}).get("model_name"),
-            "persona": project_data.get("metadata", {}).get("persona")
-        }
+        # Get generated sections from state (loaded from sections table)
+        generated_sections = state.get("generated_sections", {})
+        completed_sections = len([
+            s for s in generated_sections.values()
+            if s.get("status") == "completed"
+        ])
 
-        # Load outline if available
-        if "outline_generated" in milestones:
-            outline_data = milestones["outline_generated"].get("data", {})
-            job_state["outline"] = outline_data.get("outline")
-            job_state["outline_hash"] = outline_data.get("outline_hash")
+        # Calculate resume position - which section to generate next
+        resume_from_section = None
+        if total_sections > 0 and completed_sections < total_sections:
+            resume_from_section = completed_sections
 
-        # Load draft if available
-        if "draft_completed" in milestones:
-            draft_data = milestones["draft_completed"].get("data", {})
-            job_state["final_draft"] = draft_data.get("compiled_blog")
-            job_state["generated_sections"] = draft_data.get("sections", {})
+        # Determine current milestone and next step
+        milestones_data = await sql_project_manager.get_milestones(project_id)
+        milestone_types = [m.get("type") for m in milestones_data]
 
-        # Load refined blog if available
-        if "blog_refined" in milestones:
-            refined_data = milestones["blog_refined"].get("data", {})
-            job_state["refined_draft"] = refined_data.get("refined_content")
-            job_state["summary"] = refined_data.get("summary")
-            job_state["title_options"] = refined_data.get("title_options")
+        # Determine current milestone (most advanced)
+        milestone_priority = [
+            "social_generated", "blog_refined", "draft_completed",
+            "outline_generated", "files_uploaded"
+        ]
+        current_milestone = "files_uploaded"
+        for m in milestone_priority:
+            if m in milestone_types:
+                current_milestone = m
+                break
 
-        # REMOVED: Store in state cache for session
-        # No longer needed - using SQL-only persistence via load_workflow_state()
-        # state_cache[job_id] = job_state
-        logger.info(f"Resumed project {project_id} (cache storage removed, using SQL-only)")
+        # Determine next step based on current state
+        if "social_generated" in milestone_types:
+            next_step = "completed"
+        elif "blog_refined" in milestone_types:
+            next_step = "social_generation"
+        elif "draft_completed" in milestone_types:
+            next_step = "blog_refinement"
+        elif "outline_generated" in milestone_types:
+            if completed_sections < total_sections:
+                next_step = "section_generation"
+            else:
+                next_step = "compile_draft"
+        else:
+            next_step = "outline_generation"
+
+        # Get cost data from outline_generated milestone metadata (most complete)
+        outline_milestone = await sql_project_manager.load_milestone(
+            project_id, MilestoneType.OUTLINE_GENERATED
+        )
+        cost_call_history = []
+        if outline_milestone:
+            cost_call_history = outline_milestone.get("metadata", {}).get("cost_call_history", [])
+
+        # Calculate progress percentage
+        progress = await sql_project_manager.get_progress(project_id)
+
+        logger.info(f"Resumed project {project_id} with {completed_sections}/{total_sections} sections")
 
         return JSONResponse(
             content={
                 "status": "success",
-                "job_id": job_id,
                 "project_id": project_id,
-                "project_name": project_data.get("name"),
-                "current_milestone": latest_milestone,
+                "project_name": state.get("project_name"),
+
+                # Configuration
+                "model_name": state.get("model_name"),
+                "specific_model": state.get("specific_model"),
+                "persona": state.get("persona"),
+
+                # Progress tracking
+                "current_milestone": current_milestone,
                 "next_step": next_step,
-                "has_outline": bool(job_state.get("outline")),
-                "has_draft": bool(job_state.get("final_draft")),
-                "has_refined": bool(job_state.get("refined_draft")),
-                "cost_summary": job_state.get("cost_summary"),
-                "cost_call_history": job_state.get("cost_call_history", [])
+                "progress_percentage": progress.get("percentage", 0),
+
+                # Section progress
+                "total_sections": total_sections,
+                "completed_sections": completed_sections,
+                "resume_from_section": resume_from_section,
+
+                # File data
+                "uploaded_files": files_milestone.get("data", {}).get("files", []) if files_milestone else [],
+                "processed_file_hashes": files_milestone.get("data", {}).get("file_hashes", {}) if files_milestone else {},
+
+                # Content - FULL DATA for frontend restoration
+                "outline": outline,
+                "outline_hash": state.get("outline_hash"),
+                "generated_sections": generated_sections,
+                "final_draft": state.get("final_draft"),
+                "refined_draft": state.get("refined_draft"),
+                "summary": state.get("summary"),
+                "title_options": state.get("title_options"),
+                "social_content": state.get("social_content"),
+
+                # Cost tracking
+                "cost_summary": state.get("cost_summary", {}),
+                "cost_call_history": cost_call_history,
+
+                # Legacy compatibility flags
+                "has_outline": bool(outline),
+                "has_draft": bool(state.get("final_draft")),
+                "has_refined": bool(state.get("refined_draft")),
+                "has_social": bool(state.get("social_content"))
             }
         )
 
     except Exception as e:
-        logger.error(f"Failed to resume project {project_id}: {e}")
+        logger.exception(f"Failed to resume project {project_id}: {e}")
         return JSONResponse(
             content={"error": f"Failed to resume project: {str(e)}"},
             status_code=500

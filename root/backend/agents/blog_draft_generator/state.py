@@ -140,6 +140,9 @@ class BlogDraftState(CostTrackingMixin, BaseModel):
 
     project_id: Optional[str] = Field(default=None)
 
+    # Outline version tracking for section/outline consistency
+    outline_hash: Optional[str] = Field(default=None, description="Hash of the outline used for section generation, for detecting drift")
+
     # SQL persistence (optional)
     sql_project_manager: Optional[Any] = Field(default=None, description="SQL project manager for milestone and section persistence")
 
