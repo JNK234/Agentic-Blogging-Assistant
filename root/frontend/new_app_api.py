@@ -855,7 +855,8 @@ class SidebarUI:
                     hashes = SessionManager.get('processed_file_hashes', {})
                     if hashes:
                         for path, hash_val in hashes.items():
-                            st.sidebar.write(f"  - `{Path(path).name}` (Hash: `{hash_val[:8]}...`)")
+                            hash_display = f"{hash_val[:8]}..." if hash_val else "pending"
+                            st.sidebar.write(f"  - `{Path(path).name}` (Hash: `{hash_display}`)")
                     else:
                         st.sidebar.write("  (No files processed yet)")
 

@@ -9,7 +9,7 @@ from typing import List, Optional
 from backend.prompts.social_media.templates import SOCIAL_MEDIA_GENERATION_PROMPT, TWITTER_THREAD_GENERATION_PROMPT
 from backend.services.persona_service import PersonaService
 from backend.models.social_media import TwitterThread, Tweet, SocialMediaContent
-from backend.services.sql_project_manager import MilestoneType
+from backend.services.supabase_project_manager import MilestoneType
 from backend.services.cost_aggregator import CostAggregator
 from backend.models.cost_tracking_wrapper import CostTrackingModel
 from datetime import datetime
@@ -55,7 +55,9 @@ class SocialMediaAgent:
             )
             self.llm.configure_tracking(
                 sql_project_manager=self.sql_project_manager,
-                context={
+                project_id=self.project_id,
+                agent_name="SocialMediaAgent",
+                context_supplier=lambda: {
                     "agent": "SocialMediaAgent",
                     "project_id": self.project_id,
                     "stage": "social_media_generation"
@@ -75,7 +77,9 @@ class SocialMediaAgent:
             )
             self.llm.configure_tracking(
                 sql_project_manager=self.sql_project_manager,
-                context={
+                project_id=self.project_id,
+                agent_name="SocialMediaAgent",
+                context_supplier=lambda: {
                     "agent": "SocialMediaAgent",
                     "project_id": self.project_id,
                     "stage": "social_media_generation"

@@ -437,13 +437,17 @@ class SupabaseProjectManager:
 
     # ==================== Section Management ====================
 
-    async def save_sections(self, project_id: str, sections: List[Dict[str, Any]]) -> bool:
+    async def save_sections(self, project_id: str, sections: List[Dict[str, Any]],
+                            delete_missing: bool = False) -> bool:
         """
-        Batch update all sections using upsert for transaction safety.
+        Save sections using upsert for transaction safety.
 
         Args:
             project_id: Project UUID
             sections: List of section dictionaries
+            delete_missing: If True, delete sections not in the provided list.
+                           Only use when replacing ALL sections (e.g., after outline regeneration).
+                           Defaults to False for safe incremental saves.
 
         Returns:
             Success boolean
@@ -477,21 +481,25 @@ class SupabaseProjectManager:
                         on_conflict="project_id,section_index"
                     ).execute()
 
-                # Delete sections that are no longer in the list
-                current_indices = [s.get('section_index') for s in sections if s.get('section_index') is not None]
-                if current_indices:
-                    # Get existing sections
-                    existing = self.supabase.table("sections").select("section_index").eq(
-                        "project_id", project_id
-                    ).execute()
-                    existing_indices = [s.get('section_index') for s in existing.data]
-
-                    # Delete sections not in current list
-                    indices_to_delete = [i for i in existing_indices if i not in current_indices]
-                    for idx in indices_to_delete:
-                        self.supabase.table("sections").delete().eq(
+                # Only delete missing sections when explicitly requested
+                # This prevents accidental deletion during incremental single-section saves
+                if delete_missing:
+                    current_indices = [s.get('section_index') for s in sections if s.get('section_index') is not None]
+                    if current_indices:
+                        # Get existing sections
+                        existing = self.supabase.table("sections").select("section_index").eq(
                             "project_id", project_id
-                        ).eq("section_index", idx).execute()
+                        ).execute()
+                        existing_indices = [s.get('section_index') for s in existing.data]
+
+                        # Delete sections not in current list
+                        indices_to_delete = [i for i in existing_indices if i not in current_indices]
+                        for idx in indices_to_delete:
+                            self.supabase.table("sections").delete().eq(
+                                "project_id", project_id
+                            ).eq("section_index", idx).execute()
+                        if indices_to_delete:
+                            logger.info(f"Deleted orphaned sections {indices_to_delete} for project {project_id}")
 
                 # Update project's updated_at
                 now = datetime.utcnow().isoformat()

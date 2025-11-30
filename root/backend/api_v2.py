@@ -17,7 +17,6 @@ import os
 
 from backend.services.supabase_project_manager import SupabaseProjectManager, MilestoneType, ProjectStatus, SectionStatus
 from backend.services.cost_aggregator import CostAggregator
-from backend.services.cost_analytics_service import CostAnalyticsService, TimeRange
 from backend.agents.outline_generator.state import FinalOutline
 from backend.utils.serialization import serialize_object
 
@@ -29,7 +28,6 @@ router = APIRouter(prefix="/api/v2", tags=["v2"])
 # Initialize services
 sql_manager = SupabaseProjectManager()  # Keep variable name for compatibility
 cost_aggregator = CostAggregator()
-cost_analytics = CostAnalyticsService()
 
 # ==================== Pydantic Models ====================
 
@@ -656,183 +654,12 @@ async def get_project_by_name(project_name: str) -> JSONResponse:
 
 
 # ==================== Cost Analytics & Reporting Endpoints ====================
-
-@router.get("/reports/costs/weekly")
-async def get_weekly_cost_report(
-    project_ids: Optional[str] = None,
-    weeks_back: int = 0
-) -> JSONResponse:
-    """
-    Get weekly cost report for projects.
-
-    Args:
-        project_ids: Comma-separated project IDs (optional)
-        weeks_back: Number of weeks to look back (0 = current week)
-
-    Returns:
-        Weekly cost report with breakdown
-    """
-    try:
-        project_list = project_ids.split(",") if project_ids else None
-        report = await cost_analytics.get_weekly_report(
-            project_ids=project_list,
-            weeks_back=weeks_back
-        )
-        return JSONResponse(content={
-            "status": "success",
-            "report": report
-        })
-    except Exception as e:
-        logger.error(f"Failed to generate weekly cost report: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/reports/costs/monthly")
-async def get_monthly_cost_report(
-    project_ids: Optional[str] = None,
-    months_back: int = 0
-) -> JSONResponse:
-    """
-    Get monthly cost report for projects.
-
-    Args:
-        project_ids: Comma-separated project IDs (optional)
-        months_back: Number of months to look back (0 = current month)
-
-    Returns:
-        Monthly cost report with breakdown
-    """
-    try:
-        project_list = project_ids.split(",") if project_ids else None
-        report = await cost_analytics.get_monthly_report(
-            project_ids=project_list,
-            months_back=months_back
-        )
-        return JSONResponse(content={
-            "status": "success",
-            "report": report
-        })
-    except Exception as e:
-        logger.error(f"Failed to generate monthly cost report: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/reports/costs/trends")
-async def get_cost_trends(
-    project_ids: Optional[str] = None,
-    num_periods: int = 12,
-    time_range: str = "weekly"
-) -> JSONResponse:
-    """
-    Get cost trends and forecasts.
-
-    Args:
-        project_ids: Comma-separated project IDs (optional)
-        num_periods: Number of periods to analyze
-        time_range: Time range granularity (daily, weekly, monthly, yearly)
-
-    Returns:
-        Trend analysis with forecasts
-    """
-    try:
-        project_list = project_ids.split(",") if project_ids else None
-        try:
-            tr = TimeRange(time_range)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid time_range: {time_range}")
-
-        trends = await cost_analytics.get_cost_trends(
-            project_ids=project_list,
-            num_periods=num_periods,
-            time_range=tr
-        )
-        return JSONResponse(content={
-            "status": "success",
-            "trends": trends
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to calculate cost trends: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/reports/costs/summary")
-async def get_aggregated_cost_summary(
-    project_ids: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-) -> JSONResponse:
-    """
-    Get aggregated cost summary across multiple projects.
-
-    Args:
-        project_ids: Comma-separated project IDs (optional, all if None)
-        start_date: Start date (ISO format, optional)
-        end_date: End date (ISO format, optional)
-
-    Returns:
-        Aggregated cost summary
-    """
-    try:
-        project_list = project_ids.split(",") if project_ids else None
-        start = datetime.fromisoformat(start_date) if start_date else None
-        end = datetime.fromisoformat(end_date) if end_date else None
-
-        summary = await cost_analytics.get_multi_project_cost_summary(
-            project_ids=project_list,
-            start_date=start,
-            end_date=end
-        )
-        return JSONResponse(content={
-            "status": "success",
-            "summary": summary
-        })
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
-    except Exception as e:
-        logger.error(f"Failed to get cost summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/reports/costs/compare")
-async def compare_project_costs(
-    project_ids: str,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None
-) -> JSONResponse:
-    """
-    Compare costs across multiple projects.
-
-    Args:
-        project_ids: Comma-separated project IDs (required)
-        start_date: Start date (ISO format, optional)
-        end_date: End date (ISO format, optional)
-
-    Returns:
-        Project cost comparison
-    """
-    try:
-        if not project_ids:
-            raise HTTPException(status_code=400, detail="project_ids parameter is required")
-
-        project_list = project_ids.split(",")
-        start = datetime.fromisoformat(start_date) if start_date else None
-        end = datetime.fromisoformat(end_date) if end_date else None
-
-        comparison = await cost_analytics.compare_projects(
-            project_ids=project_list,
-            start_date=start,
-            end_date=end
-        )
-        return JSONResponse(content={
-            "status": "success",
-            "comparison": comparison
-        })
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid date format: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to compare project costs: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# NOTE: Advanced reporting endpoints removed during Supabase migration.
+# These endpoints relied on CostAnalyticsService which used SQLite.
+# TODO: Reimplement using Supabase with proper analytics queries.
+# Removed endpoints:
+#   - GET /reports/costs/weekly
+#   - GET /reports/costs/monthly
+#   - GET /reports/costs/trends
+#   - GET /reports/costs/summary
+#   - GET /reports/costs/compare

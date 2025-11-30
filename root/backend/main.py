@@ -1306,11 +1306,49 @@ async def generate_social_content(
 
         logger.info(f"Saved social media milestone for project {project_id}")
 
+        # Save to completed_blogs table - this marks the blog as fully complete
+        word_count = len(refined_draft.split())
+        cost_summary = workflow_state.get("cost_summary", {})
+        total_cost = cost_summary.get("total_cost", 0.0)
+
+        # Calculate generation time from project creation
+        project_created = project.get("created_at")
+        generation_time = 0
+        if project_created:
+            try:
+                if isinstance(project_created, str):
+                    created_dt = datetime.fromisoformat(project_created.replace('Z', '+00:00'))
+                else:
+                    created_dt = project_created
+                generation_time = int((datetime.now(created_dt.tzinfo) - created_dt).total_seconds())
+            except Exception as e:
+                logger.warning(f"Could not calculate generation time: {e}")
+
+        await sql_project_manager.save_completed_blog(
+            project_id=project_id,
+            title=blog_title,
+            content=refined_draft,
+            word_count=word_count,
+            total_cost=total_cost,
+            generation_time=generation_time,
+            metadata={
+                "model_name": workflow_state.get("model_name"),
+                "specific_model": workflow_state.get("specific_model"),
+                "persona": workflow_state.get("persona"),
+                "has_social_content": True
+            }
+        )
+
+        logger.info(f"Saved completed blog for project {project_id}: {blog_title} ({word_count} words)")
+
         return JSONResponse(
             content={
                 "project_id": project_id,
                 "project_name": project_name,
-                "social_content": social_content_response
+                "social_content": social_content_response,
+                "blog_completed": True,
+                "word_count": word_count,
+                "total_cost": total_cost
             }
         )
 

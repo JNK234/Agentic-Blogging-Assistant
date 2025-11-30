@@ -2,14 +2,14 @@
 -- ABOUTME: Enables detection of section/outline mismatch after outline modifications
 
 -- Add outline_hash column to sections table
--- This stores the hash of the outline when each section was generated
+-- This stores the full SHA256 hash of the outline when each section was generated
 -- Used to detect when sections were generated with a different outline version
 ALTER TABLE sections
-ADD COLUMN IF NOT EXISTS outline_hash VARCHAR(32);
+ADD COLUMN IF NOT EXISTS outline_hash VARCHAR(64);
 
 -- Add comment for documentation
 COMMENT ON COLUMN sections.outline_hash IS
-  'SHA256 hash (first 16 chars) of outline when section was generated, for detecting outline/section drift';
+  'Full SHA256 hash (64 chars) of outline when section was generated, for detecting outline/section drift';
 
 -- Index for efficient querying of sections by outline version
 CREATE INDEX IF NOT EXISTS idx_sections_outline_hash

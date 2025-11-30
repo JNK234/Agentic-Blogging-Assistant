@@ -9,7 +9,7 @@ from backend.agents.outline_generator.state import OutlineState
 from backend.agents.outline_generator.prompts import PROMPT_CONFIGS
 from backend.services.persona_service import PersonaService
 from backend.agents.cost_tracking_decorator import track_node_costs
-from backend.services.sql_project_manager import MilestoneType
+from backend.services.supabase_project_manager import MilestoneType
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
