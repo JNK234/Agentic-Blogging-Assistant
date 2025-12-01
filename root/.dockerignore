@@ -1,0 +1,76 @@
+# ABOUTME: Docker ignore file to exclude unnecessary files from Cloud Run deployment
+# ABOUTME: Reduces image size and build time by excluding dev/test files
+
+# Git
+.git
+.gitignore
+
+# Python bytecode and cache
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.eggs/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.env
+.venv
+venv/
+ENV/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Frontend (not needed for backend-only deployment)
+frontend/
+
+# Local data (ephemeral in Cloud Run)
+data/uploads/*
+data/vector_store/*
+data/cache/*
+data/projects.db
+*.sqlite3
+
+# Keep directory structure markers
+!data/.gitkeep
+
+# Tests (exclude from production image)
+tests/
+*_test.py
+test_*.py
+conftest.py
+pytest.ini
+
+# Documentation
+*.md
+docs/
+
+# Mac system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# Environment template (secrets should come from Secret Manager)
+.env.template
+.env.local
+.env.development
+
+# Migrations (handled separately)
+migrations/
+
+# Archives
+archived_ui/
