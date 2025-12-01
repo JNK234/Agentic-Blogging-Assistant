@@ -59,7 +59,7 @@ root/data/projects/
 ehthumbs.db
 Thumbs.db
 
-# Not ReadMe.md
-~README.md
+# Allow specific documentation
 !README.md
 !CLAUDE.md
+!docs/

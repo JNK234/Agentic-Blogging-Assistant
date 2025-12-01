@@ -16,8 +16,11 @@ class VectorStoreService:
     def __init__(self):
         logging.info("Initializing VectorStoreService...")
         try:
-            # Setup storage
-            os.makedirs("root/data/vector_store", exist_ok=True)
+            # Setup storage - use environment variable for Cloud Run compatibility
+            # Falls back to local path for development
+            persist_dir = os.getenv("CHROMA_PERSIST_DIR", "root/data/vector_store")
+            os.makedirs(persist_dir, exist_ok=True)
+            logging.info(f"Using ChromaDB persist directory: {persist_dir}")
 
             # Get the configured embedding function from the factory
             self.embedding_fn = EmbeddingFactory.get_embedding_function()
@@ -25,7 +28,7 @@ class VectorStoreService:
 
             # Initialize ChromaDB Client
             self.client = Client(ChromaSettings( # Use renamed Settings
-                persist_directory="root/data/vector_store",
+                persist_directory=persist_dir,
                 anonymized_telemetry=False,
                 is_persistent=True
             ))
