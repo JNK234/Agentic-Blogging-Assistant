@@ -564,6 +564,122 @@ def create_zip_download(package: Dict[str, str]) -> bytes:
 
 # --- UI Components ---
 
+class ProjectHubUI:
+    """
+    Main landing page for project management: listing, resuming, and creating projects.
+    """
+    def render(self):
+        st.title("🚀 Project Hub")
+        st.markdown("Manage your blogging projects. Resume an existing project or start a new one.")
+
+        api_base_url = SessionManager.get('api_base_url')
+        
+        # Create a container for the project list
+        project_container = st.container()
+        
+        with project_container:
+            try:
+                # Fetch projects from backend
+                with st.spinner("Loading projects..."):
+                    response = asyncio.run(api_client.get_projects(base_url=api_base_url))
+                    projects = response.get('projects', [])
+                
+                if not projects:
+                    st.info("No projects found. Create a new project in the sidebar to get started!")
+                    return
+
+                # Convert to DataFrame for easier display if needed, or just iterate
+                # Sort by updated_at desc
+                projects.sort(key=lambda x: x.get('updated_at') or '', reverse=True)
+
+                st.subheader(f"Your Projects ({len(projects)})")
+                
+                # Create a grid layout for project cards
+                for project in projects:
+                    with st.container(border=True):
+                        col1, col2, col3 = st.columns([3, 2, 1])
+                        
+                        with col1:
+                            st.markdown(f"### {project.get('name', 'Untitled')}")
+                            st.caption(f"ID: {project.get('id')}")
+                        
+                        with col2:
+                            updated = project.get('updated_at')
+                            if updated:
+                                try:
+                                    dt = datetime.fromisoformat(updated.replace('Z', '+00:00'))
+                                    updated_str = dt.strftime("%Y-%m-%d %H:%M")
+                                except:
+                                    updated_str = updated
+                            else:
+                                updated_str = "N/A"
+                            st.caption(f"Last Updated: {updated_str}")
+                            
+                            status = project.get('status', 'active')
+                            st.caption(f"Status: {status.title()}")
+
+                        with col3:
+                            if st.button("Resume", key=f"resume_{project['id']}", use_container_width=True):
+                                self._resume_project(project['id'], api_base_url)
+
+            except Exception as e:
+                st.error(f"Failed to load projects: {str(e)}")
+                logger.error(f"Project Hub Error: {e}")
+
+    def _resume_project(self, project_id: str, api_base_url: str):
+        """
+        Resumes a project by fetching its full state from the backend
+        and rehydrating the SessionManager.
+        """
+        try:
+            with st.spinner(f"Resuming project {project_id}..."):
+                # 1. Fetch full state
+                state = asyncio.run(api_client.resume_project(project_id, base_url=api_base_url))
+                
+                if not state:
+                    st.error("Failed to load project state.")
+                    return
+
+                # 2. Reset current state to avoid pollution
+                SessionManager.reset_project_state()
+
+                # 3. Rehydrate SessionManager
+                SessionManager.set('current_project_id', state.get('project_id'))
+                SessionManager.set('project_name', state.get('project_name'))
+                SessionManager.set('selected_model', state.get('model_name') or AppConfig.DEFAULT_MODEL)
+                SessionManager.set('selected_persona', state.get('persona') or 'neuraforge')
+                SessionManager.set('specific_model', state.get('specific_model'))
+                
+                # Restore milestones
+                outline = state.get('outline')
+                SessionManager.set('generated_outline', outline)
+                # Calculate total_sections from outline
+                SessionManager.set('total_sections', len(outline.get('sections', [])) if outline else 0)
+                # Set current_section_index based on generated_sections count
+                generated_sections = state.get('generated_sections', {})
+                SessionManager.set('current_section_index', len(generated_sections))
+                SessionManager.set('final_draft', state.get('final_draft'))
+                SessionManager.set('refined_draft', state.get('refined_draft'))
+                SessionManager.set('summary', state.get('summary'))
+                SessionManager.set('title_options', state.get('title_options'))
+                SessionManager.set('social_content', state.get('social_content'))
+                SessionManager.set('generated_sections', state.get('generated_sections', {}))
+                SessionManager.set('cost_summary', state.get('cost_summary'))
+                
+                # Restore hashes if available (critical for caching)
+                SessionManager.set('outline_hash', state.get('outline_hash'))
+                
+                # Set initialization flag
+                SessionManager.set('is_initialized', True)
+                SessionManager.set_status(f"Resumed project: {state.get('project_name')}")
+                
+                # 4. Rerun to switch view
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Error resuming project: {str(e)}")
+            logger.exception(f"Resume Error: {e}")
+
 class SidebarUI:
     """Handles rendering the sidebar and initialization logic."""
 
@@ -641,24 +757,31 @@ class SidebarUI:
             st.markdown("---")
 
             # Project Dashboard Section (New API-based)
-            try:
-                # Initialize API client if not already done
-                if not hasattr(st.session_state, 'blog_api_client'):
-                    st.session_state.blog_api_client = BlogAPIClient(base_url=api_base_url)
+            # try:
+            #     # Initialize API client if not already done
+            #     if not hasattr(st.session_state, 'blog_api_client'):
+            #         st.session_state.blog_api_client = BlogAPIClient(base_url=api_base_url)
 
-                # Render project dashboard in sidebar
-                api_dashboard = APIProjectDashboard(st.session_state.blog_api_client)
-                selected_project = api_dashboard.render_sidebar()
+            #     # Render project dashboard in sidebar
+            #     api_dashboard = APIProjectDashboard(st.session_state.blog_api_client)
+            #     selected_project = api_dashboard.render_sidebar()
 
-                # Handle project selection
-                if selected_project:
-                    SessionManager.set('current_project_id', selected_project)
-                    SessionManager.set('project_id', selected_project)
+            #     # Handle project selection
+            #     if selected_project:
+            #         SessionManager.set('current_project_id', selected_project)
+            #         SessionManager.set('project_id', selected_project)
+            #         st.rerun()
+
+            # except Exception as e:
+            #     st.error(f"Dashboard error: {str(e)}")
+            #     logger.error(f"Dashboard error: {e}")
+            
+            # Add "Back to Hub" button if in a project
+            if SessionManager.get('current_project_id'):
+                if st.button("⬅️ Back to Project Hub", use_container_width=True):
+                    SessionManager.set('current_project_id', None)
+                    SessionManager.set('is_initialized', False)
                     st.rerun()
-
-            except Exception as e:
-                st.error(f"Dashboard error: {str(e)}")
-                logger.error(f"Dashboard error: {e}")
 
             st.markdown("---")
 
@@ -869,12 +992,24 @@ class SidebarUI:
             st.sidebar.markdown("**💰 Cost Tracking**")
             if cost_summary:
                 total_cost = cost_summary.get('total_cost', 0.0)
-                total_tokens = cost_summary.get('total_tokens', 0)
+                # Handle both field naming conventions (from resume vs from generation)
+                total_tokens = cost_summary.get('total_tokens') or (
+                    cost_summary.get('total_input_tokens', 0) + cost_summary.get('total_output_tokens', 0)
+                )
                 total_calls = cost_summary.get('total_calls', 0)
 
                 st.sidebar.metric("Total Cost", f"${total_cost:.4f}")
+
+                # Duration display
+                duration = cost_summary.get('workflow_duration_seconds')
+                if duration:
+                    hours = int(duration // 3600)
+                    minutes = int((duration % 3600) // 60)
+                    st.sidebar.metric("Total Time", f"{hours}h {minutes}m")
+
                 st.sidebar.write(f"Tokens: {total_tokens:,}")
-                st.sidebar.write(f"LLM Calls: {total_calls}")
+                if total_calls > 0:
+                    st.sidebar.write(f"LLM Calls: {total_calls}")
 
                 by_stage = cost_summary.get('by_stage') or {}
                 if by_stage:
@@ -888,6 +1023,17 @@ class SidebarUI:
                             )
             else:
                 st.sidebar.caption("No cost data yet. Generate content to see usage.")
+
+            # How to Use Section
+            st.sidebar.markdown("---")
+            with st.sidebar.expander("📚 How to Use", expanded=False):
+                st.markdown("""
+                1. **Create Project**: Upload files (notebooks, markdown) and name your project.
+                2. **Generate Outline**: The AI analyzes your files and proposes a blog outline.
+                3. **Generate Draft**: Create the blog post section by section.
+                4. **Refine**: Add introduction, conclusion, and polish the content.
+                5. **Social Media**: Generate LinkedIn posts, Tweets, and newsletters.
+                """)
 
     def _check_api_health(self, base_url):
         """Checks the API health and updates the sidebar."""
@@ -1292,14 +1438,17 @@ class BlogDraftUI:
                     # --- Frontend Draft Compilation ---
                     blog_title = SessionManager.get('generated_outline', {}).get('title', 'My Blog Post')
                     sections_data = SessionManager.get('generated_sections', {})
-                    sorted_indices = sorted(sections_data.keys())
+                    # Convert keys to int for proper sorting (keys may be strings from JSON/resume)
+                    sorted_indices = sorted(sections_data.keys(), key=lambda x: int(x))
 
                     draft_parts = [f"# {blog_title}\n"] # Start with H1 title
 
                     for index in sorted_indices:
                         section = sections_data.get(index, {})
-                        section_title = section.get('title', f'Section {index + 1}')
-                        formatted_content = section.get('formatted_content', '')
+                        section_num = int(index) + 1  # Convert to int for display
+                        section_title = section.get('title', f'Section {section_num}')
+                        # Try formatted_content first, fall back to content (from backend resume)
+                        formatted_content = section.get('formatted_content') or section.get('content', '')
 
                         draft_parts.append(f"## {section_title}\n") # Add H2 for section title
                         draft_parts.append(formatted_content)
@@ -1371,17 +1520,20 @@ class BlogDraftUI:
         # --- Display Generated Sections & Feedback ---
         if generated_sections:
             st.subheader("Generated Content")
-            sorted_indices = sorted(generated_sections.keys())
+            # Convert keys to int for proper sorting (keys may be strings from JSON)
+            sorted_indices = sorted(generated_sections.keys(), key=lambda x: int(x))
             for index in sorted_indices:
                 section_data = generated_sections[index]
-                with st.expander(f"Section {index + 1}: {section_data.get('title', 'Untitled')}", expanded=True): # Expand by default now
-                    # Display the pre-formatted content stored in the state
-                    st.markdown(section_data.get('formatted_content', '*Error: Formatted content not found.*'))
+                section_num = int(index) + 1  # Convert to int for display
+                with st.expander(f"Section {section_num}: {section_data.get('title', 'Untitled')}", expanded=True): # Expand by default now
+                    # Display content - try formatted_content first, fall back to content (from backend resume)
+                    content = section_data.get('formatted_content') or section_data.get('content') or '*No content available.*'
+                    st.markdown(content)
 
                     # Display Raw Section Data (not nested in an expander)
                     st.markdown("---") # Visual separator
                     st.markdown("**Raw Section Data:**")
-                    raw_content_display = section_data.get('raw_content')
+                    raw_content_display = section_data.get('raw_content') or section_data.get('content')
                     if isinstance(raw_content_display, (dict, list)):
                         st.json(raw_content_display)
                     elif isinstance(raw_content_display, str):
@@ -1920,6 +2072,7 @@ class BloggingAssistantAPIApp:
     def __init__(self):
         self.session = SessionManager()
         self.sidebar = SidebarUI()
+        self.project_hub = ProjectHubUI() # Initialize Project Hub
         self.outline_generator = OutlineGeneratorUI()
         self.blog_draft = BlogDraftUI()
         self.refinement = RefinementUI() # Added refinement UI instance
@@ -1951,6 +2104,11 @@ class BloggingAssistantAPIApp:
         current_project_name = SessionManager.get('current_project_name')
         current_project_id = SessionManager.get('current_project_id')
 
+        # If no project is selected, show the Project Hub
+        if not current_project_id:
+            self.project_hub.render()
+            return # Stop rendering the rest of the app
+
         if current_project_name:
             st.markdown(f"### 📝 Current Project: **{current_project_name}**")
 
@@ -1977,9 +2135,13 @@ class BloggingAssistantAPIApp:
                         st.metric("Cost", f"${progress_data.get('total_cost', 0):.4f}")
 
                     with col4:
-                        status = progress_data.get('status', 'active')
-                        status_emoji = "✅" if status == "active" else "📦"
-                        st.metric("Status", f"{status_emoji} {status.title()}")
+                        duration = progress_data.get('workflow_duration_seconds', 0)
+                        if duration:
+                            hours = int(duration // 3600)
+                            minutes = int((duration % 3600) // 60)
+                            st.metric("Time", f"{hours}h {minutes}m")
+                        else:
+                            st.metric("Time", "0h 0m")
 
                     # Progress bar
                     st.progress(progress_data.get('progress_percentage', 0) / 100)

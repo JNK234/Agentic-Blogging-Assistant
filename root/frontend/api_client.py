@@ -68,6 +68,46 @@ async def get_job_status(
             logger.error(f"HTTP request failed during project status check: {e}")
             raise ConnectionError(f"Failed to connect to API for project status: {e}")
 
+async def get_projects(
+    status: Optional[str] = None,
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    List all projects, optionally filtered by status.
+    """
+    api_url = _get_api_url("/projects", base_url)
+    if status:
+        api_url += f"?status={status}"
+    headers = _get_headers(base_url)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            logger.info(f"Listing projects from {api_url}")
+            response = await client.get(api_url, headers=headers)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during project listing: {e}")
+            raise ConnectionError(f"Failed to connect to API for project listing: {e}")
+
+async def resume_project(
+    project_id: str,
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    Get complete project state for resumption.
+    """
+    api_url = _get_api_url(f"/resume/{project_id}", base_url)
+    headers = _get_headers(base_url)
+
+    async with httpx.AsyncClient(timeout=60.0) as client: # Higher timeout for large state
+        try:
+            logger.info(f"Resuming project {project_id} from {api_url}")
+            response = await client.get(api_url, headers=headers)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during project resumption: {e}")
+            raise ConnectionError(f"Failed to connect to API for project resumption: {e}")
+
 async def upload_files(
     project_name: str,
     files_to_upload: List[Tuple[str, bytes, str]], # List of (filename, content_bytes, content_type)

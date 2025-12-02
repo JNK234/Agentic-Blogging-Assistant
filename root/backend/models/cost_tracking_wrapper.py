@@ -117,11 +117,15 @@ class CostTrackingModel:
                 input_tokens, output_tokens, self.model_name
             )
 
+            # Calculate duration
+            duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+
             # Record the call
             call_record = {
                 "timestamp": datetime.utcnow().isoformat(),
                 "model": self.model_name,
-                "latency_ms": (datetime.utcnow() - start_time).total_seconds() * 1000,
+                "latency_ms": duration_seconds * 1000,
+                "duration_seconds": duration_seconds,
                 **breakdown,
                 **call_context  # Include LangGraph context
             }
@@ -147,6 +151,7 @@ class CostTrackingModel:
                         output_tokens=output_tokens,
                         cost=total_cost,
                         model_used=self.model_name,
+                        duration_seconds=duration_seconds,
                         metadata={
                             "latency_ms": call_record["latency_ms"],
                             "context": call_context

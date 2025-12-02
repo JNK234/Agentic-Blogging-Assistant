@@ -5,10 +5,15 @@ import pytest
 import tempfile
 import shutil
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
+import os
 
 import sys
-sys.path.append('/Users/jnk789/Developer/Agentic Blogging Assistant/Agentic-Blogging-Assistant')
+# Add root directory to path to allow imports from backend
+# root/backend/tests/conftest.py -> root
+root_dir = str(Path(__file__).resolve().parents[2])
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
 
 from backend.services.project_manager import ProjectManager
 
@@ -139,3 +144,21 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "concurrency: mark test as testing concurrent behavior"
     )
+
+@pytest.fixture(autouse=True)
+def mock_supabase_client_global():
+    """Mock Supabase client globally to prevent connection attempts."""
+    with patch("backend.config.supabase_client.get_supabase_client") as mock_get:
+        mock_client = MagicMock()
+        mock_get.return_value = mock_client
+        yield mock_client
+
+@pytest.fixture(autouse=True)
+def mock_env_vars():
+    """Set dummy environment variables for all tests."""
+    with patch.dict(os.environ, {
+        "SUPABASE_URL": "http://test-supabase.co",
+        "SUPABASE_KEY": "test-key",
+        "QUIBO_API_KEY": "test-api-key"
+    }):
+        yield

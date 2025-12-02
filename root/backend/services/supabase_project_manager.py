@@ -584,7 +584,8 @@ class SupabaseProjectManager:
 
     async def track_cost(self, project_id: str, agent_name: str, operation: str,
                         input_tokens: int, output_tokens: int, cost: float,
-                        model_used: str = None, metadata: Dict = None) -> bool:
+                        model_used: str = None, metadata: Dict = None,
+                        duration_seconds: float = None) -> bool:
         """
         Track granular cost per operation.
 
@@ -597,6 +598,7 @@ class SupabaseProjectManager:
             cost: Total cost
             model_used: Model used for the operation
             metadata: Additional metadata
+            duration_seconds: Duration of the operation in seconds
 
         Returns:
             Success boolean
@@ -608,6 +610,11 @@ class SupabaseProjectManager:
                 logger.error(f"Cannot track cost for non-existent project: {project_id}")
                 return False
 
+            # Prepare metadata
+            final_metadata = metadata or {}
+            if duration_seconds is not None:
+                final_metadata["duration_seconds"] = duration_seconds
+
             self.supabase.table("cost_tracking").insert({
                 "project_id": project_id,
                 "agent_name": agent_name,
@@ -616,7 +623,7 @@ class SupabaseProjectManager:
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "cost": cost,
-                "metadata": metadata or {},
+                "metadata": final_metadata,
                 "created_at": datetime.utcnow().isoformat()
             }).execute()
 

@@ -362,6 +362,7 @@ async def process_files(
         logger.info(f"File paths: {file_paths}")
 
         # Get or create agents
+        start_time = datetime.now()
         agents = await get_or_create_agents(model_name)
         content_parser = agents["content_parser"]
 
@@ -393,10 +394,15 @@ async def process_files(
                 milestone_data = existing_milestone.get("data", {})
                 milestone_data["file_hashes"] = result
                 milestone_data["processed_at"] = datetime.now().isoformat()
+                
+                # Calculate processing duration
+                duration = (datetime.now() - start_time).total_seconds()
+                
                 await sql_project_manager.save_milestone(
                     project_id=project_id,
                     milestone_type=MilestoneType.FILES_UPLOADED,
-                    data=milestone_data
+                    data=milestone_data,
+                    metadata={"duration_seconds": duration}
                 )
                 logger.info(f"Persisted {len(result)} file hashes for project {project_id}")
 
@@ -404,7 +410,8 @@ async def process_files(
             content={
                 "message": "Files processed successfully",
                 "project": project_name,
-                "file_hashes": result
+                "file_hashes": result,
+                "duration_seconds": duration
             }
         )
     except Exception as e:
@@ -452,6 +459,7 @@ async def generate_outline(
             cost_aggregator.start_workflow(project_id=project_id)
 
         # Generate outline - returns a dict (outline or error), content, content, cached_status
+        start_time = datetime.now()
         outline_result, notebook_content, markdown_content, was_cached = await outline_agent.generate_outline(
             project_name=project_name,
             notebook_hash=notebook_hash,
@@ -520,11 +528,17 @@ async def generate_outline(
             })
 
             # Save milestone to SQL database (primary storage - legacy duplicate save removed)
+            # Calculate generation duration
+            duration = (datetime.now() - start_time).total_seconds()
+
             await sql_project_manager.save_milestone(
                 project_id=project_id,
                 milestone_type=MilestoneType.OUTLINE_GENERATED,
                 data=milestone_data,
-                metadata=milestone_metadata
+                metadata={
+                    "model": model_name,
+                    "duration_seconds": duration
+                }
             )
 
             logger.info(f"Saved outline milestone for project {project_id}")
@@ -534,7 +548,8 @@ async def generate_outline(
             content=serialize_object({
                 "project_id": project_id,
                 "outline": outline_data,
-                "cost_summary": cost_summary
+                "cost_summary": cost_summary,
+                "duration_seconds": duration
             })
         )
 
@@ -601,76 +616,48 @@ async def get_project_status(project_id: str) -> JSONResponse:
             status_code=500
         )
 
-@app.post("/generate_draft/{project_name}")
-async def generate_draft(
-    project_name: str,
-    model_name: str = Form(...),
-    outline: str = Form(...),
-    notebook_content: str = Form(...),
-    markdown_content: str = Form(...),
-) -> JSONResponse:
-    """Generate a complete blog draft from an outline."""
-    # This endpoint seems less used now with section-by-section generation,
-    # but keep it functional if needed. It doesn't involve section caching directly.
+
+@app.get("/resume/{project_id}")
+async def resume_project_endpoint(project_id: str) -> JSONResponse:
+    """
+    Get complete project state for resumption.
+    Returns all data needed to rehydrate the frontend session.
+    """
     try:
-        # Parse inputs
-        try:
-            outline_data = json.loads(outline)
-            notebook_data = json.loads(notebook_content)
-            markdown_data = json.loads(markdown_content)
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON format: {str(e)}")
+        state = await load_workflow_state(project_id)
+        if not state:
             return JSONResponse(
-                content={"error": f"Invalid JSON format: {str(e)}"},
-                status_code=400
+                content={"error": "Project not found"},
+                status_code=404
             )
-
-        # Get or create agents
-        agents = await get_or_create_agents(model_name)
-        draft_agent = agents["draft_agent"]
-
-        cost_aggregator = CostAggregator()
-        workflow_id = f"adhoc-{uuid.uuid4()}"
-        cost_aggregator.start_workflow(project_id=workflow_id)
-
-        # Generate blog draft
-        outline_obj = FinalOutline.model_validate(outline_data)
-        draft = await draft_agent.generate_draft(
-            project_name=project_name,
-            outline=outline_obj,
-            notebook_content=notebook_data,
-            markdown_content=markdown_data,
-            cost_aggregator=cost_aggregator,
-            project_id=workflow_id
-        )
-
-        if not draft:
-            return JSONResponse(
-                content={"error": "Failed to generate blog draft"},
-                status_code=500
-            )
-
-        return JSONResponse(
-            content=serialize_object({
-                "draft": draft,
-                "cost_summary": cost_aggregator.get_workflow_summary()
-            })
-        )
-
-    except Exception as e:
-        logger.exception(f"Draft generation failed: {str(e)}")
-
-        # Provide detailed error information
-        error_detail = {
-            "error": f"Draft generation failed: {str(e)}",
-            "type": str(type(e).__name__),
-            "details": str(e)
+        
+        # Ensure all necessary fields for frontend hydration are present
+        response_data = {
+            "project_id": project_id,
+            "project_name": state.get('project_name'),
+            "model_name": state.get('model_name'),
+            "persona": state.get('persona'),
+            "specific_model": state.get('specific_model'),
+            "outline": state.get('outline'),
+            "outline_hash": state.get('outline_hash'),
+            "final_draft": state.get('final_draft'),
+            "refined_draft": state.get('refined_draft'),
+            "summary": state.get('summary'),
+            "title_options": state.get('title_options'),
+            "social_content": state.get('social_content'),
+            "generated_sections": state.get('generated_sections', {}),
+            "cost_summary": state.get('cost_summary'),
+            # Add any other fields needed by SessionManager
         }
-
+        return JSONResponse(content=response_data)
+    except Exception as e:
+        logger.exception(f"Error resuming project: {str(e)}")
         return JSONResponse(
-            content=serialize_object(error_detail),
+            content={"error": f"Failed to resume project: {str(e)}"},
             status_code=500
         )
+
+
 
 @app.post("/generate_section/{project_name}")
 async def generate_section(
@@ -1465,100 +1452,7 @@ async def generate_social_content_standalone(
         )
 
 
-@app.post("/generate_twitter_thread/{project_name}")
-async def generate_twitter_thread(
-    project_name: str
-) -> JSONResponse:
-    """Generate Twitter/X thread from refined draft."""
-    try:
-        # Find project_id from project_name
-        project = await sql_project_manager.get_project_by_name(project_name)
-        project_id = project.get("id") if project else None
 
-        if not project_id:
-            logger.error(f"Project not found: {project_name}")
-            return JSONResponse(
-                content={
-                    "error": f"Project '{project_name}' not found",
-                    "details": "Please ensure the project exists and is active.",
-                },
-                status_code=404
-            )
-
-        # Load workflow state from SQL
-        workflow_state = await load_workflow_state(project_id)
-        if not workflow_state:
-            logger.error(f"Workflow state not found for project: {project_name}")
-            return JSONResponse(
-                content={
-                    "error": f"Workflow state not found for project: {project_name}",
-                    "suggestion": "Please regenerate the outline to restart the workflow."
-                },
-                status_code=404
-            )
-        
-        refined_draft = workflow_state.get("refined_draft")
-        if not refined_draft:
-            return JSONResponse(
-                content={"error": "Refined draft not found. Please complete blog refinement first."},
-                status_code=400
-            )
-        
-        blog_title = workflow_state.get("outline", {}).get("title", "Blog Post")
-        
-        # Get model and agents
-        model_name = workflow_state.get("model_name")
-        specific_model = workflow_state.get("specific_model")
-        agents = await get_or_create_agents(model_name, specific_model)
-        social_agent = agents.get("social_agent")
-        
-        if not social_agent:
-            return JSONResponse(
-                content={"error": "Social media agent could not be initialized."},
-                status_code=500
-            )
-        
-        # Generate Twitter thread
-        logger.info(f"Generating Twitter thread for project: {project_name}")
-        twitter_thread = await social_agent.generate_thread(
-            blog_content=refined_draft,
-            blog_title=blog_title
-        )
-        
-        if not twitter_thread:
-            return JSONResponse(
-                content={"error": "Failed to generate Twitter thread."},
-                status_code=500
-            )
-        
-        # Convert thread to serializable format
-        thread_data = {
-            "tweets": [tweet.model_dump() for tweet in twitter_thread.tweets],
-            "total_tweets": twitter_thread.total_tweets,
-            "hook_tweet": twitter_thread.hook_tweet,
-            "conclusion_tweet": twitter_thread.conclusion_tweet,
-            "thread_topic": twitter_thread.thread_topic,
-            "learning_journey": twitter_thread.learning_journey
-        }
-        
-        return JSONResponse(
-            content={
-                "project_id": project_id,
-                "project_name": project_name,
-                "twitter_thread": thread_data
-            }
-        )
-        
-    except Exception as e:
-        logger.exception(f"Twitter thread generation failed: {str(e)}")
-        return JSONResponse(
-            content={
-                "error": f"Twitter thread generation failed: {str(e)}",
-                "type": str(type(e).__name__),
-                "details": str(e)
-            },
-            status_code=500
-        )
 
 @app.get("/health")
 async def health_check() -> JSONResponse:
@@ -1761,28 +1655,8 @@ async def resume_project(project_id: str) -> JSONResponse:
                 "resume_from_section": resume_from_section,
 
                 # File data
-                "uploaded_files": files_milestone.get("data", {}).get("files", []) if files_milestone else [],
-                "processed_file_hashes": files_milestone.get("data", {}).get("file_hashes", {}) if files_milestone else {},
-
-                # Content - FULL DATA for frontend restoration
-                "outline": outline,
-                "outline_hash": state.get("outline_hash"),
-                "generated_sections": generated_sections,
-                "final_draft": state.get("final_draft"),
-                "refined_draft": state.get("refined_draft"),
-                "summary": state.get("summary"),
-                "title_options": state.get("title_options"),
-                "social_content": state.get("social_content"),
-
-                # Cost tracking
-                "cost_summary": state.get("cost_summary", {}),
-                "cost_call_history": cost_call_history,
-
-                # Legacy compatibility flags
-                "has_outline": bool(outline),
-                "has_draft": bool(state.get("final_draft")),
-                "has_refined": bool(state.get("refined_draft")),
-                "has_social": bool(state.get("social_content"))
+                "uploaded_files": files_milestone.get("data", {}).get("files", []) if files_milestone else {},
+                "processed_file_hashes": files_milestone.get("data", {})
             }
         )
 
@@ -1793,142 +1667,6 @@ async def resume_project(project_id: str) -> JSONResponse:
             status_code=500
         )
 
-
-
-
-@app.delete("/project/{project_id}/permanent")
-async def delete_project_permanent(project_id: str) -> JSONResponse:
-    """
-    Permanently delete a project and all its data.
-    
-    Args:
-        project_id: Project UUID
-    
-    Returns:
-        Success status
-    """
-    try:
-        success = await sql_project_manager.delete_project(project_id, permanent=True)
-
-        if not success:
-            return JSONResponse(
-                content={"error": f"Failed to delete project {project_id}"},
-                status_code=500
-            )
-
-        return JSONResponse(
-            content={
-                "status": "success",
-                "message": f"Project {project_id} permanently deleted"
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to delete project {project_id}: {e}")
-        return JSONResponse(
-            content={"error": f"Failed to delete project: {str(e)}"},
-            status_code=500
-        )
-
-
-@app.post("/project/{project_id}/archive")
-async def archive_project(project_id: str) -> JSONResponse:
-    """
-    Archive a project (soft delete).
-
-    Args:
-        project_id: Project UUID
-
-    Returns:
-        Success status
-    """
-    try:
-        success = await sql_project_manager.archive_project(project_id)
-
-        if not success:
-            return JSONResponse(
-                content={"error": f"Failed to archive project {project_id}"},
-                status_code=404
-            )
-
-        return JSONResponse(
-            content={
-                "status": "success",
-                "message": f"Project {project_id} archived"
-            }
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to archive project {project_id}: {e}")
-        return JSONResponse(
-            content={"error": f"Failed to archive project: {str(e)}"},
-            status_code=500
-        )
-
-
-@app.get("/project/{project_id}/export")
-async def export_project(
-    project_id: str,
-    format: str = "json"
-) -> Any:
-    """
-    Export project data in specified format.
-
-    Args:
-        project_id: Project UUID
-        format: Export format (json, markdown, zip)
-
-    Returns:
-        Exported data in requested format
-    """
-    try:
-        from fastapi.responses import Response, FileResponse
-        import tempfile
-
-        export_data = await sql_project_manager.export_project(project_id, format=format)
-        
-        if export_data is None:
-            return JSONResponse(
-                content={"error": f"Project {project_id} not found or export failed"},
-                status_code=404
-            )
-        
-        if format == "json":
-            return JSONResponse(content=export_data)
-        
-        elif format == "markdown":
-            return Response(
-                content=export_data,
-                media_type="text/markdown",
-                headers={
-                    "Content-Disposition": f"attachment; filename=project_{project_id}.md"
-                }
-            )
-        
-        elif format == "zip":
-            # Write zip data to temp file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp:
-                tmp.write(export_data)
-                tmp_path = tmp.name
-            
-            return FileResponse(
-                path=tmp_path,
-                media_type="application/zip",
-                filename=f"project_{project_id}.zip"
-            )
-        
-        else:
-            return JSONResponse(
-                content={"error": f"Unsupported export format: {format}"},
-                status_code=400
-            )
-            
-    except Exception as e:
-        logger.error(f"Failed to export project {project_id}: {e}")
-        return JSONResponse(
-            content={"error": f"Failed to export project: {str(e)}"},
-            status_code=500
-        )
 
 # === New API Endpoints for Enhanced UI Configuration ===
 
