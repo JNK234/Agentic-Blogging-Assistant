@@ -8,18 +8,26 @@ from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 import json
 
+from config import API_BASE_URL
+from utils.auth import get_auth_headers
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Configuration ---
-# Default base URL, can be overridden
-DEFAULT_API_BASE_URL = "http://127.0.0.1:8000" # Default FastAPI address
+# Default base URL loaded from environment via config
+DEFAULT_API_BASE_URL = API_BASE_URL
 
 # --- Helper Functions ---
 def _get_api_url(endpoint: str, base_url: str = DEFAULT_API_BASE_URL) -> str:
     """Constructs the full API URL."""
     return f"{base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+
+
+def _get_headers(base_url: str = DEFAULT_API_BASE_URL) -> Dict[str, str]:
+    """Get authentication headers for API requests."""
+    return get_auth_headers(target_audience=base_url)
 
 async def _handle_response(response: httpx.Response) -> Dict[str, Any]:
     """Handles API response, checking status and parsing JSON."""
@@ -49,11 +57,12 @@ async def get_job_status(
     Get the status of a project for debugging.
     """
     api_url = _get_api_url(f"/project_status/{project_id}", base_url)
+    headers = _get_headers(base_url)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             logger.info(f"Getting project status for {project_id}")
-            response = await client.get(api_url)
+            response = await client.get(api_url, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during project status check: {e}")
@@ -89,10 +98,12 @@ async def upload_files(
     if persona:
         form_data["persona"] = persona
 
+    headers = _get_headers(base_url)
+
     async with httpx.AsyncClient(timeout=60.0) as client: # Increased timeout for uploads
         try:
             logger.info(f"Uploading {len(files_payload)} files to {api_url} with model={model_name}, persona={persona}")
-            response = await client.post(api_url, files=files_payload, data=form_data)
+            response = await client.post(api_url, files=files_payload, data=form_data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during file upload: {e}")
@@ -117,6 +128,7 @@ async def process_files(
         The JSON response from the API containing file hashes.
     """
     api_url = _get_api_url(f"/process_files/{project_name}", base_url)
+    headers = _get_headers(base_url)
     # Prepare data dictionary including model_name and file_paths
     # httpx handles sending lists as multiple form fields when passed in data
     data = {
@@ -128,7 +140,7 @@ async def process_files(
         try:
             logger.info(f"Requesting file processing for {project_name} at {api_url} with data: {data}")
             # Send the dictionary containing the list via the 'data=' parameter
-            response = await client.post(api_url, data=data) # Corrected: Use data= instead of files=
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during file processing: {e}")
@@ -145,11 +157,12 @@ async def get_personas(base_url: str = DEFAULT_API_BASE_URL) -> Dict[str, Any]:
         Dictionary containing available personas with their names and descriptions.
     """
     api_url = _get_api_url("/personas", base_url)
+    headers = _get_headers(base_url)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             logger.info(f"Requesting personas at {api_url}")
-            response = await client.get(api_url)
+            response = await client.get(api_url, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during personas fetch: {e}")
@@ -166,11 +179,12 @@ async def get_models(base_url: str = DEFAULT_API_BASE_URL) -> Dict[str, Any]:
         Dictionary containing model providers and their available models.
     """
     api_url = _get_api_url("/models", base_url)
+    headers = _get_headers(base_url)
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             logger.info(f"Requesting models at {api_url}")
-            response = await client.get(api_url)
+            response = await client.get(api_url, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during models fetch: {e}")
@@ -209,6 +223,7 @@ async def generate_outline(
         The JSON response containing the project_id and the generated outline.
     """
     api_url = _get_api_url(f"/generate_outline/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {
         "model_name": model_name,
         "notebook_hash": notebook_hash or "", # Send empty string if None
@@ -226,7 +241,7 @@ async def generate_outline(
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for generation
         try:
             logger.info(f"Requesting outline generation for {project_name} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during outline generation: {e}")
@@ -255,6 +270,7 @@ async def generate_section(
         The JSON response containing the generated section content.
     """
     api_url = _get_api_url(f"/generate_section/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {
         "project_id": project_id,
         "section_index": section_index,
@@ -265,7 +281,7 @@ async def generate_section(
     async with httpx.AsyncClient(timeout=600.0) as client: # Very long timeout for section generation
         try:
             logger.info(f"Requesting section {section_index} generation for project {project_id} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during section generation: {e}")
@@ -296,6 +312,7 @@ async def regenerate_section_with_feedback(
         The JSON response containing the regenerated section content.
     """
     api_url = _get_api_url(f"/regenerate_section_with_feedback/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {
         "project_id": project_id,
         "section_index": section_index,
@@ -307,7 +324,7 @@ async def regenerate_section_with_feedback(
     async with httpx.AsyncClient(timeout=600.0) as client: # Very long timeout
         try:
             logger.info(f"Requesting section {section_index} regeneration with feedback for project {project_id} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during section regeneration: {e}")
@@ -330,12 +347,13 @@ async def compile_draft(
         The JSON response containing the final compiled draft.
     """
     api_url = _get_api_url(f"/compile_draft/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {"project_id": project_id}
 
     async with httpx.AsyncClient(timeout=120.0) as client: # Moderate timeout for compilation
         try:
             logger.info(f"Requesting draft compilation for project {project_id} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during draft compilation: {e}")
@@ -365,6 +383,7 @@ async def refine_blog(
         The JSON response containing the refined draft, summary, and title options.
     """
     api_url = _get_api_url(f"/refine_blog/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {
         "job_id": project_id,  # Backend expects 'job_id' not 'project_id'
         "compiled_draft": compiled_draft  # Include compiled_draft in the payload
@@ -379,7 +398,7 @@ async def refine_blog(
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
         try:
             logger.info(f"Requesting blog refinement for project {project_id} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during blog refinement: {e}")
@@ -411,6 +430,7 @@ async def refine_standalone(
         The JSON response containing the refined draft, summary, and title options.
     """
     api_url = _get_api_url(f"/refine_standalone/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {
         "compiled_draft": compiled_draft,
         "model_name": model_name,
@@ -426,7 +446,7 @@ async def refine_standalone(
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for refinement
         try:
             logger.info(f"Requesting standalone refinement for project {project_name} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during standalone refinement: {e}")
@@ -450,12 +470,13 @@ async def generate_social_content(
         The JSON response containing the generated social content (breakdown, linkedin, x, newsletter).
     """
     api_url = _get_api_url(f"/generate_social_content/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {"project_id": project_id}
 
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for generation
         try:
             logger.info(f"Requesting social content generation for project {project_id} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during social content generation: {e}")
@@ -482,6 +503,7 @@ async def generate_social_content_standalone(
         The JSON response containing the generated social content (breakdown, linkedin, x, newsletter).
     """
     api_url = _get_api_url(f"/generate_social_content_standalone/{project_name}", base_url)
+    headers = _get_headers(base_url)
     data = {
         "refined_blog_content": refined_blog_content,
         "model_name": model_name,
@@ -491,7 +513,7 @@ async def generate_social_content_standalone(
     async with httpx.AsyncClient(timeout=300.0) as client: # Long timeout for generation
         try:
             logger.info(f"Requesting standalone social content generation for project {project_name} at {api_url}")
-            response = await client.post(api_url, data=data)
+            response = await client.post(api_url, data=data, headers=headers)
             return await _handle_response(response)
         except httpx.RequestError as e:
             logger.error(f"HTTP request failed during standalone social content generation: {e}")
@@ -500,9 +522,10 @@ async def generate_social_content_standalone(
 async def health_check(base_url: str = DEFAULT_API_BASE_URL) -> bool:
     """Checks the health of the backend API."""
     api_url = _get_api_url("/health", base_url)
+    headers = _get_headers(base_url)
     async with httpx.AsyncClient(timeout=10.0) as client:
         try:
-            response = await client.get(api_url)
+            response = await client.get(api_url, headers=headers)
             if response.status_code == 200:
                 data = response.json()
                 if data.get("status") == "ok":

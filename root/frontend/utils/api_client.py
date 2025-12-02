@@ -10,7 +10,8 @@ from pathlib import Path
 # Add parent directories to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 
-# Import existing API client and ProjectService
+# Import config and existing API client
+from config import API_BASE_URL
 from api_client import (
     upload_files, process_files, generate_outline, generate_section,
     regenerate_section_with_feedback, compile_draft, refine_blog,
@@ -18,6 +19,7 @@ from api_client import (
     health_check, get_job_status, get_personas, get_models
 )
 from services.project_service import ProjectService
+from utils.auth import get_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +35,20 @@ class BlogAPIClient:
     This class provides a single interface for all frontend-backend interactions.
     """
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8000"):
+    def __init__(self, base_url: str = API_BASE_URL):
         """
         Initialize the blog API client.
 
         Args:
-            base_url: Base URL of the FastAPI backend
+            base_url: Base URL of the FastAPI backend (defaults to API_BASE_URL from config)
         """
         self.base_url = base_url
         self.project_service = ProjectService(base_url=base_url)
         logger.info(f"BlogAPIClient initialized with base_url: {base_url}")
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get authentication headers for API requests."""
+        return get_auth_headers(target_audience=self.base_url)
 
     # ==================== Project Management Methods ====================
 
@@ -83,12 +89,13 @@ class BlogAPIClient:
         """
         try:
             # Use the /projects endpoint
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=30.0) as client:
                 params = {}
                 if status != "all":
                     params["status"] = status
 
-                response = await client.get(f"{self.base_url}/projects", params=params)
+                response = await client.get(f"{self.base_url}/projects", params=params, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 return data.get("projects", [])

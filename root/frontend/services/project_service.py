@@ -10,6 +10,13 @@ import re
 import uuid
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+import sys
+
+# Add parent directories to path for imports
+sys.path.append(str(Path(__file__).parent.parent))
+
+from config import API_BASE_URL
+from utils.auth import get_auth_headers
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +27,14 @@ EXPORT_TIMEOUT = 60.0
 
 class ProjectService:
     """Service class for project-related API operations."""
-    
-    def __init__(self, base_url: str = "http://127.0.0.1:8000"):
+
+    def __init__(self, base_url: str = API_BASE_URL):
         """Initialize with API base URL."""
         self.base_url = base_url.rstrip('/')
+
+    def _get_headers(self) -> Dict[str, str]:
+        """Get authentication headers for API requests."""
+        return get_auth_headers(target_audience=self.base_url)
     
     def _validate_project_id(self, project_id: str) -> None:
         """
@@ -67,10 +78,12 @@ class ProjectService:
             List of project dictionaries with metadata and progress
         """
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
                 response = await client.get(
                     f"{self.base_url}/projects",
-                    params={"archived": archived}
+                    params={"archived": archived},
+                    headers=headers
                 )
                 response.raise_for_status()
                 return response.json().get("projects", [])
@@ -96,10 +109,11 @@ class ProjectService:
             Project dictionary with full details
         """
         self._validate_project_id(project_id)
-        
+
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.get(f"{self.base_url}/project/{project_id}")
+                response = await client.get(f"{self.base_url}/project/{project_id}", headers=headers)
                 response.raise_for_status()
                 return response.json()
                 
@@ -126,8 +140,9 @@ class ProjectService:
         self._validate_project_id(project_id)
 
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.post(f"{self.base_url}/api/v2/projects/{project_id}/resume")
+                response = await client.post(f"{self.base_url}/api/v2/projects/{project_id}/resume", headers=headers)
                 response.raise_for_status()
                 return response.json()
                 
@@ -152,10 +167,11 @@ class ProjectService:
             Deletion confirmation
         """
         self._validate_project_id(project_id)
-        
+
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.delete(f"{self.base_url}/project/{project_id}/permanent")
+                response = await client.delete(f"{self.base_url}/project/{project_id}/permanent", headers=headers)
                 response.raise_for_status()
                 return response.json()
                 
@@ -181,12 +197,14 @@ class ProjectService:
             Archive operation confirmation
         """
         self._validate_project_id(project_id)
-        
+
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
                 response = await client.post(
                     f"{self.base_url}/project/{project_id}/archive",
-                    json={"archived": archive}
+                    json={"archived": archive},
+                    headers=headers
                 )
                 response.raise_for_status()
                 return response.json()
@@ -214,12 +232,14 @@ class ProjectService:
         """
         self._validate_project_id(project_id)
         self._validate_export_format(format_type)
-        
+
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=EXPORT_TIMEOUT) as client:
                 response = await client.get(
                     f"{self.base_url}/project/{project_id}/export",
-                    params={"format": format_type}
+                    params={"format": format_type},
+                    headers=headers
                 )
                 response.raise_for_status()
                 return response.content
@@ -245,10 +265,11 @@ class ProjectService:
             Progress data with completion percentages
         """
         self._validate_project_id(project_id)
-        
+
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.get(f"{self.base_url}/projects/{project_id}/progress")
+                response = await client.get(f"{self.base_url}/projects/{project_id}/progress", headers=headers)
                 response.raise_for_status()
                 return response.json()
                 
@@ -277,6 +298,7 @@ class ProjectService:
             Filtered list of projects
         """
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
                 response = await client.get(
                     f"{self.base_url}/projects/search",
@@ -284,7 +306,8 @@ class ProjectService:
                         "query": query,
                         "status": status,
                         "sort_by": sort_by
-                    }
+                    },
+                    headers=headers
                 )
                 response.raise_for_status()
                 return response.json().get("projects", [])
@@ -310,10 +333,11 @@ class ProjectService:
             Job status data including content availability
         """
         self._validate_job_id(job_id)
-        
+
         try:
+            headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.get(f"{self.base_url}/job_status/{job_id}")
+                response = await client.get(f"{self.base_url}/job_status/{job_id}", headers=headers)
                 response.raise_for_status()
                 return response.json()
                 
