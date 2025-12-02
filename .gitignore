@@ -27,6 +27,11 @@ coverage.xml
 .env.local
 .env.production
 
+# Service account keys (NEVER COMMIT)
+*-sa-key.json
+*-service-account.json
+credentials.json
+
 # Project specific
 *.ipynb
 *.md

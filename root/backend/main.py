@@ -15,8 +15,9 @@ if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
     print(f"Added to Python path: {root_dir}")
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import ValidationError
@@ -43,7 +44,38 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BlogAPI")
 
+# API Key for authentication (loaded from environment, set via GCP Secret Manager)
+QUIBO_API_KEY = os.getenv('QUIBO_API_KEY', '')
+
+
+class APIKeyAuthMiddleware(BaseHTTPMiddleware):
+    """Middleware to validate API key on all requests except health check."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Skip auth for health check (needed for Cloud Run health probes)
+        if request.url.path == "/health":
+            return await call_next(request)
+
+        # Skip auth if no API key is configured (local development)
+        if not QUIBO_API_KEY:
+            return await call_next(request)
+
+        # Validate API key
+        api_key = request.headers.get("X-API-Key")
+        if not api_key or api_key != QUIBO_API_KEY:
+            logger.warning(f"Invalid or missing API key for path: {request.url.path}")
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or missing API key"}
+            )
+
+        return await call_next(request)
+
+
 app = FastAPI(title="Agentic Blogging Assistant API")
+
+# Add API key authentication middleware
+app.add_middleware(APIKeyAuthMiddleware)
 
 # Constants
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))

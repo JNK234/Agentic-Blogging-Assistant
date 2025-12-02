@@ -25,17 +25,64 @@ This document tracks architectural decisions, infrastructure configuration, and 
 ### Service URL
 
 ```
-https://quibo-backend-cv66i4e3ta-uc.a.run.app
+https://quibo-backend-870041009851.us-central1.run.app
 ```
 
 ### Authentication
 
-Service requires IAM authentication (organization policy constraint). Access via identity token:
+The backend uses **two-layer authentication**:
+
+1. **Cloud Run IAM**: Service account-based authentication (org policy requirement)
+2. **API Key**: Application-level validation via `X-API-Key` header
+
+#### Frontend Authentication Setup
+
+The frontend authenticates to Cloud Run using:
+- **Service Account**: `quibo-frontend@personal-os-475406.iam.gserviceaccount.com`
+- **API Key**: Stored in GCP Secret Manager as `quibo-api-key`
+
+#### Required Environment Variables (Frontend)
 
 ```bash
-curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  https://quibo-backend-cv66i4e3ta-uc.a.run.app/health
+# In .env file
+QUIBO_API_KEY=<your-api-key>
+GCP_SERVICE_ACCOUNT_FILE=frontend-sa-key.json
 ```
+
+#### Testing API Access
+
+```bash
+# Health check (no auth required)
+curl https://quibo-backend-870041009851.us-central1.run.app/health
+
+# Authenticated request
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+     -H "X-API-Key: <your-api-key>" \
+  https://quibo-backend-870041009851.us-central1.run.app/models
+```
+
+#### Service Account Setup (One-time)
+
+```bash
+# Create service account
+gcloud iam service-accounts create quibo-frontend \
+  --display-name="Quibo Frontend Service Account" \
+  --project=personal-os-475406
+
+# Grant Cloud Run invoker permission
+gcloud run services add-iam-policy-binding quibo-backend \
+  --member="serviceAccount:quibo-frontend@personal-os-475406.iam.gserviceaccount.com" \
+  --role="roles/run.invoker" \
+  --region=us-central1 \
+  --project=personal-os-475406
+
+# Create key file for local development
+gcloud iam service-accounts keys create frontend-sa-key.json \
+  --iam-account=quibo-frontend@personal-os-475406.iam.gserviceaccount.com \
+  --project=personal-os-475406
+```
+
+**Important**: Never commit `frontend-sa-key.json` to version control.
 
 ---
 
@@ -61,6 +108,7 @@ Secrets stored with user-managed replication in `us-central1`:
 | `gemini-api-key` | Gemini API authentication |
 | `supabase-url` | Supabase project URL |
 | `supabase-key` | Supabase anonymous key |
+| `quibo-api-key` | API key for frontend authentication |
 
 ### Creating/Updating Secrets
 
@@ -99,7 +147,7 @@ gcloud run deploy quibo-backend \
   --timeout=300 \
   --cpu-boost \
   --set-env-vars="EMBEDDING_PROVIDER=sentence_transformer,SENTENCE_TRANSFORMER_MODEL_NAME=all-MiniLM-L6-v2,CHROMA_PERSIST_DIR=/tmp/vector_store,GEMINI_MODEL_NAME=gemini-2.5-pro" \
-  --set-secrets="GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_KEY=supabase-key:latest"
+  --set-secrets="GEMINI_API_KEY=gemini-api-key:latest,SUPABASE_URL=supabase-url:latest,SUPABASE_KEY=supabase-key:latest,QUIBO_API_KEY=quibo-api-key:latest"
 ```
 
 ---

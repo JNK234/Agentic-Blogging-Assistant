@@ -1,9 +1,14 @@
+import os
 import streamlit as st
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from parent directory (.env is in root/)
+ROOT_DIR = Path(__file__).parent.parent
+load_dotenv(ROOT_DIR / '.env')
 
 # Constants
-API_BASE_URL = "http://localhost:8000"  # FastAPI backend URL
-ROOT_DIR = Path(__file__).parent.parent
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000')
 CACHE_DIR = ROOT_DIR / "data" / "cache"
 UPLOAD_DIRECTORY = ROOT_DIR / "data" / "uploads"
 

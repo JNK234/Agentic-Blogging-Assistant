@@ -3,3 +3,4 @@ python-dotenv>=0.19.0
 tenacity>=8.2.2
 nest-asyncio>=1.5.6 # Added to allow nested asyncio loops in Streamlit
 httpx>=0.25.0 # Added for making API calls from the frontend client
+google-auth>=2.0.0 # Added for Cloud Run authentication
