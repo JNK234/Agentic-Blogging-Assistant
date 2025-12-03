@@ -147,7 +147,8 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
         state["title_options"] = m["data"].get("title_options")
 
     if "social_generated" in milestones:
-        state["social_content"] = milestones["social_generated"]["data"]
+        # Social content is nested under "social_content" key within the milestone data
+        state["social_content"] = milestones["social_generated"]["data"].get("social_content")
 
     # Load sections from SQL Sections table with full metadata
     state["generated_sections"] = {

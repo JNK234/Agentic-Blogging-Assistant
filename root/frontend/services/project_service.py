@@ -171,7 +171,11 @@ class ProjectService:
         try:
             headers = self._get_headers()
             async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
-                response = await client.delete(f"{self.base_url}/project/{project_id}/permanent", headers=headers)
+                response = await client.delete(
+                    f"{self.base_url}/api/v2/projects/{project_id}",
+                    params={"permanent": "true"},
+                    headers=headers
+                )
                 response.raise_for_status()
                 return response.json()
                 

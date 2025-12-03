@@ -596,13 +596,19 @@ class ProjectHubUI:
                 
                 # Create a grid layout for project cards
                 for project in projects:
+                    project_id = project.get('id')
                     with st.container(border=True):
                         col1, col2, col3 = st.columns([3, 2, 1])
-                        
+
                         with col1:
-                            st.markdown(f"### {project.get('name', 'Untitled')}")
-                            st.caption(f"ID: {project.get('id')}")
-                        
+                            # Progress indicator
+                            is_completed = project.get('completed_at') is not None
+                            progress_icon = "✅" if is_completed else "🔄"
+                            progress_text = "Completed" if is_completed else "In Progress"
+
+                            st.markdown(f"### {progress_icon} {project.get('name', 'Untitled')}")
+                            st.caption(f"ID: {project_id}")
+
                         with col2:
                             updated = project.get('updated_at')
                             if updated:
@@ -614,13 +620,32 @@ class ProjectHubUI:
                             else:
                                 updated_str = "N/A"
                             st.caption(f"Last Updated: {updated_str}")
-                            
+
                             status = project.get('status', 'active')
-                            st.caption(f"Status: {status.title()}")
+                            st.caption(f"Status: {status.title()} | {progress_text}")
 
                         with col3:
-                            if st.button("Resume", key=f"resume_{project['id']}", use_container_width=True):
-                                self._resume_project(project['id'], api_base_url)
+                            btn_col1, btn_col2 = st.columns(2)
+                            with btn_col1:
+                                if st.button("▶️", key=f"resume_{project_id}", help="Resume Project"):
+                                    self._resume_project(project_id, api_base_url)
+                            with btn_col2:
+                                if st.button("🗑️", key=f"delete_{project_id}", help="Delete Project"):
+                                    st.session_state[f"confirm_delete_{project_id}"] = True
+                                    st.rerun()
+
+                    # Delete confirmation (outside the card columns for full width)
+                    if st.session_state.get(f"confirm_delete_{project_id}"):
+                        with st.container():
+                            st.warning(f"⚠️ Are you sure you want to permanently delete **{project.get('name')}**?")
+                            confirm_col1, confirm_col2, confirm_col3 = st.columns([2, 1, 1])
+                            with confirm_col2:
+                                if st.button("Yes, Delete", key=f"confirm_yes_{project_id}", type="primary"):
+                                    self._delete_project(project_id, api_base_url)
+                            with confirm_col3:
+                                if st.button("Cancel", key=f"confirm_no_{project_id}"):
+                                    st.session_state[f"confirm_delete_{project_id}"] = False
+                                    st.rerun()
 
             except Exception as e:
                 st.error(f"Failed to load projects: {str(e)}")
@@ -679,6 +704,48 @@ class ProjectHubUI:
         except Exception as e:
             st.error(f"Error resuming project: {str(e)}")
             logger.exception(f"Resume Error: {e}")
+
+    def _delete_project(self, project_id: str, api_base_url: str):
+        """
+        Permanently deletes a project from Supabase.
+        """
+        try:
+            with st.spinner(f"Deleting project..."):
+                # Call the v2 API endpoint for permanent deletion
+                import httpx
+                response = asyncio.run(self._async_delete_project(project_id, api_base_url))
+
+                if response.get('status') == 'success':
+                    # Clear confirmation state
+                    st.session_state[f"confirm_delete_{project_id}"] = False
+
+                    # Clear current project if it was the deleted one
+                    if SessionManager.get('current_project_id') == project_id:
+                        SessionManager.reset_project_state()
+                        SessionManager.set('current_project_id', None)
+
+                    st.success("Project deleted successfully!")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to delete project: {response.get('message', 'Unknown error')}")
+
+        except Exception as e:
+            st.error(f"Error deleting project: {str(e)}")
+            logger.exception(f"Delete Error: {e}")
+
+    async def _async_delete_project(self, project_id: str, api_base_url: str) -> dict:
+        """Async helper to delete project via API."""
+        import httpx
+        from utils.auth import get_auth_headers
+        headers = get_auth_headers(target_audience=api_base_url)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{api_base_url}/api/v2/projects/{project_id}",
+                params={"permanent": "true"},
+                headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
 
 class SidebarUI:
     """Handles rendering the sidebar and initialization logic."""
