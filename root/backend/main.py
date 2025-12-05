@@ -1526,11 +1526,15 @@ async def get_project_details(project_id: str) -> JSONResponse:
                     "data": milestone_data.get("data", {})
                 }
 
+        # Get cost summary from Supabase
+        cost_summary = await sql_project_manager.get_cost_summary(project_id)
+
         return JSONResponse(
             content={
                 "status": "success",
                 "project": project_data,
-                "milestones": milestones
+                "milestones": milestones,
+                "cost_summary": cost_summary
             }
         )
 
@@ -1695,51 +1699,15 @@ async def get_personas():
 
 @app.get("/models")
 async def get_available_models():
-    """Get available models organized by provider with specific model options."""
-    try:
-        # Model configurations mapping
-        model_configs = {
-            "openai": {
-                "name": "OpenAI",
-                "models": [
-                    {"id": "gpt-5", "name": "GPT-5", "description": "Latest flagship GPT model"},
-                    {"id": "gpt-4.1", "name": "GPT-4.1", "description": "High context reasoning with faster latency"},
-                    {"id": "gpt-4o", "name": "GPT-4o", "description": "Multimodal 4o general availability"}
-                ]
-            },
-            "claude": {
-                "name": "Anthropic Claude",
-                "models": [
-                    {"id": "claude-opus-4.1", "name": "Claude Opus 4.1", "description": "Most capable Claude for complex tasks"},
-                    {"id": "claude-sonnet-4", "name": "Claude Sonnet 4", "description": "Balanced capability and speed"}
-                ]
-            },
-            "gemini": {
-                "name": "Google Gemini",
-                "models": [
-                    {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "description": "Advanced reasoning and multimodal"},
-                    {"id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "description": "Fast, cost-efficient content generation"}
-                ]
-            },
-            "deepseek": {
-                "name": "DeepSeek",
-                "models": [
-                    {"id": "deepseek-reasoner", "name": "DeepSeek R1", "description": "Reasoning-optimized (R1)"},
-                    {"id": "deepseek-chat", "name": "DeepSeek Chat", "description": "General assistant tuned for dialogue"}
-                ]
-            },
-            "openrouter": {
-                "name": "OpenRouter",
-                "models": [
-                    {"id": "x-ai/grok-4", "name": "Grok-4 (via OpenRouter)", "description": "xAI Grok flagship through OpenRouter"},
-                    {"id": "openai/gpt-oss-120b", "name": "GPT-OSS 120B (via OpenRouter)", "description": "OpenAI OSS 120B via OpenRouter"},
-                    {"id": "qwen/qwen-2.5-72b-instruct", "name": "Qwen 2.5 72B Instruct", "description": "Alibaba Qwen through OpenRouter"},
-                    {"id": "qwen/qwen3-next-80b-a3b-thinking", "name": "Qwen3 Next 80B A3B Thinking", "description": "Extended reasoning Qwen via OpenRouter"}
-                ]
-            }
-        }
+    """Get available models organized by provider with specific model options.
 
-        return JSONResponse(content={"providers": model_configs})
+    Model data is loaded from models/registry.py - the single source of truth.
+    """
+    try:
+        # Import from the single source of truth
+        from backend.models.registry import get_api_models_response
+
+        return JSONResponse(content=get_api_models_response())
 
     except Exception as e:
         logger.error(f"Failed to get model configurations: {e}")

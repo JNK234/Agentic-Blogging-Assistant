@@ -49,9 +49,9 @@ class DeepseekSettings(ModelSettings):
 @dataclass
 class GeminiSettings(ModelSettings):
     """Settings specific to Google Gemini models."""
-    model_name: Optional[str] = "gemini-2.5-pro" # Default model
+    model_name: Optional[str] = "gemini-3-pro-preview" # Default model (Gemini 3.0 Pro)
     temperature: Optional[float] = 0.7
-    max_tokens: Optional[int] = 2048 # Gemini often has different token limits
+    max_tokens: Optional[int] = 8192 # Gemini 3.0 supports up to 64K output tokens
 
 @dataclass
 class OpenRouterSettings(ModelSettings):
@@ -116,7 +116,7 @@ class Settings:
         # Gemini settings
         self.gemini = GeminiSettings(
             api_key=os.getenv('GEMINI_API_KEY'),
-            model_name=os.getenv('GEMINI_MODEL_NAME', 'gemini-2.5-pro'),
+            model_name=os.getenv('GEMINI_MODEL_NAME', 'gemini-3-pro-preview'),
             max_tokens=os.getenv('GEMINI_MAX_TOKENS', 8192)
         )
 
