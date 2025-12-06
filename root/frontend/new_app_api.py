@@ -770,10 +770,10 @@ class SidebarUI:
                 'tech_blog_writer': {'name': 'Tech Blog Writer', 'description': 'Technical blog writer following industry best practices'}
             }
 
-    def _fetch_models(self, api_base_url: str) -> Dict[str, Any]:
+    def _fetch_models(self, api_base_url: str, force_refresh: bool = False) -> Dict[str, Any]:
         """Fetch available models from backend, with caching."""
         cached_models = SessionManager.get('available_models', {})
-        if cached_models:
+        if cached_models and not force_refresh:
             return cached_models
 
         try:
@@ -852,15 +852,14 @@ class SidebarUI:
 
             st.markdown("---")
 
-            # Fetch available models (used for provider/model dropdowns)
-            available_models = self._fetch_models(api_base_url)
-
-            # Get available providers from backend (with fallback to config)
-            provider_map = (available_models or {}).get('providers', {})
-            available_providers = list(provider_map.keys()) if provider_map else AppConfig.SUPPORTED_MODELS
-
             # --- Model Configuration (outside form for reactivity) ---
             st.markdown("**🤖 Model Configuration**")
+
+            # Get available providers first (with fallback to config)
+            # We'll fetch models after we know if provider changed
+            cached_models = SessionManager.get('available_models', {})
+            provider_map = (cached_models or {}).get('providers', {})
+            available_providers = list(provider_map.keys()) if provider_map else AppConfig.SUPPORTED_MODELS
 
             # Provider selection with enhanced display
             current_model = SessionManager.get('selected_model', AppConfig.DEFAULT_MODEL)
@@ -881,6 +880,10 @@ class SidebarUI:
 
             # Check if provider changed (for reactivity) - store before updating
             provider_changed = selected_model != current_model
+
+            # Fetch available models (used for provider/model dropdowns)
+            # Force refresh when provider changes to ensure models list updates
+            available_models = self._fetch_models(api_base_url, force_refresh=provider_changed)
 
             # Update session state immediately when provider changes
             if provider_changed:
