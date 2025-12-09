@@ -50,14 +50,26 @@ Generate content for the following platforms using the **Selected Hook** from Ph
 - **Formatting:** Use short paragraphs. Use parentheses for side comments (like this).
 
 #### 1. LinkedIn Post
+- **Goal:** Generate interest and drive traffic to blog. Be concise and intriguing, not comprehensive.
 - **Structure:**
-  1. **The Hook:** Start immediately with the insight (use the angle selected in Phase 1).
-  2. **The "Meat":** Explain the *mechanism* in 2-3 sentences. Why does it work?
-  3. **The Code (Optional):** If you identified code in Phase 1, insert a small block: `Code: [snippet]`.
-  4. **The "So What?":** A senior-level observation on where to apply this.
-  5. **The Link:** "Notes on the implementation: [link-placeholder]"
-- **Length:** 150-200 words.
-- **Tone:** A realization shared with colleagues.
+  1. **The Hook (1-2 lines):** Start with the counter-intuitive insight or "Aha!" moment (use the angle selected in Phase 1).
+
+  2. **The Tease (2-3 sentences):** Hint at the mechanism or key finding WITHOUT fully explaining it. Create curiosity gap.
+
+  3. **The Value Promise (1 sentence):** What will they understand after reading the full post?
+
+  4. **The Link:** "Full breakdown: [link-placeholder]"
+
+  5. **Hashtags:** Add 2-3 relevant technical hashtags at the very end (e.g., #MachineLearning #Transformers #DeepLearning)
+
+- **Length:** 80-120 words (SHORT - optimize for preview).
+- **Tone:** Intriguing but not clickbait. A colleague sharing a surprising discovery.
+- **Formatting for LinkedIn:**
+  • First 2 lines are critical (shown in feed preview) - make them punchy
+  • Use single blank lines between paragraphs
+  • NO code snippets (save for blog)
+  • NO bullet points (keep prose format)
+  • Hashtags on separate line at bottom
 
 #### 2. X (Twitter) Single Post
 - **Goal:** The "Hot Take" or specific insight.
