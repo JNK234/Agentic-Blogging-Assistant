@@ -28,6 +28,7 @@ class CostAggregator:
         self.total_cost = 0.0
         self.total_tokens = 0
         self.total_calls = 0
+        self.total_duration = 0.0
 
         # Detailed call history
         self.call_history = []
@@ -77,6 +78,9 @@ class CostAggregator:
         self.total_cost += cost
         self.total_tokens += tokens
         self.total_calls += 1
+        
+        duration = call_record.get("duration_seconds", 0.0)
+        self.total_duration += duration
 
         # Update by agent
         self.costs_by_agent[agent_name]["total_cost"] += cost
@@ -128,7 +132,9 @@ class CostAggregator:
             "total_cost": round(self.total_cost, 6),
             "total_tokens": self.total_tokens,
             "total_calls": self.total_calls,
+            "total_duration": round(self.total_duration, 2),
             "average_cost_per_call": round(self.total_cost / max(self.total_calls, 1), 6),
+            "average_duration_per_call": round(self.total_duration / max(self.total_calls, 1), 2),
 
             # By agent breakdown
             "by_agent": {

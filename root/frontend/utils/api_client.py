@@ -144,13 +144,23 @@ class BlogAPIClient:
             total_milestones = len(milestone_types)
             progress_percentage = (completed_milestones / total_milestones) * 100 if total_milestones > 0 else 0
 
-            # Calculate cost if available
-            total_cost = 0.0
-            for milestone_data in milestones.values():
-                if isinstance(milestone_data, dict) and "metadata" in milestone_data:
-                    metadata = milestone_data["metadata"]
-                    if "cost" in metadata:
-                        total_cost += float(metadata.get("cost", 0))
+            # Extract cost from cost_summary in project data (aggregated from Supabase)
+            cost_summary = project_data.get("cost_summary", {})
+            total_cost = cost_summary.get("total_cost", 0.0)
+
+            # Fallback: sum costs from milestone metadata if cost_summary not available
+            if total_cost == 0.0:
+                for milestone_data in milestones.values():
+                    if isinstance(milestone_data, dict):
+                        # Check metadata for cost_summary
+                        metadata = milestone_data.get("metadata", {})
+                        if "cost_summary" in metadata:
+                            total_cost += float(metadata["cost_summary"].get("total_cost", 0))
+                        elif "cost" in metadata:
+                            total_cost += float(metadata.get("cost", 0))
+
+            # Extract workflow duration
+            workflow_duration = cost_summary.get("workflow_duration_seconds", 0)
 
             return {
                 "project_id": project_id,
@@ -160,6 +170,8 @@ class BlogAPIClient:
                 "completed_count": completed_milestones,
                 "total_count": total_milestones,
                 "total_cost": total_cost,
+                "cost_summary": cost_summary,
+                "workflow_duration_seconds": workflow_duration,
                 "status": project_data.get("project", {}).get("status", "active")
             }
 

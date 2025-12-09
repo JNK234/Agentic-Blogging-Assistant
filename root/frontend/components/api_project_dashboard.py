@@ -100,9 +100,18 @@ class APIProjectDashboard:
             total = len(milestones)
             st.sidebar.caption(f"Milestones: {completed}/{total}")
 
-            # Cost
+            # Cost and Duration
             if "total_cost" in progress_data:
-                st.sidebar.metric("Cost", f"${progress_data['total_cost']:.4f}")
+                col_cost, col_time = st.sidebar.columns(2)
+                with col_cost:
+                    st.sidebar.metric("Cost", f"${progress_data['total_cost']:.4f}")
+                
+                with col_time:
+                    duration = progress_data.get("workflow_duration_seconds")
+                    if duration:
+                        hours = int(duration // 3600)
+                        minutes = int((duration % 3600) // 60)
+                        st.sidebar.metric("Time", f"{hours}h {minutes}m")
 
         except Exception as e:
             logger.error(f"Failed to get progress for {project_id}: {e}")
@@ -200,9 +209,21 @@ class APIProjectDashboard:
                 st.progress(progress / 100)
                 st.caption(f"Progress: {progress}%")
 
-                # Cost metric
+                # Cost and Duration metrics
                 total_cost = progress_data.get("total_cost", 0.0)
-                st.metric("Total Cost", f"${total_cost:.4f}")
+                duration = progress_data.get("workflow_duration_seconds", 0)
+                
+                m_col1, m_col2 = st.columns(2)
+                with m_col1:
+                    st.metric("Total Cost", f"${total_cost:.4f}")
+                
+                with m_col2:
+                    if duration:
+                        hours = int(duration // 3600)
+                        minutes = int((duration % 3600) // 60)
+                        st.metric("Duration", f"{hours}h {minutes}m")
+                    else:
+                        st.metric("Duration", "0h 0m")
 
                 # Milestone status
                 milestones = progress_data.get("milestones", {})
@@ -270,51 +291,95 @@ class APIProjectDashboard:
         """Resume a project and restore its state using API v2."""
         try:
             # Get resume data from API v2
+            logger.info(f"Attempting to resume project with ID: {project_id}")
             resume_data = await self.api_client.resume_project(project_id)
 
-            # Extract project information from API v2 response
-            project_info = resume_data.get("project", {})
-            milestones = resume_data.get("project", {}).get("milestones", {})
+            # Extract project information from the flat response structure
+            # The backend returns a flat JSON with keys like 'outline', 'generated_sections', etc.
+            project_name = resume_data.get("project_name", "Unknown Project")
             next_step = resume_data.get("next_step", "upload_files")
-
+            
             # Update session state with basic project data
             st.session_state.api_app_state["current_project_id"] = project_id
-            st.session_state.api_app_state["current_project_name"] = project_info.get("name", "Unknown Project")
-            st.session_state.api_app_state["job_id"] = project_info.get("metadata", {}).get("job_id")
+            st.session_state.api_app_state["current_project_name"] = project_name
+            st.session_state.api_app_state["project_name"] = project_name
             st.session_state.api_app_state["resume_point"] = next_step
+            st.session_state.api_app_state["is_initialized"] = True
+            
+            # Restore Configuration
+            st.session_state.api_app_state["selected_model"] = resume_data.get("model_name")
+            st.session_state.api_app_state["specific_model"] = resume_data.get("specific_model")
+            st.session_state.api_app_state["selected_persona"] = resume_data.get("persona")
 
-            # Extract and store milestone data from milestones dict
-            # Milestone keys: "outline_generated", "draft_completed", "blog_refined", "social_generated"
-            if "outline_generated" in milestones:
-                outline_data = milestones["outline_generated"].get("data")
-                if outline_data:
-                    st.session_state.api_app_state["generated_outline"] = outline_data
+            # Restore Content
+            # Outline
+            outline_data = resume_data.get("outline")
+            if outline_data:
+                st.session_state.api_app_state["generated_outline"] = outline_data
+            
+            # Sections
+            generated_sections = resume_data.get("generated_sections", {})
+            if generated_sections:
+                # Ensure keys are integers for the frontend
+                sections_map = {}
+                for k, v in generated_sections.items():
+                    try:
+                        sections_map[int(k)] = v
+                    except ValueError:
+                        sections_map[k] = v
+                st.session_state.api_app_state["generated_sections"] = sections_map
+            
+            # Section Progress
+            st.session_state.api_app_state["total_sections"] = resume_data.get("total_sections", 0)
+            st.session_state.api_app_state["current_section_index"] = resume_data.get("completed_sections", 0)
 
-            if "draft_completed" in milestones:
-                draft_data = milestones["draft_completed"].get("data")
-                if draft_data:
-                    st.session_state.api_app_state["final_draft"] = draft_data
+            # Drafts
+            final_draft = resume_data.get("final_draft")
+            if final_draft:
+                st.session_state.api_app_state["final_draft"] = final_draft
 
-            if "blog_refined" in milestones:
-                refined_data = milestones["blog_refined"].get("data")
-                if refined_data:
-                    st.session_state.api_app_state["refined_draft"] = refined_data.get("content")
-                    st.session_state.api_app_state["summary"] = refined_data.get("summary")
-                    st.session_state.api_app_state["title_options"] = refined_data.get("title_options")
+            refined_draft = resume_data.get("refined_draft")
+            if refined_draft:
+                st.session_state.api_app_state["refined_draft"] = refined_draft
+                st.session_state.api_app_state["summary"] = resume_data.get("summary")
+                st.session_state.api_app_state["title_options"] = resume_data.get("title_options")
 
-            if "social_generated" in milestones:
-                social_data = milestones["social_generated"].get("data")
-                if social_data:
-                    st.session_state.api_app_state["social_content"] = social_data
+            # Social Content
+            social_content = resume_data.get("social_content")
+            if social_content:
+                st.session_state.api_app_state["social_content"] = social_content
+            
+            # Cost Tracking
+            cost_summary = resume_data.get("cost_summary")
+            if cost_summary:
+                st.session_state.api_app_state["cost_summary"] = cost_summary
+            
+            # File Info (Reconstruct basic info if actual file objects aren't available)
+            uploaded_files = resume_data.get("uploaded_files", [])
+            if uploaded_files:
+                # uploaded_files from backend is likely a list of filenames or dicts
+                # We map it to the structure expected by uploaded_files_info
+                file_info = []
+                for f in uploaded_files:
+                    if isinstance(f, dict):
+                        file_info.append({"name": f.get("name"), "type": f.get("type"), "size": f.get("size", 0)})
+                    elif isinstance(f, str):
+                        file_info.append({"name": f, "type": "application/octet-stream", "size": 0})
+                st.session_state.api_app_state["uploaded_files_info"] = file_info
+            
+            processed_hashes = resume_data.get("processed_file_hashes", {})
+            if processed_hashes:
+                st.session_state.api_app_state["processed_file_hashes"] = processed_hashes
 
             # Map next_step to user-friendly tab navigation hint
             tab_mapping = {
                 "upload_files": "File Upload",
                 "generate_outline": "Outline Generator",
-                "generate_draft": "Blog Draft",
-                "refine_blog": "Blog Draft",
-                "generate_social": "Blog Draft",
-                "completed": "Blog Draft"
+                "section_generation": "Blog Draft",
+                "compile_draft": "Blog Draft",
+                "blog_refinement": "Refinement",
+                "social_generation": "Social Media",
+                "completed": "Social Media"
             }
 
             recommended_tab = tab_mapping.get(next_step, "Outline Generator")

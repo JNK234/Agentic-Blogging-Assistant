@@ -5,7 +5,17 @@ from dotenv import load_dotenv
 
 # Load environment variables from parent directory (.env is in root/)
 ROOT_DIR = Path(__file__).parent.parent
-load_dotenv(ROOT_DIR / '.env')
+ENV_PATH = ROOT_DIR / '.env'
+
+# Verify .env exists, if not try alternative paths
+if not ENV_PATH.exists():
+    # Try current working directory as fallback
+    ENV_PATH = Path.cwd() / '.env'
+    if not ENV_PATH.exists():
+        # Try looking in parent of current directory
+        ENV_PATH = Path.cwd().parent / '.env'
+
+load_dotenv(ENV_PATH)
 
 # Constants
 API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000')

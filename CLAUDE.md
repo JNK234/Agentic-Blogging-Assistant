@@ -76,6 +76,29 @@ Each agent uses LangGraph for complex workflow orchestration with state manageme
 - **Caching Strategy**: Multi-level caching (outline cache, section cache, job state cache) for performance
 - **Model Abstraction**: Factory pattern supporting multiple LLM providers (OpenAI, Claude, Deepseek, Gemini, OpenRouter)
 
+### Production Deployment (Google Cloud Run)
+
+The backend is deployed to Google Cloud Run with the following configuration:
+
+| Setting | Value |
+|---------|-------|
+| **Service URL** | `https://quibo-backend-870041009851.us-central1.run.app` |
+| **Project** | `personal-os-475406` |
+| **Region** | `us-central1` |
+| **Service Name** | `quibo-backend` |
+| **Memory/CPU** | 4Gi / 2 CPU |
+| **Scaling** | 0-5 instances, concurrency 10 |
+
+**Authentication**: Two-layer auth (Cloud Run IAM + API Key via `X-API-Key` header)
+
+**Quick Test**:
+```bash
+# Health check (no auth)
+curl https://quibo-backend-870041009851.us-central1.run.app/health
+```
+
+For full deployment details, see `docs/DEPLOYMENT.md`.
+
 ## Development Commands
 
 ### Setup and Installation
