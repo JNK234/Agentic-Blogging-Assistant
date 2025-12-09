@@ -1526,6 +1526,19 @@ async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
                         section_input_tokens += call.get("input_tokens", 0)
                         section_output_tokens += call.get("output_tokens", 0)
 
+            # Serialize image placeholders for database storage
+            image_placeholders_data = [
+                {
+                    "type": p.type,
+                    "description": p.description,
+                    "alt_text": p.alt_text,
+                    "placement": p.placement,
+                    "purpose": p.purpose,
+                    "section_context": p.section_context,
+                    "source_reference": p.source_reference
+                } for p in state.current_section.image_placeholders
+            ] if state.current_section.image_placeholders else []
+
             section_data = {
                 "section_index": state.current_section_index,
                 "title": state.current_section.title,
@@ -1536,7 +1549,8 @@ async def section_finalizer(state: BlogDraftState) -> BlogDraftState:
                 "cost_delta": section_cost,
                 "input_tokens": section_input_tokens,
                 "output_tokens": section_output_tokens,
-                "outline_hash": getattr(state, 'outline_hash', None)
+                "outline_hash": getattr(state, 'outline_hash', None),
+                "image_placeholders": image_placeholders_data
             }
 
             # Save this single section (we'll batch save all sections at the end via save_sections)

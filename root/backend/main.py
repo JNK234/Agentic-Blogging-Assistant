@@ -160,7 +160,8 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
             "input_tokens": s.get("input_tokens", 0),
             "output_tokens": s.get("output_tokens", 0),
             "updated_at": s.get("updated_at"),
-            "outline_hash": s.get("outline_hash")
+            "outline_hash": s.get("outline_hash"),
+            "image_placeholders": s.get("image_placeholders", [])
         }
         for s in project_data["sections"]
     }

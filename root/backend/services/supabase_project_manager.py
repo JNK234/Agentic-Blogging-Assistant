@@ -466,7 +466,8 @@ class SupabaseProjectManager:
                         "cost_delta": section_data.get('cost_delta', 0.0),
                         "input_tokens": section_data.get('input_tokens', 0),
                         "output_tokens": section_data.get('output_tokens', 0),
-                        "updated_at": datetime.utcnow().isoformat()
+                        "updated_at": datetime.utcnow().isoformat(),
+                        "image_placeholders": section_data.get('image_placeholders', [])
                     }
                     # Add outline_hash if provided (for version tracking)
                     if section_data.get('outline_hash'):
@@ -537,7 +538,8 @@ class SupabaseProjectManager:
                     "cost_delta": s.get("cost_delta", 0.0),
                     "input_tokens": s.get("input_tokens", 0),
                     "output_tokens": s.get("output_tokens", 0),
-                    "updated_at": self._parse_timestamp(s.get("updated_at"))
+                    "updated_at": self._parse_timestamp(s.get("updated_at")),
+                    "image_placeholders": s.get("image_placeholders", [])
                 })
 
             return sections

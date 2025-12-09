@@ -252,7 +252,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         cost_aggregator=None,
         project_id: Optional[str] = None,
         persona: str = "neuraforge"  # Add persona parameter with default
-    ) -> Tuple[Optional[str], bool]:
+    ) -> Tuple[Optional[Dict[str, Any]], bool]:
         """Generates a single section of the blog draft, using persistent cache based on outline content."""
         section_title = section.get('title', f'Section {current_section_index + 1}')
         
@@ -412,7 +412,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
         quality_threshold=0.8,
         cost_aggregator=None,
         project_id: Optional[str] = None
-    ) -> Optional[str]: # Return only content (cache status not relevant for direct regen call)
+    ) -> Optional[Dict[str, Any]]: # Return dict with content and image_placeholders (consistent with generate_section)
         """Regenerates a section with user feedback, updating the cache."""
         section_title = section.get('title', 'Unknown Section')
         
@@ -513,6 +513,7 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                 state.update_cost_summary()
 
             regenerated_content = state.current_section.content if state.current_section else None
+            regenerated_image_placeholders = state.current_section.image_placeholders if state.current_section else []
 
             if regenerated_content:
                 logging.info(f"Successfully regenerated section '{section_title}' with content length: {len(regenerated_content)}")
@@ -520,7 +521,18 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                 cache_key = self._create_section_cache_key(project_name, outline_hash, section_index)
                 section_data_to_cache = {
                     "title": section_title,
-                    "content": regenerated_content
+                    "content": regenerated_content,
+                    "image_placeholders": [
+                        {
+                            "type": p.type,
+                            "description": p.description,
+                            "alt_text": p.alt_text,
+                            "placement": p.placement,
+                            "purpose": p.purpose,
+                            "section_context": p.section_context,
+                            "source_reference": p.source_reference
+                        } for p in regenerated_image_placeholders
+                    ] if regenerated_image_placeholders else []
                 }
                 section_json = json.dumps(section_data_to_cache)
                 self.vector_store.store_section_cache(
@@ -531,7 +543,10 @@ class BlogDraftGeneratorAgent(BaseGraphAgent):
                     section_index=section_index
                 )
                 # --- End Update Cache ---
-                return regenerated_content
+                return {
+                    "content": regenerated_content,
+                    "image_placeholders": section_data_to_cache.get("image_placeholders", [])
+                }
             else:
                 logging.error(f"Failed to regenerate section content for '{section_title}'")
                 return None
