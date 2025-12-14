@@ -23,6 +23,7 @@ from services.project_service import ProjectService
 from components.project_manager import ProjectManagerUI
 from utils.api_client import BlogAPIClient
 from components.api_project_dashboard import APIProjectDashboard
+from auth import require_auth, show_user_profile
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2160,6 +2161,13 @@ class BloggingAssistantAPIApp:
     def run(self):
         """Runs the main application flow."""
         self.setup()
+
+        # --- Authentication ---
+        # TEMPORARILY BYPASSED for testing
+        # user = require_auth()
+        # show_user_profile()
+        user = None  # Mock user for testing
+
         self.sidebar.render() # Render sidebar first for initialization
 
         # Display global status/error messages prominently

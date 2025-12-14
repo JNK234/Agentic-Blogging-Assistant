@@ -79,3 +79,29 @@ def is_auth_configured() -> bool:
         return False
 
     return True
+
+
+def get_auth_headers_with_user(target_audience: Optional[str] = None) -> Dict[str, str]:
+    """
+    Get authentication headers including Supabase user info for backend requests.
+
+    This extends get_auth_headers by adding user identification headers when
+    a user is authenticated via Supabase Auth.
+
+    Args:
+        target_audience: The Cloud Run service URL (used for identity token)
+
+    Returns:
+        Dictionary of headers including API key, identity token, and user info
+    """
+    import streamlit as st
+
+    headers = get_auth_headers(target_audience)
+
+    # Add user info if authenticated via Supabase
+    if "user" in st.session_state:
+        user = st.session_state.user
+        headers["X-User-ID"] = str(user.id)
+        headers["X-User-Email"] = user.email
+
+    return headers

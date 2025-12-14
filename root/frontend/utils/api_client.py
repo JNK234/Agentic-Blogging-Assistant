@@ -48,7 +48,8 @@ class BlogAPIClient:
 
     def _get_headers(self) -> Dict[str, str]:
         """Get authentication headers for API requests."""
-        return get_auth_headers(target_audience=self.base_url)
+        from utils.auth import get_auth_headers_with_user
+        return get_auth_headers_with_user(target_audience=self.base_url)
 
     # ==================== Project Management Methods ====================
 

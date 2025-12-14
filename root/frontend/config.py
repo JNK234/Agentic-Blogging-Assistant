@@ -7,20 +7,31 @@ from dotenv import load_dotenv
 ROOT_DIR = Path(__file__).parent.parent
 ENV_PATH = ROOT_DIR / '.env'
 
-# Verify .env exists, if not try alternative paths
-if not ENV_PATH.exists():
-    # Try current working directory as fallback
+# In Cloud Run, environment variables are set directly, no need for .env file
+# Only load .env if it exists (for local development)
+if ENV_PATH.exists():
+    load_dotenv(ENV_PATH)
+else:
+    # Try alternative paths for local development
     ENV_PATH = Path.cwd() / '.env'
-    if not ENV_PATH.exists():
+    if ENV_PATH.exists():
+        load_dotenv(ENV_PATH)
+    else:
         # Try looking in parent of current directory
         ENV_PATH = Path.cwd().parent / '.env'
-
-load_dotenv(ENV_PATH)
+        if ENV_PATH.exists():
+            load_dotenv(ENV_PATH)
 
 # Constants
 API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000')
-CACHE_DIR = ROOT_DIR / "data" / "cache"
-UPLOAD_DIRECTORY = ROOT_DIR / "data" / "uploads"
+
+# For Cloud Run, use /tmp for ephemeral storage
+if os.getenv('K_SERVICE'):  # Cloud Run sets this environment variable
+    CACHE_DIR = Path('/tmp/cache')
+    UPLOAD_DIRECTORY = Path('/tmp/uploads')
+else:
+    CACHE_DIR = ROOT_DIR / "data" / "cache"
+    UPLOAD_DIRECTORY = ROOT_DIR / "data" / "uploads"
 
 # Initialize cache directory
 CACHE_DIR.mkdir(parents=True, exist_ok=True)

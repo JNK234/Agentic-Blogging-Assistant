@@ -108,13 +108,14 @@ class SupabaseProjectManager:
 
     # ==================== Project CRUD Operations ====================
 
-    async def create_project(self, project_name: str, metadata: Dict[str, Any] = None) -> str:
+    async def create_project(self, project_name: str, metadata: Dict[str, Any] = None, user_id: Optional[str] = None) -> str:
         """
         Create a new project with unique ID.
 
         Args:
             project_name: Human-readable project name
             metadata: Optional metadata (model, persona, etc.)
+            user_id: Optional user ID to associate with project (for RLS)
 
         Returns:
             Project ID (UUID string)
@@ -123,19 +124,25 @@ class SupabaseProjectManager:
             project_id = str(uuid.uuid4())
             now = datetime.utcnow().isoformat()
 
-            result = self.supabase.table("projects").insert({
+            data = {
                 "id": project_id,
                 "name": project_name,
                 "status": ProjectStatus.ACTIVE.value,
                 "metadata": metadata or {},
                 "created_at": now,
                 "updated_at": now
-            }).execute()
+            }
+
+            # Add user_id if provided (for authentication)
+            if user_id:
+                data["user_id"] = user_id
+
+            result = self.supabase.table("projects").insert(data).execute()
 
             if not result.data:
                 raise Exception("Failed to create project: no data returned")
 
-            logger.info(f"Created project {project_name} with ID {project_id}")
+            logger.info(f"Created project {project_name} with ID {project_id}{f' for user {user_id}' if user_id else ''}")
             return project_id
 
         except Exception as e:

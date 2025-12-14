@@ -36,6 +36,7 @@ from backend.services.vector_store_service import VectorStoreService # Added
 from backend.services.persona_service import PersonaService # Added
 from backend.services.supabase_project_manager import SupabaseProjectManager, MilestoneType # Supabase-based project manager
 from backend.services.cost_aggregator import CostAggregator
+from backend.middleware.auth_middleware import SupabaseAuthMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -76,6 +77,10 @@ app = FastAPI(title="Agentic Blogging Assistant API")
 
 # Add API key authentication middleware
 app.add_middleware(APIKeyAuthMiddleware)
+
+# Add Supabase JWT authentication middleware
+# This runs AFTER API key middleware, so both can work together
+app.add_middleware(SupabaseAuthMiddleware)
 
 # Constants
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
