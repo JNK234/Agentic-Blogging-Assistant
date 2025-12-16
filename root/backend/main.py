@@ -179,6 +179,7 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
 
 @app.post("/upload/{project_name}")
 async def upload_files(
+    request: Request,
     project_name: str,
     files: Optional[List[UploadFile]] = File(None),
     model_name: Optional[str] = Form(None),
@@ -186,6 +187,9 @@ async def upload_files(
 ) -> JSONResponse:
     """Upload files for a specific project and create a project entry."""
     try:
+        # Get authenticated user from request state (set by auth middleware)
+        user = getattr(request.state, 'user', None)
+        user_id = user.get('id') if user else None
         # Validate inputs
         if not files or len(files) == 0:
             return JSONResponse(
@@ -260,7 +264,8 @@ async def upload_files(
         try:
             sql_project_id = await sql_project_manager.create_project(
                 project_name=safe_project_name,
-                metadata=metadata
+                metadata=metadata,
+                user_id=user_id  # Pass authenticated user ID for RLS
             )
 
             # Save FILES_UPLOADED milestone

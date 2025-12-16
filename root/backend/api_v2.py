@@ -6,7 +6,7 @@ API v2 endpoints for project management with SQL backend.
 Implements project_id pattern while maintaining backward compatibility.
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
@@ -65,7 +65,7 @@ class MilestoneData(BaseModel):
 # ==================== Project CRUD Endpoints ====================
 
 @router.post("/projects")
-async def create_project(request: ProjectCreate) -> JSONResponse:
+async def create_project(request: Request, project_data: ProjectCreate) -> JSONResponse:
     """
     Create a new project with unique ID.
 
@@ -73,15 +73,20 @@ async def create_project(request: ProjectCreate) -> JSONResponse:
         Project ID and details
     """
     try:
+        # Get authenticated user from request state (set by auth middleware)
+        user = getattr(request.state, 'user', None)
+        user_id = user.get('id') if user else None
+        
         project_id = await sql_manager.create_project(
-            project_name=request.name,
-            metadata=request.metadata
+            project_name=project_data.name,
+            metadata=project_data.metadata,
+            user_id=user_id  # Pass authenticated user ID for RLS
         )
 
         return JSONResponse(content={
             "status": "success",
             "project_id": project_id,
-            "name": request.name,
+            "name": project_data.name,
             "message": f"Project created successfully"
         })
 

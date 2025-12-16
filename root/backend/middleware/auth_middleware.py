@@ -33,12 +33,6 @@ class SupabaseAuthMiddleware(BaseHTTPMiddleware):
         # Get token from Authorization header
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
-            # Try X-User-ID header for API key auth compatibility
-            user_id = request.headers.get("X-User-ID")
-            if user_id:
-                request.state.user = {"id": user_id, "email": request.headers.get("X-User-Email")}
-                return await call_next(request)
-
             raise HTTPException(
                 status_code=401,
                 detail="Missing or invalid authorization header"

@@ -23,7 +23,7 @@ from services.project_service import ProjectService
 from components.project_manager import ProjectManagerUI
 from utils.api_client import BlogAPIClient
 from components.api_project_dashboard import APIProjectDashboard
-from auth import require_auth, show_user_profile
+from components.supabase_auth import require_auth, get_auth_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -2163,10 +2163,14 @@ class BloggingAssistantAPIApp:
         self.setup()
 
         # --- Authentication ---
-        # TEMPORARILY BYPASSED for testing
-        # user = require_auth()
-        # show_user_profile()
-        user = None  # Mock user for testing
+        require_auth()  # This will handle authentication and show login UI if needed
+
+        # Show user profile in sidebar
+        auth_manager = get_auth_manager()
+        auth_manager.show_user_profile()
+
+        # Get current user for use in the app
+        user = auth_manager.get_user()
 
         self.sidebar.render() # Render sidebar first for initialization
 

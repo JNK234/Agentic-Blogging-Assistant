@@ -24,11 +24,12 @@ except ImportError:
 
 def get_auth_headers(target_audience: Optional[str] = None) -> Dict[str, str]:
     """
-    Get authentication headers for Cloud Run requests.
+    Get authentication headers for API requests.
 
-    This function provides two layers of authentication:
-    1. X-API-Key: Application-level API key validation
-    2. Authorization: GCP identity token for Cloud Run IAM (if service account configured)
+    This function provides authentication in priority order:
+    1. Supabase JWT token (for authenticated users via Google OAuth)
+    2. X-API-Key: Application-level API key validation
+    3. GCP identity token for Cloud Run IAM (fallback for production)
 
     Args:
         target_audience: The Cloud Run service URL (used for identity token)
@@ -36,6 +37,8 @@ def get_auth_headers(target_audience: Optional[str] = None) -> Dict[str, str]:
     Returns:
         Dictionary of headers to include in requests
     """
+    import streamlit as st
+    
     headers = {}
 
     # Layer 1: API Key (always added if configured)
@@ -43,7 +46,19 @@ def get_auth_headers(target_audience: Optional[str] = None) -> Dict[str, str]:
     if api_key:
         headers['X-API-Key'] = api_key
 
-    # Layer 2: GCP Identity Token (for Cloud Run IAM)
+    # Layer 2: Supabase JWT (priority for authenticated users)
+    # This is the proper HS256 token that the backend can verify
+    try:
+        supabase_session = st.session_state.get("supabase_session")
+        if supabase_session and supabase_session.get("access_token"):
+            token = supabase_session["access_token"]
+            headers['Authorization'] = f'Bearer {token}'
+            logger.debug(f"Added Supabase JWT to headers (len={len(token)})")
+            return headers  # Supabase auth takes priority, return early
+    except Exception as e:
+        logger.debug(f"No Supabase session available: {e}")
+
+    # Layer 3: GCP Identity Token (fallback for Cloud Run IAM in production)
     if GOOGLE_AUTH_AVAILABLE:
         sa_file = os.getenv('GCP_SERVICE_ACCOUNT_FILE', '')
         # Resolve relative paths against ROOT_DIR
