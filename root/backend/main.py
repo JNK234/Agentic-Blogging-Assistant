@@ -36,7 +36,7 @@ from backend.services.vector_store_service import VectorStoreService # Added
 from backend.services.persona_service import PersonaService # Added
 from backend.services.supabase_project_manager import SupabaseProjectManager, MilestoneType # Supabase-based project manager
 from backend.services.cost_aggregator import CostAggregator
-from backend.middleware.auth_middleware import SupabaseAuthMiddleware
+from backend.dependencies.auth import get_current_user, get_optional_user
 
 # Configure logging
 logging.basicConfig(
@@ -45,42 +45,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BlogAPI")
 
-# API Key for authentication (loaded from environment, set via GCP Secret Manager)
-QUIBO_API_KEY = os.getenv('QUIBO_API_KEY', '')
-
-
-class APIKeyAuthMiddleware(BaseHTTPMiddleware):
-    """Middleware to validate API key on all requests except health check."""
-
-    async def dispatch(self, request: Request, call_next):
-        # Skip auth for health check (needed for Cloud Run health probes)
-        if request.url.path == "/health":
-            return await call_next(request)
-
-        # Skip auth if no API key is configured (local development)
-        if not QUIBO_API_KEY:
-            return await call_next(request)
-
-        # Validate API key
-        api_key = request.headers.get("X-API-Key")
-        if not api_key or api_key != QUIBO_API_KEY:
-            logger.warning(f"Invalid or missing API key for path: {request.url.path}")
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid or missing API key"}
-            )
-
-        return await call_next(request)
-
-
 app = FastAPI(title="Agentic Blogging Assistant API")
-
-# Add API key authentication middleware
-app.add_middleware(APIKeyAuthMiddleware)
-
-# Add Supabase JWT authentication middleware
-# This runs AFTER API key middleware, so both can work together
-app.add_middleware(SupabaseAuthMiddleware)
 
 # Constants
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))

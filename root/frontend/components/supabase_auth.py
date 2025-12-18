@@ -7,6 +7,7 @@ from streamlit_js_eval import streamlit_js_eval
 from typing import Optional, Dict, Any
 import logging
 import os
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client
@@ -174,34 +175,57 @@ class SupabaseAuthManager:
         return None
 
     def logout(self):
-        """Sign out the current user and clear session."""
-        # Sign out via Supabase client
+        """Sign out the current user and clear session immediately."""
+        logger.info("Initiating immediate logout...")
+
+        # 1. Sign out via Supabase client first
         try:
             supabase = self._get_supabase_client()
             supabase.auth.sign_out()
-            logger.info("Supabase sign_out() called successfully")
+            logger.info("Supabase auth sign_out completed")
         except Exception as e:
-            logger.warning(f"Supabase sign_out failed (may already be signed out): {e}")
-        
-        # Clear auth-related session data (keep app state like api_app_state)
-        auth_keys_to_clear = [
-            'supabase_session', 'auth_manager', 'login', 'user', 'session',
-            'user_profile', 'authenticated', 'access_token'
-        ]
-        for key in auth_keys_to_clear:
-            if key in st.session_state:
+            logger.warning(f"Supabase sign_out error (may already be signed out): {e}")
+
+        # 2. Clear browser storage immediately using JavaScript
+        try:
+            streamlit_js_eval(
+                js_expressions="""
+                    (function() {
+                        localStorage.clear();
+                        sessionStorage.clear();
+                        return true;
+                    })()
+                """,
+                key=f"clear_storage_immediate_{time.time()}"
+            )
+            logger.info("Browser storage cleared")
+        except Exception as e:
+            logger.warning(f"Could not clear browser storage: {e}")
+
+        # 3. Clear ALL session state except critical keys
+        keys_to_keep = ['auth_manager']  # Only keep auth_manager to avoid recreation
+        current_keys = list(st.session_state.keys())
+
+        for key in current_keys:
+            if key not in keys_to_keep:
                 try:
                     del st.session_state[key]
+                    logger.debug(f"Cleared session key: {key}")
                 except Exception:
                     pass
-        
-        # Set pending logout flag - browser storage will be cleared on next render
-        st.session_state["_pending_logout"] = True
-        
-        logger.info("User logged out - pending browser storage clear on next render")
-        
-        st.success("✅ Signing out...")
-        st.rerun()
+
+        logger.info("Session cleared, forcing immediate reload")
+
+        # 4. Show message and reload immediately
+        st.success("✅ Signed out successfully!")
+        time.sleep(0.5)  # Brief pause to show message
+
+        # Force immediate page reload
+        streamlit_js_eval(
+            js_expressions="window.location.href = '/'",
+            key=f"reload_immediate_{time.time()}"
+        )
+        st.stop()
 
     def show_login_ui(self):
         """Display the login UI for unauthenticated users."""

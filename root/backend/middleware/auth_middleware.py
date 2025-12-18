@@ -30,6 +30,15 @@ class SupabaseAuthMiddleware(BaseHTTPMiddleware):
         if request.url.path in ["/health", "/models", "/personas"]:
             return await call_next(request)
 
+        # Check if API key authentication was already successful
+        # If API key is present and valid, skip JWT verification
+        # This allows API key to work for backward compatibility
+        from backend.main import QUIBO_API_KEY
+        api_key = request.headers.get("X-API-Key")
+        if api_key and QUIBO_API_KEY and api_key == QUIBO_API_KEY:
+            # API key is valid, skip JWT verification
+            return await call_next(request)
+
         # Get token from Authorization header
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
@@ -57,9 +66,15 @@ class SupabaseAuthMiddleware(BaseHTTPMiddleware):
 
         except Exception as e:
             logger.error(f"Token verification failed: {e}")
-            raise HTTPException(
-                status_code=401,
-                detail=f"Token verification failed: {str(e)}"
-            )
+            # Don't raise exception for expired tokens - just log and continue without user
+            # This allows the request to proceed if API key or other auth is available
+            if "expired" in str(e).lower() or "invalid claim" in str(e).lower():
+                logger.warning("Expired JWT token received, continuing without user authentication")
+                request.state.user = None
+            else:
+                raise HTTPException(
+                    status_code=401,
+                    detail=f"Token verification failed: {str(e)}"
+                )
 
         return await call_next(request)
