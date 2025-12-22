@@ -8,6 +8,8 @@ from backend.utils.serialization import to_json, model_to_dict, serialize_object
 from dataclasses import asdict
 import json
 from backend.agents.cost_tracking_state import CostTrackingMixin
+import uuid
+from datetime import datetime
 
 class ContentAnalysis(BaseModel):
     main_topics: List[str]
@@ -56,10 +58,28 @@ class FinalOutline(BaseModel):
     # def to_json(self) -> str:
     #     """Convert the FinalOutline instance to a JSON string."""
     #     return to_json(self, indent=2)
-        
+
     # def model_dump(self):
     #     """Make the object JSON serializable by returning a dictionary representation."""
     #     return model_to_dict(self)
+
+class OutlineFeedback(BaseModel):
+    """Model for outline feedback from users."""
+    content: str = Field(description="The feedback content")
+    source: str = Field(default="user", description="Source of feedback: 'user' or 'auto'")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="When feedback was provided")
+    addressed: bool = Field(default=False, description="Whether this feedback has been addressed")
+    focus_area: Optional[str] = Field(default=None, description="Area of focus: 'structure', 'content', 'flow', 'technical_level'")
+    outline_version_id: Optional[str] = Field(default=None, description="ID of the outline version this feedback relates to")
+
+class OutlineVersion(BaseModel):
+    """Model for storing different versions of outlines."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique version ID")
+    project_id: str = Field(description="Project ID this version belongs to")
+    version_number: int = Field(description="Sequential version number")
+    outline_data: Dict[str, Any] = Field(description="The complete outline data")
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="When version was created")
+    feedback_id: Optional[str] = Field(default=None, description="ID of feedback that led to this version")
 
 class OutlineState(CostTrackingMixin, BaseModel):
     # Input state
@@ -80,6 +100,11 @@ class OutlineState(CostTrackingMixin, BaseModel):
 
     # Final state
     final_outline: Optional[FinalOutline] = None
+
+    # Feedback and versioning
+    feedback: List[OutlineFeedback] = Field(default_factory=list)
+    current_version: Optional[OutlineVersion] = Field(default=None)
+    version_history: List[OutlineVersion] = Field(default_factory=list)
 
     # Project metadata for cost tracking
     project_name: Optional[str] = Field(default=None)

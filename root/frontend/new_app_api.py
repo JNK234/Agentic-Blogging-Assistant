@@ -9,6 +9,7 @@ import asyncio
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 import httpx # For catching specific exceptions
+import requests # For API calls
 from pathlib import Path
 import json # Added for parsing section content
 import re # Added for regex operations
@@ -23,6 +24,7 @@ from services.project_service import ProjectService
 from components.project_manager import ProjectManagerUI
 from utils.api_client import BlogAPIClient
 from components.api_project_dashboard import APIProjectDashboard
+from components.supabase_auth import require_auth, get_auth_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1354,10 +1356,120 @@ class OutlineGeneratorUI:
             # Display the outline in a readable format
             display_readable_outline(outline)
             st.success(f"Outline ready for Project ID: `{SessionManager.get('current_project_id')}`")
+
+            # Add feedback and regeneration section
+            with st.expander("💬 Provide Feedback & Regenerate", expanded=False):
+                st.markdown("#### Help improve the outline")
+
+                # Focus area text input (allows any user input)
+                focus_area = st.text_input(
+                    "Focus Area",
+                    placeholder="What aspect are you focusing on? (e.g., Structure, Content, Flow, etc.)",
+                    help="Describe what aspect of the outline you're providing feedback on",
+                    key="feedback_focus_area"
+                )
+
+                # Feedback text area
+                feedback_text = st.text_area(
+                    "Your Feedback",
+                    placeholder="What would you like to change about this outline? Be specific about sections, flow, or content focus...",
+                    help="Provide detailed feedback to improve the outline quality",
+                    height=120,
+                    key="feedback_text_area"
+                )
+
+                # Feedback action buttons
+                col1, col2 = st.columns([3, 1])
+
+                with col1:
+                    if st.button("🔄 Regenerate with Feedback", type="primary",
+                                disabled=not feedback_text.strip(),
+                                help="Submit feedback and regenerate the outline",
+                                key="regenerate_with_feedback_btn"):
+                        self._regenerate_outline_with_feedback(outline, feedback_text, focus_area)
+
+                with col2:
+                    # Validation indicator
+                    if feedback_text.strip():
+                        st.success("✓ Ready")
+                    else:
+                        st.info("💡 Add feedback")
+
             st.markdown("---")
             st.info("Proceed to the 'Blog Draft' tab to generate sections.")
         else:
             st.info("Click 'Generate Outline' to start.")
+
+    def _regenerate_outline_with_feedback(self, current_outline, feedback, focus_area):
+        """Regenerate outline incorporating user feedback using v2 API."""
+        try:
+            project_name = SessionManager.get('project_name')
+            model_name = SessionManager.get('selected_model')
+            project_id = SessionManager.get('current_project_id')
+
+            # Validate feedback input
+            if not feedback.strip():
+                st.error("Please provide feedback before regenerating.")
+                return
+
+            with st.spinner("Regenerating outline with your feedback..."):
+                # Use v2 API endpoint for regeneration
+                form_data = {
+                    "feedback_content": feedback,
+                    "focus_area": focus_area,
+                    "model_name": model_name,
+                    "persona": SessionManager.get('selected_persona', 'neuraforge'),
+                    "writing_style": SessionManager.get('selected_persona', 'professional')
+                }
+
+                # Get file hashes from current session
+                notebook_hash = SessionManager.get('notebook_hash')
+                markdown_hash = SessionManager.get('markdown_hash')
+
+                # Add file hashes to form data
+                if notebook_hash:
+                    form_data["notebook_hash"] = notebook_hash
+                if markdown_hash:
+                    form_data["markdown_hash"] = markdown_hash
+
+                response = requests.post(
+                    f"{SessionManager.get('api_base_url', 'http://localhost:8000')}/api/v2/projects/{project_name}/outline/regenerate",
+                    data=form_data,
+                    timeout=300.0
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+
+                    # Update the outline data with version information
+                    updated_outline = result['outline']
+                    version_info = result.get('version_info', {})
+
+                    # Add version information to the outline
+                    updated_outline['version_info'] = {
+                        'version_number': version_info.get('version_number', 1),
+                        'version_id': version_info.get('version_id'),
+                        'total_versions': version_info.get('total_versions', 1),
+                        'is_latest': True
+                    }
+                    updated_outline['feedback_incorporated'] = {
+                        'focus_area': focus_area,
+                        'feedback_summary': feedback[:100] + "..." if len(feedback) > 100 else feedback
+                    }
+
+                    # Update session with new outline
+                    SessionManager.set('generated_outline', updated_outline)
+                    SessionManager.set('cost_summary', result.get('cost_summary'))
+                    SessionManager.set_status("Outline regenerated successfully with your feedback!")
+
+                    st.success("✅ Outline regenerated successfully with your feedback!")
+                    st.rerun()
+                else:
+                    st.error(f"Failed to regenerate outline: {response.text}")
+
+        except Exception as e:
+            logger.exception(f"Outline feedback regeneration error: {str(e)}")
+            st.error(f"Failed to regenerate outline with feedback: {str(e)}")
 
 
 class BlogDraftUI:
@@ -2160,6 +2272,17 @@ class BloggingAssistantAPIApp:
     def run(self):
         """Runs the main application flow."""
         self.setup()
+
+        # --- Authentication ---
+        require_auth()  # This will handle authentication and show login UI if needed
+
+        # Show user profile in sidebar
+        auth_manager = get_auth_manager()
+        auth_manager.show_user_profile()
+
+        # Get current user for use in the app
+        user = auth_manager.get_user()
+
         self.sidebar.render() # Render sidebar first for initialization
 
         # Display global status/error messages prominently
@@ -2258,7 +2381,7 @@ class BloggingAssistantAPIApp:
             f"3. Refine & Finalize {'✅' if has_refined else '⏳'}",
             f"4. Social Posts {'✅' if has_social else '⏳'}"
         ]
-        
+
         return labels
 
 

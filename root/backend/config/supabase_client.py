@@ -22,12 +22,15 @@ _supabase_client = None
 def get_supabase_client():
     """
     Get or create Supabase client instance.
+    
+    For backend operations, uses the service role key which bypasses RLS policies.
+    This allows the backend to manage data on behalf of authenticated users.
 
     Returns:
         Supabase client instance
 
     Raises:
-        ValueError: If SUPABASE_URL or SUPABASE_KEY not set in environment
+        ValueError: If SUPABASE_URL or required key not set in environment
     """
     global _supabase_client
 
@@ -42,7 +45,10 @@ def get_supabase_client():
 
         # Get environment variables
         url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_KEY")
+        
+        # Prefer service role key for backend operations (bypasses RLS)
+        # Fall back to SUPABASE_KEY for backward compatibility
+        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
 
         if not url:
             raise ValueError(
@@ -52,13 +58,15 @@ def get_supabase_client():
 
         if not key:
             raise ValueError(
-                "SUPABASE_KEY not set in environment. "
-                "Please set SUPABASE_KEY in your .env file."
+                "SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY not set in environment. "
+                "Please set one of these in your .env file. "
+                "Service role key is recommended for backend operations."
             )
 
         # Create client
         _supabase_client = create_client(url, key)
-        logger.info(f"Supabase client initialized with URL: {url}")
+        key_type = "service_role" if os.getenv("SUPABASE_SERVICE_ROLE_KEY") else "anon/unknown"
+        logger.info(f"Supabase client initialized with URL: {url} (key type: {key_type})")
 
     return _supabase_client
 

@@ -6,6 +6,7 @@ import logging
 from typing import List, Dict, Any, Optional
 import sys
 from pathlib import Path
+import json
 
 # Add parent directories to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -48,7 +49,22 @@ class BlogAPIClient:
 
     def _get_headers(self) -> Dict[str, str]:
         """Get authentication headers for API requests."""
-        return get_auth_headers(target_audience=self.base_url)
+        headers = {}
+
+        # Get auth manager and access token
+        try:
+            from components.supabase_auth import get_auth_manager
+            auth_manager = get_auth_manager()
+            token = auth_manager.get_access_token()
+
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+            else:
+                logger.warning("No access token available for API request")
+        except Exception as e:
+            logger.error(f"Failed to get auth headers: {e}")
+
+        return headers
 
     # ==================== Project Management Methods ====================
 

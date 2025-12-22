@@ -48,8 +48,7 @@ async def create_refinement_graph() -> StateGraph:
     graph.add_edge("generate_conclusion", "generate_summary")
     graph.add_edge("generate_summary", "generate_titles")
     graph.add_edge("generate_titles", "assemble_draft") # Titles goes to assemble
-    graph.add_edge("assemble_draft", "reduce_redundancy") # Assemble goes to redundancy reduction
-    graph.add_edge("reduce_redundancy", "suggest_clarity_flow") # Redundancy reduction goes to clarity/flow
+    graph.add_edge("assemble_draft", "suggest_clarity_flow") # Assemble goes directly to clarity/flow
     graph.add_edge("suggest_clarity_flow", END) # Clarity/flow is the last step before END
 
     # Compile the graph into a runnable application

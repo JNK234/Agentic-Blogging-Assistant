@@ -6,7 +6,7 @@ API v2 endpoints for project management with SQL backend.
 Implements project_id pattern while maintaining backward compatibility.
 """
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
@@ -65,7 +65,7 @@ class MilestoneData(BaseModel):
 # ==================== Project CRUD Endpoints ====================
 
 @router.post("/projects")
-async def create_project(request: ProjectCreate) -> JSONResponse:
+async def create_project(request: Request, project_data: ProjectCreate) -> JSONResponse:
     """
     Create a new project with unique ID.
 
@@ -73,15 +73,20 @@ async def create_project(request: ProjectCreate) -> JSONResponse:
         Project ID and details
     """
     try:
+        # Get authenticated user from request state (set by auth middleware)
+        user = getattr(request.state, 'user', None)
+        user_id = user.get('id') if user else None
+        
         project_id = await sql_manager.create_project(
-            project_name=request.name,
-            metadata=request.metadata
+            project_name=project_data.name,
+            metadata=project_data.metadata,
+            user_id=user_id  # Pass authenticated user ID for RLS
         )
 
         return JSONResponse(content={
             "status": "success",
             "project_id": project_id,
-            "name": request.name,
+            "name": project_data.name,
             "message": f"Project created successfully"
         })
 
@@ -582,6 +587,267 @@ async def get_milestone(project_id: str, milestone_type: str) -> JSONResponse:
     except Exception as e:
         logger.error(f"Failed to get milestone: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== Outline Regeneration Endpoints ====================
+
+@router.post("/projects/{project_name}/outline/regenerate")
+async def regenerate_outline_with_feedback(
+    project_name: str,
+    feedback_content: str = Form(...),
+    focus_area: Optional[str] = Form(None),
+    previous_version_id: Optional[str] = Form(None),
+    model_name: Optional[str] = Form(None),
+    specific_model: Optional[str] = Form(None),
+    user_guidelines: Optional[str] = Form(None),
+    length_preference: Optional[str] = Form(None),
+    custom_length: Optional[int] = Form(None),
+    writing_style: Optional[str] = Form(None),
+    persona: Optional[str] = Form("neuraforge")
+) -> JSONResponse:
+    """
+    Regenerate an outline with user feedback and version management.
+
+    Args:
+        project_name: Name of the project
+        feedback_content: User feedback for regeneration
+        focus_area: Area of focus (structure, content, flow, technical_level)
+        previous_version_id: ID of the previous outline version
+        model_name: Model provider to use
+        specific_model: Specific model name
+        user_guidelines: Optional user-provided guidelines
+        length_preference: Optional length preference
+        custom_length: Optional custom length
+        writing_style: Optional writing style
+        persona: Optional persona for generation
+
+    Returns:
+        New outline with version information
+    """
+    try:
+        # Import required services and agents
+        from backend.agents.outline_generator_agent import OutlineGeneratorAgent
+        from backend.agents.content_parsing_agent import ContentParsingAgent
+        from backend.services.vector_store_service import VectorStoreService
+        from backend.services.persona_service import PersonaService
+        from backend.models.model_factory import ModelFactory
+
+        # Get project by name to get project_id
+        project = await sql_manager.get_project_by_name(project_name)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+        project_id = project["id"]
+
+        # Get or create model
+        model_factory = ModelFactory()
+        if not model_name:
+            # Use project's existing model or default
+            model_name = project["metadata"].get("model_name", "gpt-4")
+        model = model_factory.create_model(model_name.lower(), specific_model)
+
+        # Initialize required services
+        content_parser = ContentParsingAgent(model)
+        await content_parser.initialize()
+
+        vector_store = VectorStoreService()
+        persona_service = PersonaService()
+
+        # Create outline agent with SQL project manager for version management
+        outline_agent = OutlineGeneratorAgent(model, content_parser, vector_store, persona_service, sql_manager)
+        await outline_agent.initialize()
+
+        # Initialize cost tracking
+        cost_aggregator = CostAggregator()
+        cost_aggregator.start_workflow(project_id=project_id)
+
+        # Get latest file hashes if not provided
+        files_milestone = await sql_manager.load_milestone(project_id, MilestoneType.FILES_UPLOADED)
+        file_hashes = files_milestone.get("data", {}).get("file_hashes", {}) if files_milestone else {}
+
+        # Determine which hashes to use
+        notebook_hash = None
+        markdown_hash = None
+        for file_path, file_hash in file_hashes.items():
+            if file_path.endswith('.ipynb'):
+                notebook_hash = file_hash
+            elif file_path.endswith('.md'):
+                markdown_hash = file_hash
+
+        # Regenerate outline with feedback
+        start_time = datetime.now()
+        new_outline, version_info, success = await outline_agent.regenerate_with_feedback(
+            project_name=project_name,
+            feedback_content=feedback_content,
+            focus_area=focus_area,
+            previous_version_id=previous_version_id,
+            model_name=model_name,
+            notebook_hash=notebook_hash,
+            markdown_hash=markdown_hash,
+            user_guidelines=user_guidelines,
+            length_preference=length_preference,
+            custom_length=custom_length,
+            writing_style=writing_style,
+            persona=persona,
+            cost_aggregator=cost_aggregator,
+            project_id=project_id
+        )
+
+        if not success or not new_outline:
+            raise HTTPException(status_code=500, detail="Failed to regenerate outline with feedback")
+
+        # Calculate duration and get cost summary
+        duration = (datetime.now() - start_time).total_seconds()
+        cost_summary = cost_aggregator.get_workflow_summary()
+
+        # Get next version number for unified handling
+        version_number = await sql_manager.get_next_version_number(project_id)
+
+        # Store the feedback ID if we have one
+        feedback_id = None
+        if previous_version_id:
+            feedback_id = f"feedback_for_{previous_version_id}"
+
+        await sql_manager.save_outline_version(
+            project_id=project_id,
+            outline_data=new_outline,
+            version_number=version_number,
+            feedback_id=feedback_id
+        )
+
+        # Save feedback if previous version ID provided
+        if previous_version_id:
+            await sql_manager.save_outline_feedback(
+                outline_version_id=previous_version_id,
+                content=feedback_content,
+                focus_area=focus_area
+            )
+
+        # Update project metadata with new outline
+        await sql_manager.update_metadata(project_id, {
+            "model_name": model_name,
+            "specific_model": specific_model,
+            "persona": persona
+        })
+
+        # Save outline generated milestone
+        milestone_data = {
+            "outline": new_outline,
+            "model_name": model_name,
+            "specific_model": specific_model,
+            "persona": persona,
+            "user_guidelines": user_guidelines,
+            "length_preference": length_preference,
+            "custom_length": custom_length,
+            "was_regenerated": True,
+            "feedback_content": feedback_content,
+            "focus_area": focus_area,
+            "previous_version_id": previous_version_id
+        }
+
+        await sql_manager.save_milestone(
+            project_id=project_id,
+            milestone_type=MilestoneType.OUTLINE_GENERATED,
+            data=milestone_data,
+            metadata={
+                "cost_summary": cost_summary,
+                "duration_seconds": duration,
+                "version_number": version_number
+            }
+        )
+
+        logger.info(f"Successfully regenerated outline for project {project_name} (version {version_number})")
+
+        # Get total versions for unified response
+        all_versions = await sql_manager.get_outline_versions(project_id)
+        total_versions = len(all_versions)
+
+        return JSONResponse(content={
+            "status": "success",
+            "project_id": project_id,
+            "project_name": project_name,
+            "outline": new_outline,
+            "version_info": {
+                "version_number": version_number,
+                "version_id": str(version_number),  # Use version number as ID
+                "total_versions": total_versions,
+                "is_latest": True
+            },
+            "cost_summary": cost_summary,
+            "duration_seconds": duration
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to regenerate outline: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/projects/{project_name}/outline/versions")
+async def get_outline_versions(project_name: str) -> JSONResponse:
+    """
+    Retrieve all outline versions for a project.
+
+    Args:
+        project_name: Name of the project
+
+    Returns:
+        List of outline versions with basic information
+    """
+    try:
+        # Get project by name
+        project = await sql_manager.get_project_by_name(project_name)
+        if not project:
+            raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+        project_id = project["id"]
+
+        # Get all outline versions
+        versions = await sql_manager.get_outline_versions(project_id)
+
+        # Format response with basic info
+        version_list = []
+        for version in versions:
+            version_info = {
+                "version_id": version.get("id"),
+                "version_number": version.get("version_number"),
+                "created_at": version.get("created_at"),
+                "outline_hash": version.get("outline_hash"),
+                "model_used": version.get("model_used"),
+                "metadata": version.get("metadata", {})
+            }
+
+            # Include outline preview (title and section count)
+            outline_data = version.get("outline_data", {})
+            if outline_data:
+                version_info["outline_preview"] = {
+                    "title": outline_data.get("title", "Untitled"),
+                    "section_count": len(outline_data.get("sections", [])),
+                    "difficulty_level": outline_data.get("difficulty_level"),
+                    "has_prerequisites": bool(outline_data.get("prerequisites"))
+                }
+
+            version_list.append(version_info)
+
+        # Sort by version number descending
+        version_list.sort(key=lambda x: x["version_number"], reverse=True)
+
+        logger.info(f"Retrieved {len(version_list)} outline versions for project {project_name}")
+
+        return JSONResponse(content={
+            "status": "success",
+            "project_id": project_id,
+            "project_name": project_name,
+            "versions": version_list,
+            "total_versions": len(version_list)
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get outline versions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ==================== Export Endpoints ====================
 

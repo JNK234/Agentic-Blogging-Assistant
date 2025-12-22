@@ -1639,13 +1639,14 @@ async def transition_generator(state: BlogDraftState) -> BlogDraftState:
     return state
 
 def format_section_with_images(section: DraftSection) -> str:
-    """Format a section with its content and image placeholders."""
-    content_parts = [f"## {section.title}"]
-    
+    """Format a section with its content and image placeholders - WITHOUT duplicating headers."""
+    # section.content already contains the header, so we don't add it again
+    content_parts = []
+
     # If there are image placeholders, integrate them with the content
     if section.image_placeholders:
         section_content = section.content
-        
+
         for placeholder in section.image_placeholders:
             # Create formatted image placeholder
             image_markdown = f"""
@@ -1654,14 +1655,14 @@ Alt text: {placeholder.alt_text}
 Placement: {placeholder.placement}
 Purpose: {placeholder.purpose}
 """
-            
+
             # Insert image placeholder based on placement strategy
             if placeholder.placement == "section_start":
-                # Add right after the section title
+                # Add before the content (header is already in section_content)
                 content_parts.append(image_markdown)
                 content_parts.append(section_content)
             elif placeholder.placement == "section_end":
-                # Add at the end of the section
+                # Add after content
                 content_parts.append(section_content)
                 content_parts.append(image_markdown)
             elif placeholder.placement == "after_concept":
@@ -1681,7 +1682,7 @@ Purpose: {placeholder.purpose}
     else:
         # No image placeholders, just add the content
         content_parts.append(section.content)
-    
+
     return '\n\n'.join(content_parts)
 
 @track_node_costs("compiler", agent_name="BlogDraftGeneratorAgent", stage="draft_generation")

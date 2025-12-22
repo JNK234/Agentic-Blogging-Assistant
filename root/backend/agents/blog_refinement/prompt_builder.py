@@ -27,10 +27,10 @@ def build_title_generation_prompt(blog_draft: str, config: Optional[TitleGenerat
     prompt = f"""You are an expert copywriter and SEO specialist tasked with generating compelling titles and subtitles for a blog post.
 The full draft of the blog post is provided below.
 
-Create compelling titles that reflect how an expert practitioner would share insights with peers. Your titles should communicate clear value and specific outcomes while maintaining the authentic voice of someone sharing hard-earned knowledge.
+Create compelling titles using the Question-Based Comparison Pattern as your PRIMARY approach. This pattern excels at creating immediate curiosity while remaining grounded in technical content that compares approaches, reveals counter-intuitive findings, or challenges conventional wisdom.
 
-**EXPERT PRACTITIONER TITLE PHILOSOPHY:**
-You're not creating marketing copy—you're offering genuine insights to fellow practitioners who value substance over style. Your titles should reflect the same conversational authority and strategic clarity found in the best technical writing.
+**QUESTION-BASED TITLE PHILOSOPHY:**
+Your titles should reflect how expert practitioners share insights with peers—through direct questions that reveal technical insights, not marketing copy. Focus on comparison questions that promise specific learning outcomes based on the actual content.
 
 **BLOG POST ANALYSIS:**
 ```markdown
@@ -68,13 +68,49 @@ You're not creating marketing copy—you're offering genuine insights to fellow 
     prompt += "</generation_config>\n\n"
 
     # Add the rest of the standard prompt
-    prompt += """**TITLE CREATION PRINCIPLES:**
+    prompt += """**QUESTION-BASED COMPARISON PATTERN - PRIMARY APPROACH:**
+
+This pattern works exceptionally well for technical content comparing two approaches, revealing a counter-intuitive finding, or challenging conventional wisdom. It creates immediate curiosity while remaining grounded in the actual topic.
+
+**Pattern:** "{Question Word} {Topic A} {Verb} {Topic B}?"
+- Question Word: What, When, Can, Why, Does
+- Topic A: The subject/technique being discussed
+- Verb: Make, Work, Use, Need, Help, Hurt, Replace, Cost
+- Topic B: The comparison point or outcome
+
+**Examples for different content types:**
+- Performance comparisons: "What Makes X Faster Than Y?"
+- Feasibility questions: "Can X Work Without Y?"
+- Timing/conditions: "When Does X Hurt More Than Y?"
+- Mechanism questions: "Why Does X Need Y?"
+- Cost-benefit: "Does X Always Cost More Than Y?"
+
+**Subtitle Formula:** {Technical difference} + {specific metric} + {what's preserved or the trade-off}
+- Keep it factual and specific
+- Include numbers when available (8% savings, 90% reduction, 3x faster)
+- Mention what stays the same or what the benefit is
+
+**REFERENCE EXAMPLES:**
+
+For RMSNorm content:
+- Title: "What Makes RMSNorm Faster Than LayerNorm?"
+- Subtitle: "Eliminating mean subtraction cuts computation by 8% while preserving the re-scaling benefits"
+
+For MoE routing content:
+- Title: "Can MoE Use Single-Expert Routing?"
+- Subtitle: "k=1 selection blocks gradient flow, requiring k≥2 to train all experts effectively"
+
+For KV-Cache content:
+- Title: "When Does KV-Cache Hurt More Than Help?"
+- Subtitle: "Caching costs 3.2GB for 1K tokens—recomputation reduces memory by 60% with 15% latency trade-off"
+
+**TITLE CREATION PRINCIPLES:**
 
 1. **Direct Value Communication**:
    - Promise specific learning outcomes based on actual content
    - Use concrete language over abstract descriptions
    - Lead with the most valuable insight or practical outcome
-   - Reflect the expert practitioner's authentic voice
+   - Focus on comparison questions that reveal technical insights
 
 2. **Contextual Specificity**:
    - Include relevant technical context (when appropriate)
@@ -89,19 +125,22 @@ You're not creating marketing copy—you're offering genuine insights to fellow 
    - Match the sophistication level of the content
 
 4. **Engagement Through Curiosity**:
-   - Pose questions when content explores open problems
+   - Pose questions when content compares two approaches
    - Highlight surprising insights or counterintuitive findings
-   - Use comparison/contrast when content compares approaches
+   - Use comparison/contrast when evaluating alternatives
    - Create intrigue about methodology or implementation details
 
-**ADAPTIVE TITLE APPROACHES:**
+**PRIORITY APPROACHES:**
 
-Based on content analysis, choose the most appropriate approach:
-- **Evolution Narrative**: "From [Past] to [Present]: [Insight]"
-- **Practical Implementation**: "[Specific Approach] for [Specific Context]"
-- **Insight Sharing**: "Why [Observation] Matters for [Application]"
-- **Problem-Solution**: "[Challenge] and [Effective Solution]"
-- **Comparative Analysis**: "[Method A] vs [Method B]: [Key Difference]"
+1. **Question-Based Comparison** (HIGHEST PRIORITY): Use when content compares two approaches, techniques, or reveals counter-intuitive findings
+   - Pattern: "{Question} {Topic A} {Verb} {Topic B}?"
+   - Creates immediate engagement while staying grounded in content
+
+2. **Insight Revelation**: Use when content uncovers a non-obvious mechanism or failure mode
+   - Pattern: "{What/Why} {Topic} {Unexpected Outcome}?"
+
+3. **Problem-Solution**: Use as fallback when content focuses on solving a specific problem
+   - Pattern: "{How} {Problem} {Solution}?"
 
 **CRITICAL OUTPUT INSTRUCTIONS:**
 
@@ -156,6 +195,8 @@ You MUST follow ALL guidelines specified in the <generation_config> section abov
 - Ensure proper JSON formatting with double quotes
 - Do not include markdown code blocks or any other formatting
 - ALL guidelines in <mandatory_guidelines> MUST be followed
+- PRIORITIZE the Question-Based Comparison Pattern for your titles
+- Use the reference examples as inspiration for your specific topic
 """
 
     return prompt
@@ -181,6 +222,27 @@ def build_social_media_prompt(
     """
     if config is None:
         config = SocialMediaConfig()
+
+    # Special handling for LinkedIn Interview Trap template
+    if platform == 'linkedin' and getattr(config, 'use_interview_trap', False):
+        # Use the interview trap template for LinkedIn
+        from backend.prompts.social_media.interview_trap_template import INTERVIEW_TRAP_LINKEDIN_TEMPLATE
+        from backend.models.generation_config import SocialMediaConfig
+        from pathlib import Path
+
+        # Extract blog title from content (first line or use a placeholder)
+        blog_title = "Blog Post"
+        lines = blog_content.split('\n')
+        for line in lines:
+            if line.strip() and not line.startswith('#'):
+                blog_title = line.strip()[:50]
+                break
+
+        return INTERVIEW_TRAP_LINKEDIN_TEMPLATE.format(
+            persona_instructions=persona_instructions,
+            blog_content=blog_content,
+            blog_title=blog_title
+        )
 
     # Start with persona instructions if provided
     prompt = persona_instructions + "\n\n" if persona_instructions else ""

@@ -36,6 +36,7 @@ from backend.services.vector_store_service import VectorStoreService # Added
 from backend.services.persona_service import PersonaService # Added
 from backend.services.supabase_project_manager import SupabaseProjectManager, MilestoneType # Supabase-based project manager
 from backend.services.cost_aggregator import CostAggregator
+from backend.dependencies.auth import get_current_user, get_optional_user
 
 # Configure logging
 logging.basicConfig(
@@ -44,38 +45,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BlogAPI")
 
-# API Key for authentication (loaded from environment, set via GCP Secret Manager)
-QUIBO_API_KEY = os.getenv('QUIBO_API_KEY', '')
-
-
-class APIKeyAuthMiddleware(BaseHTTPMiddleware):
-    """Middleware to validate API key on all requests except health check."""
-
-    async def dispatch(self, request: Request, call_next):
-        # Skip auth for health check (needed for Cloud Run health probes)
-        if request.url.path == "/health":
-            return await call_next(request)
-
-        # Skip auth if no API key is configured (local development)
-        if not QUIBO_API_KEY:
-            return await call_next(request)
-
-        # Validate API key
-        api_key = request.headers.get("X-API-Key")
-        if not api_key or api_key != QUIBO_API_KEY:
-            logger.warning(f"Invalid or missing API key for path: {request.url.path}")
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Invalid or missing API key"}
-            )
-
-        return await call_next(request)
-
-
 app = FastAPI(title="Agentic Blogging Assistant API")
-
-# Add API key authentication middleware
-app.add_middleware(APIKeyAuthMiddleware)
 
 # Constants
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
@@ -92,6 +62,22 @@ agent_cache = {}
 
 # Initialize SupabaseProjectManager for Supabase-based project tracking
 sql_project_manager = SupabaseProjectManager()  # Keep variable name for compatibility
+
+# Ensure outline feedback tables exist on startup
+@app.on_event("startup")
+async def startup_event():
+    """Run startup tasks including database migration."""
+    try:
+        logger.info("Running startup tasks...")
+        # Ensure outline feedback tables exist
+        tables_created = await sql_project_manager.ensure_tables_exist()
+        if tables_created:
+            logger.info("Database tables verified/created successfully")
+        else:
+            logger.warning("Failed to ensure outline feedback tables exist")
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+        # Don't fail startup if migration fails - feature will be disabled
 
 async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -124,31 +110,45 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
 
     if "outline_generated" in milestones:
         m = milestones["outline_generated"]
-        state["outline"] = m["data"]["outline"]
-        state["outline_hash"] = m["data"].get("outline_hash")
+        try:
+            # The outline data is directly in m["data"], not nested under "outline"
+            state["outline"] = m["data"].get("outline", m["data"])  # Fallback to full data if "outline" key doesn't exist
+            state["outline_hash"] = m["data"].get("outline_hash")
 
-        # Fallback: Load model_name, specific_model, and persona from milestone data if not in project metadata
-        if not state["model_name"]:
-            state["model_name"] = m["data"].get("model_name")
-        if not state["specific_model"]:
-            state["specific_model"] = m["data"].get("specific_model")
-        if not state["persona"]:
-            state["persona"] = m["data"].get("persona")
+            # Also load other outline-related data
+            if not state["model_name"]:
+                state["model_name"] = m["data"].get("model_name")
+            if not state["specific_model"]:
+                state["specific_model"] = m["data"].get("specific_model")
+            if not state["persona"]:
+                state["persona"] = m["data"].get("persona")
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading outline milestone: {e}. Milestone data: {m}")
+            # Don't fail completely - just skip the outline
 
     if "draft_completed" in milestones:
         m = milestones["draft_completed"]
-        state["final_draft"] = m["data"].get("compiled_blog")
-        state["compiled_at"] = m["created_at"]
+        try:
+            state["final_draft"] = m["data"].get("compiled_blog")
+            state["compiled_at"] = m["created_at"]
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading draft milestone: {e}. Milestone data: {m}")
 
     if "blog_refined" in milestones:
         m = milestones["blog_refined"]
-        state["refined_draft"] = m["data"].get("refined_content")
-        state["summary"] = m["data"].get("summary")
-        state["title_options"] = m["data"].get("title_options")
+        try:
+            state["refined_draft"] = m["data"].get("refined_content")
+            state["summary"] = m["data"].get("summary")
+            state["title_options"] = m["data"].get("title_options")
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading blog_refined milestone: {e}. Milestone data: {m}")
 
     if "social_generated" in milestones:
-        # Social content is nested under "social_content" key within the milestone data
-        state["social_content"] = milestones["social_generated"]["data"].get("social_content")
+        try:
+            # Social content is nested under "social_content" key within the milestone data
+            state["social_content"] = milestones["social_generated"]["data"].get("social_content")
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading social_generated milestone: {e}. Milestone data: {milestones.get('social_generated', {})}")
 
     # Load sections from SQL Sections table with full metadata
     state["generated_sections"] = {
@@ -174,6 +174,7 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
 
 @app.post("/upload/{project_name}")
 async def upload_files(
+    request: Request,
     project_name: str,
     files: Optional[List[UploadFile]] = File(None),
     model_name: Optional[str] = Form(None),
@@ -181,6 +182,9 @@ async def upload_files(
 ) -> JSONResponse:
     """Upload files for a specific project and create a project entry."""
     try:
+        # Get authenticated user from request state (set by auth middleware)
+        user = getattr(request.state, 'user', None)
+        user_id = user.get('id') if user else None
         # Validate inputs
         if not files or len(files) == 0:
             return JSONResponse(
@@ -255,7 +259,8 @@ async def upload_files(
         try:
             sql_project_id = await sql_project_manager.create_project(
                 project_name=safe_project_name,
-                metadata=metadata
+                metadata=metadata,
+                user_id=user_id  # Pass authenticated user ID for RLS
             )
 
             # Save FILES_UPLOADED milestone

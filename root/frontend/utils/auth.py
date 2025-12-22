@@ -21,14 +21,101 @@ except ImportError:
     GOOGLE_AUTH_AVAILABLE = False
     logger.info("google-auth not installed, using API key auth only")
 
+# Optional: Supabase for session management
+try:
+    from supabase import create_client
+    SUPABASE_AVAILABLE = True
+except ImportError:
+    SUPABASE_AVAILABLE = False
+    logger.info("supabase not installed, JWT auto-refresh disabled")
+
+
+def refresh_supabase_session() -> Optional[Dict[str, str]]:
+    """
+    Refresh Supabase session if the access token is expired.
+    Automatically attempts to refresh using the refresh token.
+
+    Returns:
+        Updated session dict with new access_token and refresh_token,
+        or None if refresh failed or no session exists
+    """
+    if not SUPABASE_AVAILABLE:
+        return None
+
+    try:
+        import streamlit as st
+
+        supabase_url = os.getenv('SUPABASE_URL')
+        supabase_key = os.getenv('SUPABASE_ANON_KEY')
+
+        if not supabase_url or not supabase_key:
+            logger.debug("Supabase not configured, skipping session refresh")
+            return None
+
+        # Get current session
+        session = st.session_state.get("supabase_session")
+        if not session or not session.get("access_token"):
+            logger.debug("No active Supabase session to refresh")
+            return None
+
+        # Check if we have a refresh token
+        if not session.get("refresh_token"):
+            logger.warning("No refresh token available, session cannot be refreshed")
+            return None
+
+        # Try to create Supabase client and refresh
+        supabase = create_client(supabase_url, supabase_key)
+
+        try:
+            # Test if current token is still valid
+            auth_response = supabase.auth.get_user(session["access_token"])
+            if auth_response and auth_response.user:
+                logger.debug("Current Supabase token is still valid")
+                return session  # Token still valid, no refresh needed
+        except Exception as e:
+            logger.info(f"Supabase token validation failed (likely expired): {e}")
+            logger.info("Attempting to refresh session...")
+
+            # Token is expired or invalid, try to refresh
+            try:
+                new_session = supabase.auth.refresh_session(session["refresh_token"])
+
+                if new_session and new_session.session:
+                    # Update session in state
+                    updated_session = {
+                        "access_token": new_session.session.access_token,
+                        "refresh_token": new_session.session.refresh_token,
+                        "expires_at": getattr(new_session.session, 'expires_at', None)
+                    }
+
+                    st.session_state["supabase_session"] = updated_session
+                    logger.info("Successfully refreshed Supabase session")
+                    return updated_session
+                else:
+                    logger.warning("Failed to refresh Supabase session - no new session returned")
+                    # Clear invalid session
+                    st.session_state["supabase_session"] = None
+                    return None
+
+            except Exception as refresh_error:
+                logger.error(f"Session refresh failed: {refresh_error}")
+                # Clear invalid session
+                st.session_state["supabase_session"] = None
+                return None
+
+    except Exception as e:
+        logger.error(f"Unexpected error during session refresh: {e}")
+        return None
+
 
 def get_auth_headers(target_audience: Optional[str] = None) -> Dict[str, str]:
     """
-    Get authentication headers for Cloud Run requests.
+    Get authentication headers for API requests.
 
-    This function provides two layers of authentication:
-    1. X-API-Key: Application-level API key validation
-    2. Authorization: GCP identity token for Cloud Run IAM (if service account configured)
+    This function provides authentication in priority order:
+    1. Supabase JWT token (for authenticated users via Google OAuth)
+    2. X-API-Key: Application-level API key validation
+    3. GCP identity token for Cloud Run IAM (fallback for production)
 
     Args:
         target_audience: The Cloud Run service URL (used for identity token)
@@ -36,6 +123,8 @@ def get_auth_headers(target_audience: Optional[str] = None) -> Dict[str, str]:
     Returns:
         Dictionary of headers to include in requests
     """
+    import streamlit as st
+    
     headers = {}
 
     # Layer 1: API Key (always added if configured)
@@ -43,7 +132,24 @@ def get_auth_headers(target_audience: Optional[str] = None) -> Dict[str, str]:
     if api_key:
         headers['X-API-Key'] = api_key
 
-    # Layer 2: GCP Identity Token (for Cloud Run IAM)
+    # Layer 2: Supabase JWT (priority for authenticated users)
+    # This is the proper HS256 token that the backend can verify
+    try:
+        # First, try to refresh the session if it's expired
+        refreshed_session = refresh_supabase_session()
+
+        # Use the refreshed session if available, otherwise use current session
+        supabase_session = refreshed_session or st.session_state.get("supabase_session")
+
+        if supabase_session and supabase_session.get("access_token"):
+            token = supabase_session["access_token"]
+            headers['Authorization'] = f'Bearer {token}'
+            logger.debug(f"Added Supabase JWT to headers (len={len(token)})")
+            return headers  # Supabase auth takes priority, return early
+    except Exception as e:
+        logger.debug(f"No Supabase session available: {e}")
+
+    # Layer 3: GCP Identity Token (fallback for Cloud Run IAM in production)
     if GOOGLE_AUTH_AVAILABLE:
         sa_file = os.getenv('GCP_SERVICE_ACCOUNT_FILE', '')
         # Resolve relative paths against ROOT_DIR
@@ -79,3 +185,29 @@ def is_auth_configured() -> bool:
         return False
 
     return True
+
+
+def get_auth_headers_with_user(target_audience: Optional[str] = None) -> Dict[str, str]:
+    """
+    Get authentication headers including Supabase user info for backend requests.
+
+    This extends get_auth_headers by adding user identification headers when
+    a user is authenticated via Supabase Auth.
+
+    Args:
+        target_audience: The Cloud Run service URL (used for identity token)
+
+    Returns:
+        Dictionary of headers including API key, identity token, and user info
+    """
+    import streamlit as st
+
+    headers = get_auth_headers(target_audience)
+
+    # Add user info if authenticated via Supabase
+    if "user" in st.session_state:
+        user = st.session_state.user
+        headers["X-User-ID"] = str(user.id)
+        headers["X-User-Email"] = user.email
+
+    return headers
