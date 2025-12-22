@@ -336,10 +336,26 @@ async def suggest_clarity_flow_node(state: BlogRefinementState) -> Dict[str, Any
         if not state.model:
             raise ValueError("Refinement state is missing model reference")
 
+        # Track input word count
+        input_words = len(state.refined_draft.split())
+        logger.info(f"Input word count: {input_words}")
+
         prompt = SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT.format(blog_draft=state.refined_draft)
         response = await state.model.ainvoke(prompt)
+
         if isinstance(response, str) and response.strip():
-            logger.info("Clarity/flow suggestions generated successfully.")
+            # Track output word count
+            output_words = len(response.strip().split())
+            word_change = output_words - input_words
+            percent_change = (output_words / max(input_words, 1) * 100 - 100)
+
+            logger.info(f"Output word count: {output_words}")
+            logger.info(f"Word count change: {word_change:+d} ({percent_change:+.1f}%)")
+
+            # Warning if significant reduction
+            if output_words < input_words * 0.9:  # >10% reduction
+                logger.warning(f"Significant content reduction detected: {input_words} → {output_words} words ({percent_change:.1f}%)")
+
             clarity_suggestions = response.strip()
 
             # NEW: Save BLOG_REFINED milestone to SQL if sql_project_manager is available
@@ -456,7 +472,39 @@ def assemble_refined_draft_node(state: BlogRefinementState) -> Dict[str, Any]:
         f"## Conclusion\n\n{conclusion}"
     )
 
-    
+
 
     logger.info("Refined draft assembled successfully.")
     return {"refined_draft": refined_content}
+
+
+def validate_content_preservation(original: str, refined: str) -> Dict[str, Any]:
+    """Validate that refinement didn't lose critical content."""
+    orig_words = len(original.split())
+    refined_words = len(refined.split())
+
+    # Check for major sections that should be present
+    missing_sections = []
+
+    # Check if code blocks are preserved
+    orig_code_blocks = original.count("```")
+    refined_code_blocks = refined.count("```")
+    if orig_code_blocks > refined_code_blocks:
+        missing_sections.append("code blocks")
+
+    # Check for LaTeX formulas
+    orig_formulas = original.count("$$")
+    refined_formulas = refined.count("$$")
+    if orig_formulas > refined_formulas:
+        missing_sections.append("mathematical formulas")
+
+    # Word count check
+    word_ratio = refined_words / max(orig_words, 1)
+    if word_ratio < 0.85:  # More than 15% reduction
+        logger.warning(f"Content reduction too aggressive: {orig_words}→{refined_words} words ({word_ratio:.1%})")
+
+    return {
+        "word_count_ratio": word_ratio,
+        "missing_sections": missing_sections,
+        "preservation_ok": word_ratio >= 0.85 and not missing_sections
+    }

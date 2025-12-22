@@ -2,21 +2,15 @@
 Outline generator agent that uses content parsing agent for input processing.
 Includes caching of generated outlines for efficient retrieval.
 """
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 import logging
 import hashlib
 import json
+from datetime import datetime
 
 from backend.prompts.prompt_manager import PromptManager
 from backend.agents.outline_generator.graph import create_outline_graph
-from typing import Optional, Tuple, List, Dict, Any # Added Dict, Any
-import logging
-import hashlib
-import json
-
-from backend.prompts.prompt_manager import PromptManager
-from backend.agents.outline_generator.graph import create_outline_graph
-from backend.agents.outline_generator.state import OutlineState, FinalOutline
+from backend.agents.outline_generator.state import OutlineState, FinalOutline, OutlineFeedback
 from backend.agents.content_parsing_agent import ContentParsingAgent
 from backend.agents.base_agent import BaseGraphAgent
 from backend.services.vector_store_service import VectorStoreService
@@ -417,8 +411,247 @@ class OutlineGeneratorAgent(BaseGraphAgent):
 
     def clear_outline_cache(self, project_name: Optional[str] = None):
         """Clear cached outlines for a project or all projects.
-        
+
         Args:
             project_name: Optional project name to clear cache for
         """
         self.vector_store.clear_outline_cache(project_name)
+
+    async def regenerate_with_feedback(
+        self,
+        project_name: str,
+        feedback_content: str,
+        focus_area: Optional[str] = None,
+        previous_version_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        notebook_path: Optional[str] = None,
+        markdown_path: Optional[str] = None,
+        notebook_hash: Optional[str] = None,
+        markdown_hash: Optional[str] = None,
+        user_guidelines: Optional[str] = None,
+        length_preference: Optional[str] = None,
+        custom_length: Optional[int] = None,
+        writing_style: Optional[str] = None,
+        persona: Optional[str] = None,
+        cost_aggregator=None,
+        project_id: Optional[str] = None
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], bool]:
+        """
+        Regenerate an outline with user feedback and version management.
+
+        Args:
+            project_name: Name of the project
+            feedback_content: User feedback for regeneration
+            focus_area: Area of focus (structure, content, flow, technical_level)
+            previous_version_id: ID of the previous outline version
+            model_name: Model to use for regeneration
+            notebook_path: Path to notebook file (if processing new content)
+            markdown_path: Path to markdown file (if processing new content)
+            notebook_hash: Hash of notebook content (if already processed)
+            markdown_hash: Hash of markdown content (if already processed)
+            user_guidelines: Optional user-provided guidelines
+            length_preference: Optional length preference
+            custom_length: Optional custom length
+            writing_style: Optional writing style
+            persona: Optional persona for generation
+            cost_aggregator: Optional cost aggregator
+            project_id: Optional project ID
+
+        Returns:
+            Tuple of (new outline data, version info dict, success flag)
+        """
+        try:
+            # Ensure we have a project_id
+            if not project_id:
+                project_id = project_name
+
+            # Get SQL project manager if available
+            if not self.sql_project_manager:
+                logging.error("SQL project manager not available for version management")
+                return {"error": "Version management unavailable"}, None, False
+
+            # Get project details
+            project = await self.sql_project_manager.get_project(project_id)
+            if not project:
+                error_msg = f"Project not found: {project_id}"
+                logging.error(error_msg)
+                return {"error": error_msg}, None, False
+
+            # Get the previous outline version if ID provided
+            previous_outline_data = None
+            if previous_version_id:
+                versions = await self.sql_project_manager.get_outline_versions(project_id)
+                for version in versions:
+                    if version.get("id") == previous_version_id:
+                        previous_outline_data = version.get("outline_data", {})
+                        break
+
+            # Save the feedback to the database
+            feedback_id = None
+            if previous_version_id:
+                try:
+                    feedback_id = await self.sql_project_manager.save_outline_feedback(
+                        outline_version_id=previous_version_id,
+                        content=feedback_content,
+                        focus_area=focus_area
+                    )
+                    if feedback_id:
+                        logging.info(f"Saved feedback with ID: {feedback_id}")
+                except Exception as e:
+                    logging.warning(f"Failed to save feedback: {e}")
+
+            # Get the latest version number
+            latest_version = await self.sql_project_manager.get_latest_outline_version(project_id)
+            next_version_number = 1
+            if latest_version:
+                next_version_number = latest_version.get("version_number", 0) + 1
+
+            # Create new cache key that includes feedback
+            feedback_hash = hashlib.sha256(feedback_content.encode()).hexdigest()[:8]
+            cache_key = self._create_cache_key(
+                project_name,
+                notebook_hash,
+                markdown_hash,
+                f"{user_guidelines or ''}|feedback:{feedback_hash}",
+                length_preference,
+                custom_length,
+                writing_style
+            )
+
+            # Process content (reuse existing logic from generate_outline)
+            notebook_content = None
+            markdown_content = None
+
+            # Process notebook content if provided
+            if notebook_hash:
+                notebook_content = self._get_processed_content(notebook_hash, ".ipynb")
+            elif notebook_path:
+                try:
+                    notebook_hash = await self.content_parser.process_file_with_graph(notebook_path, project_name)
+                    if notebook_hash:
+                        notebook_content = self._get_processed_content(notebook_hash, ".ipynb")
+                except Exception as e:
+                    logging.error(f"Error processing notebook: {e}")
+
+            # Process markdown content if provided
+            if markdown_hash:
+                markdown_content = self._get_processed_content(markdown_hash, ".md")
+            elif markdown_path:
+                try:
+                    markdown_hash = await self.content_parser.process_file_with_graph(markdown_path, project_name)
+                    if markdown_hash:
+                        markdown_content = self._get_processed_content(markdown_hash, ".md")
+                except Exception as e:
+                    logging.error(f"Error processing markdown: {e}")
+
+            # Ensure we have content to work with
+            if not notebook_content and not markdown_content and not previous_outline_data:
+                error_msg = "No content available for regeneration"
+                logging.error(error_msg)
+                return {"error": error_msg}, None, False
+
+            # Prepare state with feedback context
+            initial_state = OutlineState(
+                notebook_content=notebook_content,
+                markdown_content=markdown_content,
+                model=self.llm,  # Always use the actual model object, not the name
+                analysis_result=None,
+                difficulty_level=None,
+                prerequisites=None,
+                outline_structure=None,
+                final_outline=None,
+                user_guidelines=user_guidelines,
+                length_preference=length_preference,
+                custom_length=custom_length,
+                writing_style=writing_style,
+                persona=persona or "neuraforge",
+                project_name=project_name,
+                project_id=project_id,
+                cost_aggregator=cost_aggregator,
+                current_stage="outline_regeneration",
+                sql_project_manager=self.sql_project_manager,
+                feedback=[OutlineFeedback(
+                    content=feedback_content,
+                    focus_area=focus_area,
+                    outline_version_id=previous_version_id
+                )]
+            )
+
+            # Execute graph for regeneration
+            logging.info(f"Regenerating outline for project: {project_name} with feedback focus: {focus_area}")
+            state = await self.run_graph(initial_state)
+
+            # Debug: Check what type was returned
+            logging.info(f"Graph returned state type: {type(state)}")
+            logging.info(f"State content: {state}")
+
+            # Extract final outline
+            if isinstance(state, OutlineState):
+                final_outline_obj = state.final_outline
+                if state.cost_aggregator:
+                    state.update_cost_summary()
+            elif isinstance(state, dict):
+                # Handle dict state (langgraph returns dict)
+                final_outline_obj = state.get('final_outline')
+                if not final_outline_obj:
+                    logging.error("final_outline not found in dict state")
+                    return {"error": "Regeneration failed - final_outline not found"}, None, False
+            else:
+                logging.error(f"Graph returned unexpected state type: {type(state)}")
+                return {"error": f"Regeneration failed - unexpected state type: {type(state)}"}, None, False
+
+            if not final_outline_obj:
+                error_msg = "No outline generated"
+                logging.error(error_msg)
+                return {"error": error_msg}, None, False
+
+            # Validate final_outline_obj type
+            if not isinstance(final_outline_obj, FinalOutline):
+                logging.info("Attempting to rehydrate final outline from serialized form")
+                try:
+                    final_outline_obj = FinalOutline.model_validate(final_outline_obj)
+                except Exception as validation_err:
+                    logging.error(
+                        f"Graph returned unexpected type for final_outline: {type(final_outline_obj)} | "
+                        f"Error: {validation_err}"
+                    )
+                    return {
+                        "error": "Regeneration failed",
+                        "details": "Invalid final outline structure returned by graph"
+                    }, None, False
+
+            # Serialize the outline
+            outline_data = serialize_object(final_outline_obj)
+
+            try:
+                version_id = await self.sql_project_manager.save_outline_version(
+                    project_id=project_id,
+                    outline_data=outline_data,
+                    version_number=next_version_number,
+                    feedback_id=feedback_id
+                )
+
+                if version_id:
+                    # Create version info to return
+                    version_info = {
+                        "version_id": version_id,
+                        "version_number": next_version_number,
+                        "previous_version_id": previous_version_id,
+                        "feedback_id": feedback_id,
+                        "created_at": datetime.utcnow().isoformat()
+                    }
+
+                    logging.info(f"Successfully regenerated outline version {next_version_number} for project {project_name}")
+                    return outline_data, version_info, True
+                else:
+                    logging.error("Failed to save outline version")
+                    return {"error": "Failed to save version"}, None, False
+
+            except Exception as e:
+                logging.error(f"Error saving outline version: {e}")
+                return {"error": "Version save failed"}, None, False
+
+        except Exception as e:
+            error_msg = f"Error regenerating outline: {str(e)}"
+            logging.exception(error_msg)
+            return {"error": error_msg, "type": type(e).__name__}, None, False

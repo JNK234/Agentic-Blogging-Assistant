@@ -63,6 +63,22 @@ agent_cache = {}
 # Initialize SupabaseProjectManager for Supabase-based project tracking
 sql_project_manager = SupabaseProjectManager()  # Keep variable name for compatibility
 
+# Ensure outline feedback tables exist on startup
+@app.on_event("startup")
+async def startup_event():
+    """Run startup tasks including database migration."""
+    try:
+        logger.info("Running startup tasks...")
+        # Ensure outline feedback tables exist
+        tables_created = await sql_project_manager.ensure_tables_exist()
+        if tables_created:
+            logger.info("Database tables verified/created successfully")
+        else:
+            logger.warning("Failed to ensure outline feedback tables exist")
+    except Exception as e:
+        logger.error(f"Startup error: {e}")
+        # Don't fail startup if migration fails - feature will be disabled
+
 async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
     """
     Load complete workflow state from SQL project manager.
@@ -94,31 +110,45 @@ async def load_workflow_state(project_id: str) -> Optional[Dict[str, Any]]:
 
     if "outline_generated" in milestones:
         m = milestones["outline_generated"]
-        state["outline"] = m["data"]["outline"]
-        state["outline_hash"] = m["data"].get("outline_hash")
+        try:
+            # The outline data is directly in m["data"], not nested under "outline"
+            state["outline"] = m["data"].get("outline", m["data"])  # Fallback to full data if "outline" key doesn't exist
+            state["outline_hash"] = m["data"].get("outline_hash")
 
-        # Fallback: Load model_name, specific_model, and persona from milestone data if not in project metadata
-        if not state["model_name"]:
-            state["model_name"] = m["data"].get("model_name")
-        if not state["specific_model"]:
-            state["specific_model"] = m["data"].get("specific_model")
-        if not state["persona"]:
-            state["persona"] = m["data"].get("persona")
+            # Also load other outline-related data
+            if not state["model_name"]:
+                state["model_name"] = m["data"].get("model_name")
+            if not state["specific_model"]:
+                state["specific_model"] = m["data"].get("specific_model")
+            if not state["persona"]:
+                state["persona"] = m["data"].get("persona")
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading outline milestone: {e}. Milestone data: {m}")
+            # Don't fail completely - just skip the outline
 
     if "draft_completed" in milestones:
         m = milestones["draft_completed"]
-        state["final_draft"] = m["data"].get("compiled_blog")
-        state["compiled_at"] = m["created_at"]
+        try:
+            state["final_draft"] = m["data"].get("compiled_blog")
+            state["compiled_at"] = m["created_at"]
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading draft milestone: {e}. Milestone data: {m}")
 
     if "blog_refined" in milestones:
         m = milestones["blog_refined"]
-        state["refined_draft"] = m["data"].get("refined_content")
-        state["summary"] = m["data"].get("summary")
-        state["title_options"] = m["data"].get("title_options")
+        try:
+            state["refined_draft"] = m["data"].get("refined_content")
+            state["summary"] = m["data"].get("summary")
+            state["title_options"] = m["data"].get("title_options")
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading blog_refined milestone: {e}. Milestone data: {m}")
 
     if "social_generated" in milestones:
-        # Social content is nested under "social_content" key within the milestone data
-        state["social_content"] = milestones["social_generated"]["data"].get("social_content")
+        try:
+            # Social content is nested under "social_content" key within the milestone data
+            state["social_content"] = milestones["social_generated"]["data"].get("social_content")
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Error loading social_generated milestone: {e}. Milestone data: {milestones.get('social_generated', {})}")
 
     # Load sections from SQL Sections table with full metadata
     state["generated_sections"] = {

@@ -80,6 +80,42 @@ You're not creating marketing copy—you're offering genuine insights to fellow 
 {blog_draft}
 ```
 
+**QUESTION-BASED COMPARISON PATTERN - PRIMARY APPROACH:**
+
+This pattern works exceptionally well for technical content comparing two approaches, revealing a counter-intuitive finding, or challenging conventional wisdom. It creates immediate curiosity while remaining grounded in the actual topic.
+
+**Pattern:** "{Question Word} {Topic A} {Verb} {Topic B}?"
+- Question Word: What, When, Can, Why, Does
+- Topic A: The subject/technique being discussed
+- Verb: Make, Work, Use, Need, Help, Hurt, Replace, Cost
+- Topic B: The comparison point or outcome
+
+**Examples for different content types:**
+- Performance comparisons: "What Makes X Faster Than Y?"
+- Feasibility questions: "Can X Work Without Y?"
+- Timing/conditions: "When Does X Hurt More Than Y?"
+- Mechanism questions: "Why Does X Need Y?"
+- Cost-benefit: "Does X Always Cost More Than Y?"
+
+**Subtitle Formula:** {Technical difference} + {specific metric} + {what's preserved or the trade-off}
+- Keep it factual and specific
+- Include numbers when available (8% savings, 90% reduction, 3x faster)
+- Mention what stays the same or what the benefit is
+
+**REFERENCE EXAMPLES:**
+
+For RMSNorm content:
+- Title: "What Makes RMSNorm Faster Than LayerNorm?"
+- Subtitle: "Eliminating mean subtraction cuts computation by 8% while preserving the re-scaling benefits"
+
+For MoE routing content:
+- Title: "Can MoE Use Single-Expert Routing?"
+- Subtitle: "k=1 selection blocks gradient flow, requiring k≥2 to train all experts effectively"
+
+For KV-Cache content:
+- Title: "When Does KV-Cache Hurt More Than Help?"
+- Subtitle: "Caching costs 3.2GB for 1K tokens—recomputation reduces memory by 60% with 15% latency trade-off"
+
 **TITLE CREATION PRINCIPLES:**
 
 1. **Direct Value Communication**:
@@ -101,19 +137,22 @@ You're not creating marketing copy—you're offering genuine insights to fellow 
    - Match the sophistication level of the content
 
 4. **Engagement Through Curiosity**:
-   - Pose questions when content explores open problems
+   - Pose questions when content compares two approaches
    - Highlight surprising insights or counterintuitive findings
-   - Use comparison/contrast when content compares approaches
+   - Use comparison/contrast when evaluating alternatives
    - Create intrigue about methodology or implementation details
 
-**ADAPTIVE TITLE APPROACHES:**
+**PRIORITY APPROACHES:**
 
-Based on content analysis, choose the most appropriate approach:
-- **Evolution Narrative**: "From [Past] to [Present]: [Insight]"
-- **Practical Implementation**: "[Specific Approach] for [Specific Context]"
-- **Insight Sharing**: "Why [Observation] Matters for [Application]"
-- **Problem-Solution**: "[Challenge] and [Effective Solution]"
-- **Comparative Analysis**: "[Method A] vs [Method B]: [Key Difference]"
+1. **Question-Based Comparison** (HIGHEST PRIORITY): Use when content compares two approaches, techniques, or reveals counter-intuitive findings
+   - Pattern: "{Question} {Topic A} {Verb} {Topic B}?"
+   - Creates immediate engagement while staying grounded in content
+
+2. **Insight Revelation**: Use when content uncovers a non-obvious mechanism or failure mode
+   - Pattern: "{What/Why} {Topic} {Unexpected Outcome}?"
+
+3. **Problem-Solution**: Use as fallback when content focuses on solving a specific problem
+   - Pattern: "{How} {Problem} {Solution}?"
 
 **OUTPUT FORMAT:**
 
@@ -140,9 +179,11 @@ Generate exactly 3 title options as a JSON array. Each option should follow this
 ```
 
 **CRITICAL INSTRUCTIONS:**
+- Generate 3 options following the Question-Based Comparison pattern
+- Each should be different: vary the question word, comparison point, or angle
+- Keep titles concise (5-8 words is ideal)
+- Keep subtitles factual and specific (15-25 words)
 - Output ONLY the JSON array, no other text
-- Generate exactly 3 options
-- Each object must have exactly these three keys: "title", "subtitle", "reasoning"
 - Ensure proper JSON formatting with double quotes
 - Do not include markdown code blocks or any other formatting
 
@@ -219,10 +260,10 @@ Choosing the right activation function is important for model performance.
 ```
 """
 
-# --- Clarity and Flow Suggestions ---
+# --- Content Enhancement and Flow Optimization ---
 SUGGEST_CLARITY_FLOW_IMPROVEMENTS_PROMPT = """
-You are an expert editor reviewing a technical blog post draft for clarity and flow.
-The full draft of the blog post is provided below.
+You are an expert technical editor tasked with enhancing a blog post draft for clarity, flow, and engagement.
+The full draft is provided below.
 
 **Blog Draft:**
 ```markdown
@@ -230,17 +271,23 @@ The full draft of the blog post is provided below.
 ```
 
 **Task:**
-Review the provided blog draft and identify specific areas where clarity or flow could be improved.
-Provide actionable suggestions. Focus on:
-1.  **Clarity:** Are there ambiguous sentences, jargon that needs explanation, or overly complex phrasing? 
-2.  **Flow:** Do the ideas transition smoothly between paragraphs and sections? Is the overall structure logical? Are there abrupt shifts?
-3.  **Conciseness:** Can any parts be stated more directly without losing meaning?
+Review and improve the draft while **PRESERVING ALL CONTENT AND WORD COUNT**. Focus on:
 
-**Output Format:**
-If there is repeated content, remove that, the entire content has to be meaningful and appropriate to the reader. There could be multiple markdown text, you should make sure that all the markdown sections are well compiled 
+1. **Remove Duplicates**: Identify and remove exact duplicate headings/sections (keep first instance)
+2. **Improve Transitions**: Add connecting sentences between sections that feel disconnected
+3. **Fix Flow Issues**: Rephrase awkward transitions, ensure logical progression
+4. **Format Consistency**: Standardize heading levels, code blocks, LaTeX formatting
+5. **Language Polish**: Fix grammar, typos, clarify ambiguous sentences (without removing detail)
 
-**Flow**
-Thee flow of the content should have an introduction, the main content, the summary and conclusion
+**CRITICAL CONSTRAINTS**:
+- DO NOT remove any technical details, examples, or explanations
+- Maintain approximately the same word count (±5%)
+- DO NOT summarize or consolidate sections
+- Preserve all code blocks, formulas, and tables
+- Keep every unique piece of information
+
+**Output:**
+Provide the COMPLETE enhanced draft, outputting ONLY the fully formatted markdown content.
 """
 
 # --- Redundancy Reduction ---

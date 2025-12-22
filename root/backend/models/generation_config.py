@@ -125,6 +125,12 @@ class SocialMediaConfig(BaseModel):
         description="Number of newsletter variants"
     )
 
+    # LinkedIn Interview Trap template option
+    use_interview_trap: bool = Field(
+        default=False,
+        description="Use interview trap narrative pattern for LinkedIn posts (engaging Q&A format)"
+    )
+
     # Optional guidelines
     mandatory_guidelines: Optional[List[str]] = Field(
         default=None,

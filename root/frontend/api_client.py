@@ -561,6 +561,82 @@ async def generate_social_content_standalone(
             logger.error(f"HTTP request failed during standalone social content generation: {e}")
             raise ConnectionError(f"Failed to connect to API for standalone social content generation: {e}")
 
+async def regenerate_outline_with_feedback(
+    project_name: str,
+    feedback_content: str,
+    focus_area: Optional[str] = None,
+    previous_version_id: Optional[str] = None,
+    model_name: Optional[str] = None,
+    specific_model: Optional[str] = None,
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    Regenerates a blog outline based on user feedback.
+
+    Args:
+        project_name: The name of the project.
+        feedback_content: User feedback for outline improvement.
+        focus_area: Optional area to focus the regeneration on.
+        previous_version_id: Optional ID of the previous outline version.
+        model_name: Optional model name to use for regeneration.
+        specific_model: Optional specific model within the provider.
+        base_url: The base URL of the API.
+
+    Returns:
+        The JSON response containing the new outline and version information.
+    """
+    api_url = _get_api_url(f"/api/v2/projects/{project_name}/outline/regenerate", base_url)
+    headers = _get_headers(base_url)
+
+    # Prepare form data
+    data = {
+        "feedback_content": feedback_content,
+        "focus_area": focus_area or "",
+        "previous_version_id": previous_version_id or "",
+        "model_name": model_name or "",
+        "specific_model": specific_model or ""
+    }
+
+    # Filter out empty values
+    data = {k: v for k, v in data.items() if v}
+
+    async with httpx.AsyncClient(timeout=300.0) as client:  # Long timeout for generation
+        try:
+            logger.info(f"Requesting outline regeneration for {project_name} with feedback")
+            response = await client.post(api_url, data=data, headers=headers)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during outline regeneration: {e}")
+            raise ConnectionError(f"Failed to connect to API for outline regeneration: {e}")
+
+
+async def get_outline_versions(
+    project_name: str,
+    base_url: str = DEFAULT_API_BASE_URL
+) -> Dict[str, Any]:
+    """
+    Retrieves all outline versions for a project.
+
+    Args:
+        project_name: The name of the project.
+        base_url: The base URL of the API.
+
+    Returns:
+        The JSON response containing the list of outline versions.
+    """
+    api_url = _get_api_url(f"/api/v2/projects/{project_name}/outline/versions", base_url)
+    headers = _get_headers(base_url)
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            logger.info(f"Requesting outline versions for {project_name}")
+            response = await client.get(api_url, headers=headers)
+            return await _handle_response(response)
+        except httpx.RequestError as e:
+            logger.error(f"HTTP request failed during outline versions fetch: {e}")
+            raise ConnectionError(f"Failed to connect to API for outline versions: {e}")
+
+
 async def health_check(base_url: str = DEFAULT_API_BASE_URL) -> bool:
     """Checks the health of the backend API."""
     api_url = _get_api_url("/health", base_url)
